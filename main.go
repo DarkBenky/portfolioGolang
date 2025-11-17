@@ -2,8 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -53,6 +56,16 @@ type Holding struct {
 	currency      string
 }
 
+type Region struct {
+	Name      string
+	IdHolding string
+}
+
+type Sector struct {
+	Name      string
+	IdHolding string
+}
+
 type Asset struct {
 	IdAsset   string
 	Name      string
@@ -87,6 +100,97 @@ type Price struct {
 	Volume    int64
 	idAsset   string
 	idHolding string
+}
+
+func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
+	baseURL := "http://localhost:5123/api/etf_data"
+	params := url.Values{}
+	params.Add("ticker", ticker)
+	params.Add("isin", isin)
+	params.Add("etf_name", name)
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		log.Printf("Error fetching ETF data for %s: %v", ticker, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to fetch ETF data: %s", resp.Status)
+		log.Printf("Failed to fetch ETF data for %s: %s", ticker, resp.Status)
+		return err
+	}
+
+	var etfData struct {
+		Holdings []struct {
+			Name     string `json:"name"`
+			Ticker   string `json:"ticker"`
+			ISIN     string `json:"isin"`
+			Exchange string `json:"exchange"`
+			Sector   string `json:"sector"`
+			Region   string `json:"region"`
+		} `json:"holdings"`
+		Sectors map[string]float64 `json:"sectors"`
+		Regions map[string]float64 `json:"regions"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&etfData)
+	if err != nil {
+		log.Printf("Error decoding ETF data for %s: %v", ticker, err)
+		return err
+	}
+
+	log.Printf("Fetched ETF data for holding ID %s: %d holdings, %d sectors, %d regions",
+		holdingID, len(etfData.Holdings), len(etfData.Sectors), len(etfData.Regions))
+
+	// Insert holdings as assets
+	for _, holding := range etfData.Holdings {
+		asset := Asset{
+			IdAsset:   generateID(),
+			Name:      holding.Name,
+			Ticker:    holding.Ticker,
+			ISIN:      holding.ISIN,
+			Exchange:  holding.Exchange,
+			Sector:    holding.Sector,
+			Region:    holding.Region,
+			idHolding: holdingID,
+			currency:  "", // Could be extracted from holding if available
+		}
+
+		err = db.addAsset(asset)
+		if err != nil {
+			log.Printf("Error adding asset %s: %v", holding.Ticker, err)
+		}
+	}
+
+	// Insert sectors
+	for sectorName := range etfData.Sectors {
+		sector := Sector{
+			Name:      sectorName,
+			IdHolding: holdingID,
+		}
+		err = db.addSector(sector)
+		if err != nil {
+			log.Printf("Error adding sector %s: %v", sectorName, err)
+		}
+	}
+
+	// Insert regions
+	for regionName := range etfData.Regions {
+		region := Region{
+			Name:      regionName,
+			IdHolding: holdingID,
+		}
+		err = db.addRegion(region)
+		if err != nil {
+			log.Printf("Error adding region %s: %v", regionName, err)
+		}
+	}
+
+	log.Printf("Successfully processed ETF data for holding ID %s", holdingID)
+	return nil
 }
 
 func initDB() (*sql.DB, error) {
@@ -162,6 +266,30 @@ func initDB() (*sql.DB, error) {
 			id_asset TEXT,
 			id_holding TEXT,
 			FOREIGN KEY (id_asset) REFERENCES assets(id_asset) ON DELETE CASCADE,
+			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	// Crete Regions table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS regions (
+			name TEXT,
+			id_holding TEXT,
+			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create Sectors table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS sectors (
+			name TEXT,
+			id_holding TEXT,
 			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
 		)
 	`)
@@ -344,6 +472,30 @@ func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
 	return holdings, nil
 }
 
+func (database *DB) addAsset(asset Asset) error {
+	_, err := database.Exec(`
+		INSERT INTO assets (id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, asset.IdAsset, asset.Name, asset.Ticker, asset.ISIN, asset.Exchange, asset.Sector, asset.Region, asset.idHolding, asset.currency)
+	return err
+}
+
+func (database *DB) addSector(sector Sector) error {
+	_, err := database.Exec(`
+		INSERT INTO sectors (name, id_holding)
+		VALUES (?, ?)
+	`, sector.Name, sector.IdHolding)
+	return err
+}
+
+func (database *DB) addRegion(region Region) error {
+	_, err := database.Exec(`
+		INSERT INTO regions (name, id_holding)
+		VALUES (?, ?)
+	`, region.Name, region.IdHolding)
+	return err
+}
+
 func generateID() string {
 	return uuid.New().String()
 }
@@ -463,6 +615,19 @@ func AddHolding(c echo.Context) error {
 		Policy:        Policy,
 		userID:        userID,
 		currency:      Currency,
+	}
+
+	if holding.Etf {
+		// Trigger background processing in a goroutine
+		go func(holdingID, ticker, isin, name string) {
+			log.Printf("Starting background ETF data fetch for %s...", ticker)
+			err := fetchAndStoreETFData(holdingID, ticker, isin, name)
+			if err != nil {
+				log.Printf("Error processing ETF data for %s: %v", ticker, err)
+			} else {
+				log.Printf("Successfully completed background ETF data fetch for %s", ticker)
+			}
+		}(holding.IdHolding, holding.Ticker, holding.ISIN, holding.Name)
 	}
 
 	err := db.addHolding(holding)
