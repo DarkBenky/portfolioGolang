@@ -23,6 +23,7 @@ import (
 const (
 	SALT       = "7a726befdfc6eff42209898e532ac1a71fc7f20290d5c1f7dd6298e5ccab4ab1"
 	JWT_SECRET = "5ce80dd0f1070f65168ad0593f1669a000adfbc54c9977331de0434d3c9319c9"
+	BASE_URL   = "http://localhost:5123/api"
 )
 
 var db *DB
@@ -102,8 +103,128 @@ type Price struct {
 	idHolding string
 }
 
+func fetchNewsPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Starting periodic news fetch for all tickers...")
+
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+
+		log.Printf("Found %d unique tickers to fetch news for", len(tickers))
+
+		for _, tickerSymbol := range tickers {
+			// Fetch news for each ticker in a goroutine
+			go func(ticker string) {
+				log.Printf("Fetching news for %s...", ticker)
+				err := fetchNews(ticker)
+				if err != nil {
+					log.Printf("Error fetching news for %s: %v", ticker, err)
+				} else {
+					log.Printf("Successfully fetched news for %s", ticker)
+				}
+			}(tickerSymbol)
+
+			// Small delay to avoid overwhelming the API
+			time.Sleep(2000 * time.Millisecond)
+		}
+
+		log.Println("Completed periodic news fetch cycle")
+	}
+}
+
+func fetchNews(ticker string) error {
+	baseURL := BASE_URL + "/fetch_news"
+	params := url.Values{}
+	params.Add("ticker", ticker)
+	params.Add("num_articles", "5")
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		log.Printf("Error fetching news for %s: %v", ticker, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to fetch news: %s", resp.Status)
+		log.Printf("Failed to fetch news for %s: %s", ticker, resp.Status)
+		return err
+	}
+
+	var newsArticles []struct {
+		Title       string  `json:"title"`
+		Summary     string  `json:"summary"`
+		Text        string  `json:"text"`
+		URL         string  `json:"url"`
+		PublishedAt string  `json:"published_at"`
+		Author      string  `json:"author"`
+		ImgURL      string  `json:"img_url"`
+		Sentiment   float64 `json:"sentiment"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&newsArticles)
+	if err != nil {
+		log.Printf("Error decoding news data for %s: %v", ticker, err)
+		return err
+	}
+
+	log.Printf("Fetched %d news articles for %s", len(newsArticles), ticker)
+
+	// Try to find assets with this ticker first
+	assets, err := db.getAssetsByTicker(ticker)
+	if err != nil {
+		log.Printf("Error fetching assets for ticker %s: %v", ticker, err)
+	}
+
+	// Also try to find holdings with this ticker
+	holdings, err := db.getHoldingsByTicker(ticker)
+	if err != nil {
+		log.Printf("Error fetching holdings for ticker %s: %v", ticker, err)
+	}
+
+	// Store news articles
+	for _, article := range newsArticles {
+		news := News{
+			IdNews:      generateID(),
+			Title:       article.Title,
+			Link:        article.URL,
+			PublishedAt: article.PublishedAt,
+			Summary:     article.Summary,
+			Text:        article.Text,
+			Sentiment:   article.Sentiment,
+		}
+
+		// Link to first asset if found
+		if len(assets) > 0 {
+			news.idAsset = assets[0].IdAsset
+		}
+
+		// Link to first holding if found
+		if len(holdings) > 0 {
+			news.idHolding = holdings[0].IdHolding
+		}
+
+		err = db.addNews(news)
+		if err != nil {
+			log.Printf("Error adding news article '%s': %v", article.Title, err)
+		} else {
+			log.Printf("Added news article: %s (asset: %s, holding: %s)", article.Title, news.idAsset, news.idHolding)
+		}
+	}
+
+	log.Printf("Successfully processed news for %s", ticker)
+	return nil
+}
+
 func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
-	baseURL := "http://localhost:5123/api/etf_data"
+	baseURL := BASE_URL + "/etf_data"
 	params := url.Values{}
 	params.Add("ticker", ticker)
 	params.Add("isin", isin)
@@ -496,6 +617,88 @@ func (database *DB) addRegion(region Region) error {
 	return err
 }
 
+func (database *DB) addNews(news News) error {
+	_, err := database.Exec(`
+		INSERT INTO news (id_news, title, link, published_at, summary, text, sentiment, id_asset, id_holding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Sentiment, news.idAsset, news.idHolding)
+	return err
+}
+
+func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
+	rows, err := database.Query(`
+		SELECT id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency
+		FROM assets
+		WHERE ticker = ?
+	`, ticker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var assets []Asset
+	for rows.Next() {
+		var a Asset
+		err := rows.Scan(&a.IdAsset, &a.Name, &a.Ticker, &a.ISIN, &a.Exchange, &a.Sector, &a.Region, &a.idHolding, &a.currency)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, a)
+	}
+	return assets, nil
+}
+
+func (database *DB) getUniqueTickers() ([]string, error) {
+	// Get unique tickers from both holdings and assets
+	rows, err := database.Query(`
+		SELECT DISTINCT ticker FROM (
+			SELECT ticker FROM holdings
+			UNION
+			SELECT ticker FROM assets
+		) AS combined_tickers
+		ORDER BY ticker
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tickers []string
+	for rows.Next() {
+		var ticker string
+		err := rows.Scan(&ticker)
+		if err != nil {
+			return nil, err
+		}
+		tickers = append(tickers, ticker)
+	}
+
+	return tickers, nil
+}
+
+func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
+	rows, err := database.Query(`
+		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
+		FROM holdings
+		WHERE ticker = ?
+	`, ticker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var holdings []Holding
+	for rows.Next() {
+		var h Holding
+		err := rows.Scan(&h.IdHolding, &h.Name, &h.Ticker, &h.ISIN, &h.Exchange, &h.Etf, &h.Quantity, &h.PurchasePrice, &h.TER, &h.Policy, &h.userID, &h.currency)
+		if err != nil {
+			return nil, err
+		}
+		holdings = append(holdings, h)
+	}
+	return holdings, nil
+}
+
 func generateID() string {
 	return uuid.New().String()
 }
@@ -618,7 +821,7 @@ func AddHolding(c echo.Context) error {
 	}
 
 	if holding.Etf {
-		// Trigger background processing in a goroutine
+		// Trigger background processing in a goroutine for ETF data
 		go func(holdingID, ticker, isin, name string) {
 			log.Printf("Starting background ETF data fetch for %s...", ticker)
 			err := fetchAndStoreETFData(holdingID, ticker, isin, name)
@@ -629,6 +832,17 @@ func AddHolding(c echo.Context) error {
 			}
 		}(holding.IdHolding, holding.Ticker, holding.ISIN, holding.Name)
 	}
+
+	// Trigger background news fetching for all holdings
+	go func(ticker string) {
+		log.Printf("Starting background news fetch for %s...", ticker)
+		err := fetchNews(ticker)
+		if err != nil {
+			log.Printf("Error fetching news for %s: %v", ticker, err)
+		} else {
+			log.Printf("Successfully completed background news fetch for %s", ticker)
+		}
+	}(holding.Ticker)
 
 	err := db.addHolding(holding)
 	if err != nil {
@@ -737,6 +951,9 @@ func main() {
 	db = &DB{sqlDB}
 
 	log.Println("Database initialized successfully")
+
+	// Start periodic news fetcher in background (every 4 hours)
+	go fetchNewsPeriodic(4 * time.Hour)
 
 	e := echo.New()
 

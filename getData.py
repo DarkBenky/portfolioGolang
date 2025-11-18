@@ -2,8 +2,18 @@ import yfinance as yf
 import flask
 from functools import lru_cache
 from getAssets import get_etf_data
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor
+from bs4 import BeautifulSoup
+import re
+from getNews import creteSentimentAnalyzer, getSentiment, getNews
 
 app = flask.Flask(__name__)
+
+model = creteSentimentAnalyzer()
+
+executor = ThreadPoolExecutor(max_workers=10)
 
 @lru_cache(maxsize=256)
 def get_etf_ter_and_policy(ticker, isin):
@@ -40,7 +50,6 @@ def get_etf_ter_and_policy(ticker, isin):
     if (not ter or not dist_policy) and isin and isin != 'N/A':
         try:
             import requests
-            from bs4 import BeautifulSoup
             
             url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -57,7 +66,6 @@ def get_etf_ter_and_policy(ticker, isin):
                         parent = ter_match.find_parent()
                         if parent:
                             ter_text = parent.get_text()
-                            import re
                             ter_pattern = re.search(r'(\d+\.?\d*)\s*%', ter_text)
                             if ter_pattern:
                                 ter = f"{ter_pattern.group(1)}%"
@@ -75,7 +83,6 @@ def get_etf_ter_and_policy(ticker, isin):
     if not ter or not dist_policy:
         try:
             import requests
-            from bs4 import BeautifulSoup
             
             # Clean ticker for ETFDB (remove exchange suffix)
             clean_ticker = ticker.split('.')[0]
@@ -93,7 +100,6 @@ def get_etf_ter_and_policy(ticker, isin):
                     if expense_match:
                         parent = expense_match.find_parent()
                         if parent:
-                            import re
                             ter_pattern = re.search(r'(\d+\.?\d*)\s*%', parent.get_text())
                             if ter_pattern:
                                 ter = f"{ter_pattern.group(1)}%"
@@ -182,30 +188,48 @@ def search_ticker_info(identifier, search_type="ticker"):
     except Exception as e:
         print(f"Error searching for {identifier}: {e}")
         return []
-    
 
+# curl "http://localhost:5123/api/search?identifier=AAPL"
+# curl "http://localhost:5123/api/search?identifier=US0378331005&search_type=isin"
 @app.route('/api/search', methods=['GET'])
-def api_search():
+async def api_search():
+    """Async route with thread pool execution"""
     identifier = flask.request.args.get('identifier', '')
     search_type = flask.request.args.get('search_type', 'ticker')
     
     if not identifier:
         return flask.jsonify({'error': 'Identifier parameter is required.'}), 400
     
-    results = search_ticker_info(identifier, search_type)
+    # Run blocking function in thread pool for true concurrency
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(executor, search_ticker_info, identifier, search_type)
     return flask.jsonify(results)
-
 
 # curl "http://127.0.0.1:5123/api/etf_data?ticker=VWCE.DE&isin=IE00BK5BQT80&etf_name=Vanguard%20FTSE%20All-World"
 @app.route('/api/etf_data', methods=['GET'])
-def api_etf_data():
+async def api_etf_data():
+    """Async route for ETF data with thread pool execution"""
     ticker = flask.request.args.get('ticker', '')
     isin = flask.request.args.get('isin', '')
     etf_name = flask.request.args.get('etf_name', '')
-    data = get_etf_data(ticker, isin, etf_name)
+    
+    # Run blocking function in thread pool for true concurrency
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(executor, get_etf_data, ticker, isin, etf_name)
     return flask.jsonify(data.to_dict())
 
+# curl "http://127.0.0.1:5123/api/fetch_news?ticker=AAPL&num_articles=5"
+@app.route('/api/fetch_news', methods=['GET'])
+async def fetch_news():
+    """Async route for fetching news articles with sentiment analysis"""
+    ticker = flask.request.args.get('ticker', '')
+    num_articles = int(flask.request.args.get('num_articles', '3'))
+    
+    # Run blocking function in thread pool for true concurrency
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(executor, getNews, ticker, num_articles, model)
+    return flask.jsonify(data)
+
 if __name__ == '__main__':
-    # curl "http://localhost:5123/api/search?identifier=AAPL"
-    # curl "http://localhost:5123/api/search?identifier=US0378331005&search_type=isin"
-    app.run(debug=True, host='0.0.0.0', port=5123)
+    # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app
+    app.run(debug=True, host='0.0.0.0', port=5123, threaded=True)
