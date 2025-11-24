@@ -9,9 +9,7 @@ def creteSentimentAnalyzer():
     nlp = pipeline('sentiment-analysis', model=finbert_model, tokenizer=finbert_tokenizer)
     return nlp
 
-def getSentiment(model: pipeline, title: str, summary: str, text: str, weights: list):
-    total_sentiment_score = 0
-    
+def getSentiment(model: pipeline, title: str, summary: str, text: str, weights: list):    
     # Process title
     title_sentiment = model(title)
     title_sentiment_score = 0

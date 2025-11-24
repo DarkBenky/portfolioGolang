@@ -12,7 +12,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/AmpyFin/yfinance-go"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	echojwt "github.com/labstack/echo-jwt/v4"
@@ -27,7 +26,6 @@ const (
 )
 
 var db *DB
-var yf = yfinance.NewClient()
 
 type User struct {
 	userName string
@@ -48,13 +46,13 @@ type Holding struct {
 	Ticker        string
 	ISIN          string
 	Exchange      string
-	Etf           bool
-	Quantity      float64
-	PurchasePrice float64
-	TER           float64
 	Policy        string
 	userID        string
 	currency      string
+	Quantity      float64
+	PurchasePrice float64
+	TER           float64
+	Etf           bool
 }
 
 type Region struct {
@@ -86,23 +84,139 @@ type News struct {
 	PublishedAt string
 	Summary     string
 	Text        string
-	Sentiment   float64
 	idAsset     string
 	idHolding   string
+	Sentiment   float64
 }
 
 type Price struct {
 	IdPrice   string
 	Date      string
+	idAsset   string
+	idHolding string
 	Open      float64
 	Close     float64
 	High      float64
 	Low       float64
 	Volume    int64
-	idAsset   string
-	idHolding string
 }
 
+func fetchPricesPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		log.Println("Starting periodic price fetch...")
+
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+		log.Printf("Found %d unique tickers to fetch prices for", len(tickers))
+
+		for _, tickerSymbol := range tickers {
+			go func(ticker string) {
+				log.Printf("Fetching prices for %s...", ticker)
+				err := fetchPrices(ticker)
+				if err != nil {
+					log.Printf("Error fetching prices for %s: %v", ticker, err)
+				} else {
+					log.Printf("Successfully fetched prices for %s", ticker)
+				}
+			}(tickerSymbol)
+			time.Sleep(250 * time.Millisecond)
+		}
+
+		log.Println("Completed periodic price fetch cycle")
+	}
+}
+
+func fetchPrices(ticker string) error {
+	lastTimestamp, err := db.getLastPriceTimestamp(ticker)
+	if err != nil {
+		log.Printf("Error getting last price timestamp for %s: %v", ticker, err)
+		return err
+	}
+
+	if lastTimestamp == 0 {
+		lastTimestamp = time.Now().Add(-7 * 24 * time.Hour).Unix()
+	}
+
+	baseURL := BASE_URL + "/get_price"
+	params := url.Values{}
+	params.Add("ticker", ticker)
+	params.Add("last_updates_unix_timestamp", strconv.FormatInt(lastTimestamp, 10))
+	params.Add("interval", "1m")
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		log.Printf("Error fetching prices for %s: %v", ticker, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to fetch prices: %s", resp.Status)
+		log.Printf("Failed to fetch prices for %s: %s", ticker, resp.Status)
+		return err
+	}
+
+	var candles []struct {
+		Timestamp int64   `json:"timestamp"`
+		Open      float64 `json:"open"`
+		High      float64 `json:"high"`
+		Low       float64 `json:"low"`
+		Close     float64 `json:"close"`
+		Volume    int64   `json:"volume"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&candles)
+	if err != nil {
+		log.Printf("Error decoding price data for %s: %v", ticker, err)
+		return err
+	}
+
+	log.Printf("Fetched %d price candles for %s", len(candles), ticker)
+
+	assets, err := db.getAssetsByTicker(ticker)
+	if err != nil {
+		log.Printf("Error fetching assets for ticker %s: %v", ticker, err)
+	}
+
+	holdings, err := db.getHoldingsByTicker(ticker)
+	if err != nil {
+		log.Printf("Error fetching holdings for ticker %s: %v", ticker, err)
+	}
+
+	for _, candle := range candles {
+		price := Price{
+			IdPrice: generateID(),
+			Date:    strconv.FormatInt(candle.Timestamp, 10),
+			Open:    candle.Open,
+			High:    candle.High,
+			Low:     candle.Low,
+			Close:   candle.Close,
+			Volume:  candle.Volume,
+		}
+
+		if len(assets) > 0 {
+			price.idAsset = assets[0].IdAsset
+		}
+
+		if len(holdings) > 0 {
+			price.idHolding = holdings[0].IdHolding
+		}
+
+		err = db.addPrice(price)
+		if err != nil {
+			log.Printf("Error adding price data for %s at %s: %v", ticker, price.Date, err)
+		}
+	}
+
+	log.Printf("Successfully processed %d price candles for %s", len(candles), ticker)
+	return nil
+}
 func fetchNewsPeriodic(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -131,7 +245,7 @@ func fetchNewsPeriodic(interval time.Duration) {
 			}(tickerSymbol)
 
 			// Small delay to avoid overwhelming the API
-			time.Sleep(2000 * time.Millisecond)
+			time.Sleep(2500 * time.Millisecond)
 		}
 
 		log.Println("Completed periodic news fetch cycle")
@@ -314,7 +428,7 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 	return nil
 }
 
-func initDB() (*sql.DB, error) {
+func initDB(fakeData bool) (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", "./portfolio.db")
 	if err != nil {
 		return nil, err
@@ -438,7 +552,125 @@ func initDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	if fakeData {
+		log.Println("Populating database with fake data...")
+		err = populateFakeData(db)
+		if err != nil {
+			log.Printf("Warning: Failed to populate fake data: %v", err)
+		} else {
+			log.Println("Fake data populated successfully")
+		}
+	}
+
 	return db, nil
+}
+
+func populateFakeData(database *sql.DB) error {
+	testUserID := uuid.New().String()
+	password := "test123"
+	hashedPassword := password + SALT
+	hashed, err := bcrypt.GenerateFromPassword([]byte(hashedPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	_, err = database.Exec(`
+		INSERT OR IGNORE INTO users (id, user_name, email, password)
+		VALUES (?, ?, ?, ?)
+	`, testUserID, "Test User", "test@example.com", string(hashed))
+	if err != nil {
+		return err
+	}
+
+	holdings := []struct {
+		Name          string
+		Ticker        string
+		ISIN          string
+		Exchange      string
+		Etf           bool
+		Quantity      float64
+		PurchasePrice float64
+		TER           float64
+		Policy        string
+		Currency      string
+	}{
+		{
+			Name:          "Apple Inc.",
+			Ticker:        "AAPL",
+			ISIN:          "US0378331005",
+			Exchange:      "NASDAQ",
+			Etf:           false,
+			Quantity:      10.0,
+			PurchasePrice: 150.25,
+			TER:           0.0,
+			Policy:        "",
+			Currency:      "USD",
+		},
+		{
+			Name:          "Microsoft Corporation",
+			Ticker:        "MSFT",
+			ISIN:          "US5949181045",
+			Exchange:      "NASDAQ",
+			Etf:           false,
+			Quantity:      5.0,
+			PurchasePrice: 320.50,
+			TER:           0.0,
+			Policy:        "",
+			Currency:      "USD",
+		},
+		{
+			Name:          "Vanguard S&P 500 ETF",
+			Ticker:        "VOO",
+			ISIN:          "US9229087690",
+			Exchange:      "NYSE",
+			Etf:           true,
+			Quantity:      25.0,
+			PurchasePrice: 400.75,
+			TER:           0.03,
+			Policy:        "Accumulating",
+			Currency:      "USD",
+		},
+		{
+			Name:          "iShares MSCI World ETF",
+			Ticker:        "URTH",
+			ISIN:          "US4642874329",
+			Exchange:      "NYSE",
+			Etf:           true,
+			Quantity:      15.0,
+			PurchasePrice: 125.30,
+			TER:           0.24,
+			Policy:        "Distributing",
+			Currency:      "USD",
+		},
+		{
+			Name:          "Tesla Inc.",
+			Ticker:        "TSLA",
+			ISIN:          "US88160R1014",
+			Exchange:      "NASDAQ",
+			Etf:           false,
+			Quantity:      8.0,
+			PurchasePrice: 245.80,
+			TER:           0.0,
+			Policy:        "",
+			Currency:      "USD",
+		},
+	}
+
+	for _, h := range holdings {
+		holdingID := uuid.New().String()
+		_, err = database.Exec(`
+			INSERT INTO holdings (id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, holdingID, h.Name, h.Ticker, h.ISIN, h.Exchange, h.Etf, h.Quantity, h.PurchasePrice, h.TER, h.Policy, testUserID, h.Currency)
+		if err != nil {
+			log.Printf("Error inserting holding %s: %v", h.Name, err)
+			continue
+		}
+		log.Printf("Added holding: %s (%s)", h.Name, h.Ticker)
+	}
+
+	log.Println("Test user created - Email: test@example.com, Password: test123")
+	return nil
 }
 
 type DB struct {
@@ -699,6 +931,34 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 	return holdings, nil
 }
 
+func (database *DB) addPrice(price Price) error {
+	_, err := database.Exec(`
+		INSERT INTO prices (id_price, date, open, close, high, low, volume, id_asset, id_holding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, price.IdPrice, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume, price.idAsset, price.idHolding)
+	return err
+}
+
+func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
+	var lastTimestamp sql.NullInt64
+	err := database.QueryRow(`
+		SELECT MAX(CAST(date AS INTEGER))
+		FROM prices
+		WHERE id_holding IN (SELECT id_holding FROM holdings WHERE ticker = ?)
+		   OR id_asset IN (SELECT id_asset FROM assets WHERE ticker = ?)
+	`, ticker, ticker).Scan(&lastTimestamp)
+
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	if !lastTimestamp.Valid {
+		return 0, nil
+	}
+
+	return lastTimestamp.Int64, nil
+}
+
 func generateID() string {
 	return uuid.New().String()
 }
@@ -821,7 +1081,6 @@ func AddHolding(c echo.Context) error {
 	}
 
 	if holding.Etf {
-		// Trigger background processing in a goroutine for ETF data
 		go func(holdingID, ticker, isin, name string) {
 			log.Printf("Starting background ETF data fetch for %s...", ticker)
 			err := fetchAndStoreETFData(holdingID, ticker, isin, name)
@@ -833,7 +1092,6 @@ func AddHolding(c echo.Context) error {
 		}(holding.IdHolding, holding.Ticker, holding.ISIN, holding.Name)
 	}
 
-	// Trigger background news fetching for all holdings
 	go func(ticker string) {
 		log.Printf("Starting background news fetch for %s...", ticker)
 		err := fetchNews(ticker)
@@ -841,6 +1099,16 @@ func AddHolding(c echo.Context) error {
 			log.Printf("Error fetching news for %s: %v", ticker, err)
 		} else {
 			log.Printf("Successfully completed background news fetch for %s", ticker)
+		}
+	}(holding.Ticker)
+
+	go func(ticker string) {
+		log.Printf("Starting background price fetch for %s...", ticker)
+		err := fetchPrices(ticker)
+		if err != nil {
+			log.Printf("Error fetching prices for %s: %v", ticker, err)
+		} else {
+			log.Printf("Successfully completed background price fetch for %s", ticker)
 		}
 	}(holding.Ticker)
 
@@ -942,7 +1210,7 @@ func GetHoldings(c echo.Context) error {
 }
 
 func main() {
-	sqlDB, err := initDB()
+	sqlDB, err := initDB(true)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
@@ -952,8 +1220,8 @@ func main() {
 
 	log.Println("Database initialized successfully")
 
-	// Start periodic news fetcher in background (every 4 hours)
 	go fetchNewsPeriodic(4 * time.Hour)
+	go fetchPricesPeriodic(3 * time.Minute)
 
 	e := echo.New()
 

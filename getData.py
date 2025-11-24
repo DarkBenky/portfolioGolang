@@ -3,11 +3,11 @@ import flask
 from functools import lru_cache
 from getAssets import get_etf_data
 import asyncio
-import aiohttp
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
+from getPrice import getPrice
 
 app = flask.Flask(__name__)
 
@@ -228,6 +228,15 @@ async def fetch_news():
     # Run blocking function in thread pool for true concurrency
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(executor, getNews, ticker, num_articles, model)
+    return flask.jsonify(data)
+
+@app.route('/api/get_price', methods=['GET'])
+async def api_get_price():
+    ticker = flask.request.args.get('ticker', '')
+    last_updates_unix_timestamp = int(flask.request.args.get('last_updates_unix_timestamp', '0'))
+    interval = flask.request.args.get('interval', '1m')
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(executor, getPrice, ticker, last_updates_unix_timestamp, interval)
     return flask.jsonify(data)
 
 if __name__ == '__main__':
