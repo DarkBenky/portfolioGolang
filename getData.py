@@ -231,12 +231,11 @@ async def fetch_news():
     return flask.jsonify(data)
 
 @app.route('/api/get_price', methods=['GET'])
-async def api_get_price():
+def api_get_price():
     ticker = flask.request.args.get('ticker', '')
     last_updates_unix_timestamp = int(flask.request.args.get('last_updates_unix_timestamp', '0'))
     interval = flask.request.args.get('interval', '1m')
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(executor, getPrice, ticker, last_updates_unix_timestamp, interval)
+    data = getPrice(ticker, last_updates_unix_timestamp, interval)
     return flask.jsonify(data)
 
 if __name__ == '__main__':
