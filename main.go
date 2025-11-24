@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -26,6 +27,7 @@ const (
 )
 
 var db *DB
+var dbMutex sync.Mutex
 
 type User struct {
 	userName string
@@ -168,7 +170,7 @@ func fetchPrices(ticker string) error {
 		High      float64 `json:"high"`
 		Low       float64 `json:"low"`
 		Close     float64 `json:"close"`
-		Volume    int64   `json:"volume"`
+		Volume    float64 `json:"volume"`
 	}
 
 	err = json.NewDecoder(resp.Body).Decode(&candles)
@@ -197,7 +199,7 @@ func fetchPrices(ticker string) error {
 			High:    candle.High,
 			Low:     candle.Low,
 			Close:   candle.Close,
-			Volume:  candle.Volume,
+			Volume:  int64(candle.Volume),
 		}
 
 		if len(assets) > 0 {
@@ -678,6 +680,8 @@ type DB struct {
 }
 
 func (database *DB) addUser(user User) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO users (id, user_name, email, password)
 		VALUES (?, ?, ?, ?)
@@ -717,7 +721,9 @@ func (database *DB) verifyUser(email string, password string) (bool, error) {
 }
 
 func (database *DB) addHolding(holding Holding) error {
-	// Check if holding already exists for this user and ticker
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var existingHolding Holding
 	err := database.QueryRow(`
 		SELECT id_holding, quantity, purchase_price 
@@ -730,7 +736,6 @@ func (database *DB) addHolding(holding Holding) error {
 	)
 
 	if err == sql.ErrNoRows {
-		// No existing holding, insert new one
 		_, err := database.Exec(`
 			INSERT INTO holdings (id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -740,12 +745,10 @@ func (database *DB) addHolding(holding Holding) error {
 		return err
 	}
 
-	// Holding exists, calculate new average purchase price and total quantity
 	totalCost := (existingHolding.Quantity * existingHolding.PurchasePrice) + (holding.Quantity * holding.PurchasePrice)
 	newQuantity := existingHolding.Quantity + holding.Quantity
 	newAvgPrice := totalCost / newQuantity
 
-	// Update the existing holding
 	_, err = database.Exec(`
 		UPDATE holdings 
 		SET quantity = ?, purchase_price = ?, name = ?, isin = ?, ter = ?, policy = ?, currency = ?
@@ -756,6 +759,9 @@ func (database *DB) addHolding(holding Holding) error {
 }
 
 func (database *DB) removeHolding(holdingID string, userID string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	result, err := database.Exec(`
 		DELETE FROM holdings 
 		WHERE id_holding = ? AND user_id = ?
@@ -778,6 +784,9 @@ func (database *DB) removeHolding(holdingID string, userID string) error {
 }
 
 func (database *DB) modifyHolding(holding Holding) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	result, err := database.Exec(`
 		UPDATE holdings 
 		SET name = ?, ticker = ?, isin = ?, exchange = ?, etf = ?, quantity = ?, purchase_price = ?, ter = ?, policy = ?, currency = ?
@@ -826,6 +835,8 @@ func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
 }
 
 func (database *DB) addAsset(asset Asset) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO assets (id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -834,6 +845,8 @@ func (database *DB) addAsset(asset Asset) error {
 }
 
 func (database *DB) addSector(sector Sector) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO sectors (name, id_holding)
 		VALUES (?, ?)
@@ -842,6 +855,8 @@ func (database *DB) addSector(sector Sector) error {
 }
 
 func (database *DB) addRegion(region Region) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO regions (name, id_holding)
 		VALUES (?, ?)
@@ -850,6 +865,8 @@ func (database *DB) addRegion(region Region) error {
 }
 
 func (database *DB) addNews(news News) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO news (id_news, title, link, published_at, summary, text, sentiment, id_asset, id_holding)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -932,6 +949,8 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 }
 
 func (database *DB) addPrice(price Price) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 	_, err := database.Exec(`
 		INSERT INTO prices (id_price, date, open, close, high, low, volume, id_asset, id_holding)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1210,7 +1229,7 @@ func GetHoldings(c echo.Context) error {
 }
 
 func main() {
-	sqlDB, err := initDB(true)
+	sqlDB, err := initDB(false)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
