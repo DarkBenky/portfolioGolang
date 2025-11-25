@@ -47,6 +47,8 @@ def getSentiment(model: pipeline, title: str, summary: str, text: str, weights: 
     
     return weighted_sentiment
 
+BEFORE FETCHING NEW OR CLASIFIENG THEM CHECK IF WE HAVE THIS NEWS ALREADY IN DB IF SO WE CAN SKIP IT
+
 def getNews(Ticker: str, num_articles:int, model: pipeline):
     asset = yf.Ticker(Ticker)
     articles = []
