@@ -1267,6 +1267,7 @@ func main() {
 
 	e.POST("/register", addUser)
 	e.POST("/login", login)
+	e.GET("/news_exists", newsExistsWithTitle) // public for now TODO: secure later
 
 	protected := e.Group("/api")
 	protected.Use(echojwt.WithConfig(echojwt.Config{
@@ -1283,7 +1284,6 @@ func main() {
 	protected.GET("/holdings", GetHoldings)
 	protected.PUT("/holdings", ModifyHolding)
 	protected.DELETE("/holdings", RemoveHolding)
-	protected.GET("/news_exists", newsExistsWithTitle)
 
 	e.Logger.Fatal(e.Start(":8085"))
 }
