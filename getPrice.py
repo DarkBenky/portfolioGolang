@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
     now = datetime.now()
+    Ticker  = Ticker.strip('$')
     
     # Convert milliseconds to seconds if necessary
     if lastUpdatesUnixTimeStamp > 10**10:
