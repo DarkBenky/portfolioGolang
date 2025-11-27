@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import getPrice
+from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 
 app = flask.Flask(__name__)
 
@@ -242,4 +243,4 @@ async def api_get_price():
 
 if __name__ == '__main__':
     # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app
-    app.run(debug=True, host='0.0.0.0', port=5123, threaded=True)
+    app.run(debug=True, host='0.0.0.0', port=BACKEND_PYTHON_PORT, threaded=True)

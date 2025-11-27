@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -255,14 +257,14 @@ func fetchNewsPeriodic(interval time.Duration) {
 }
 
 func (database *DB) newsExists(title string, summary string) (bool, error) {
-    var count int
-    err := database.QueryRow(`
+	var count int
+	err := database.QueryRow(`
         SELECT COUNT(1) FROM news WHERE title = ? OR summary = ?
     `, title, summary).Scan(&count)
-    if err != nil {
-        return false, err
-    }
-    return count > 0, nil
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func newsExistsWithTitle(c echo.Context) error {
@@ -1250,6 +1252,11 @@ func GetHoldings(c echo.Context) error {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	sqlDB, err := initDB(true)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
@@ -1285,5 +1292,7 @@ func main() {
 	protected.PUT("/holdings", ModifyHolding)
 	protected.DELETE("/holdings", RemoveHolding)
 
-	e.Logger.Fatal(e.Start(":8085"))
+	goPort := os.Getenv("BACKEND_GO_PORT")
+	fmt.Printf("Starting server on port %s...\n", goPort)
+	e.Logger.Fatal(e.Start(":" + goPort))
 }
