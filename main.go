@@ -1250,7 +1250,7 @@ func GetHoldings(c echo.Context) error {
 }
 
 func main() {
-	sqlDB, err := initDB(false)
+	sqlDB, err := initDB(true)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
