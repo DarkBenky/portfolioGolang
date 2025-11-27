@@ -47,7 +47,7 @@ def getSentiment(model: pipeline, title: str, summary: str, text: str, weights: 
     
     return weighted_sentiment
 
-BEFORE FETCHING NEW OR CLASIFIENG THEM CHECK IF WE HAVE THIS NEWS ALREADY IN DB IF SO WE CAN SKIP IT
+# BEFORE FETCHING NEW OR CLASIFIENG THEM CHECK IF WE HAVE THIS NEWS ALREADY IN DB IF SO WE CAN SKIP IT
 
 def getNews(Ticker: str, num_articles:int, model: pipeline):
     asset = yf.Ticker(Ticker)
@@ -57,6 +57,11 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
         for item in news_items:
             content = item.get('content', item)
             canonicalUrl = content.get('canonicalUrl', '')
+            title = content.get('title', '')
+            summary = content.get('summary', '')
+
+            # check if news already exists in DB
+
             url = canonicalUrl.get('url', '')
             text = ''
             if url != '':
@@ -68,8 +73,8 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                 except Exception as e:
                     print(f"Error fetching article from {url}: {e}")
             news = {
-                'title': content.get('title', ''),
-                'summary': content.get('summary', ''),
+                'title': title,
+                'summary': summary,
                 'text': text,
                 'url': url,
                 'published_at': content.get('pubDate', ''),

@@ -254,6 +254,27 @@ func fetchNewsPeriodic(interval time.Duration) {
 	}
 }
 
+func (database *DB) newsExists(title string, summary string) (bool, error) {
+    var count int
+    err := database.QueryRow(`
+        SELECT COUNT(1) FROM news WHERE title = ? OR summary = ?
+    `, title, summary).Scan(&count)
+    if err != nil {
+        return false, err
+    }
+    return count > 0, nil
+}
+
+func newsExistsWithTitle(c echo.Context) error {
+	title := c.QueryParam("title")
+	summary := c.QueryParam("summary")
+	exists, err := db.newsExists(title, summary)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error checking news existence")
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"exists": exists})
+}
+
 func fetchNews(ticker string) error {
 	baseURL := BASE_URL + "/fetch_news"
 	params := url.Values{}
@@ -1240,7 +1261,7 @@ func main() {
 	log.Println("Database initialized successfully")
 
 	go fetchNewsPeriodic(4 * time.Hour)
-	go fetchPricesPeriodic(3 * time.Minute)
+	go fetchPricesPeriodic(10 * time.Minute)
 
 	e := echo.New()
 
@@ -1262,6 +1283,7 @@ func main() {
 	protected.GET("/holdings", GetHoldings)
 	protected.PUT("/holdings", ModifyHolding)
 	protected.DELETE("/holdings", RemoveHolding)
+	protected.GET("/news_exists", newsExistsWithTitle)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

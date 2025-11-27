@@ -1,10 +1,16 @@
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
+    now = datetime.now()
+    four_hours_ago = now - timedelta(hours=4)
+    timestamp_dt = datetime.fromtimestamp(lastUpdatesUnixTimeStamp)
+    
+    if timestamp_dt < four_hours_ago:
+        timestamp_dt = four_hours_ago
+
     ticker = yf.Ticker(Ticker)
-    start_date = datetime.fromtimestamp(lastUpdatesUnixTimeStamp)
-    data = ticker.history(start=start_date, interval=interval)
+    data = ticker.history(start=timestamp_dt, interval=interval)
     
     candles = []
     for timestamp, row in data.iterrows():
