@@ -9,12 +9,37 @@ import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import getPrice
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
+from datetime import datetime
+from collections import deque
 
 app = flask.Flask(__name__)
 
 model = creteSentimentAnalyzer()
 
 executor = ThreadPoolExecutor(max_workers=10)
+
+# Simple in-memory log storage (last 100 requests)
+request_logs = deque(maxlen=100)
+
+@app.before_request
+def log_request():
+    """Log every request before it's processed"""
+    log_entry = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'method': flask.request.method,
+        'path': flask.request.path,
+        'ip': flask.request.remote_addr,
+        'user_agent': flask.request.headers.get('User-Agent', 'Unknown')[:50]  # Truncate UA
+    }
+    request_logs.append(log_entry)
+
+@app.route('/logs', methods=['GET'])
+def view_logs():
+    """Display recent request logs"""
+    return flask.jsonify({
+        'total_logs': len(request_logs),
+        'logs': list(request_logs)
+    })
 
 @lru_cache(maxsize=256)
 def get_etf_ter_and_policy(ticker, isin):
