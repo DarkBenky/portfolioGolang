@@ -20,8 +20,12 @@ def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
     if timestamp_dt > now or timestamp_dt < four_hours_ago:
         timestamp_dt = four_hours_ago
     
-    ticker = yf.Ticker(Ticker)
-    data = ticker.history(start=timestamp_dt, end=now, interval=interval)
+    try:
+        ticker = yf.Ticker(Ticker)
+        data = ticker.history(start=timestamp_dt, end=now, interval=interval)
+    except Exception as e:
+        print(f"Error fetching data for {Ticker}: {e}")
+        return []
     
     candles = []
     for timestamp, row in data.iterrows():
