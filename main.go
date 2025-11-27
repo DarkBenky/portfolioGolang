@@ -1260,8 +1260,8 @@ func main() {
 
 	log.Println("Database initialized successfully")
 
-	go fetchNewsPeriodic(4 * time.Hour)
-	go fetchPricesPeriodic(10 * time.Minute)
+	go fetchNewsPeriodic(1 * time.Hour)
+	go fetchPricesPeriodic(3 * time.Minute)
 
 	e := echo.New()
 
@@ -1285,5 +1285,5 @@ func main() {
 	protected.DELETE("/holdings", RemoveHolding)
 	protected.GET("/news_exists", newsExistsWithTitle)
 
-	e.Logger.Fatal(e.Start(":8080"))
+	e.Logger.Fatal(e.Start(":8085"))
 }
