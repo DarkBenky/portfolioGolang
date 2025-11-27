@@ -1,2 +1,4 @@
-BACKEND="http://localhost:8080"
-FRONTEND="http://localhost:3000"
+BACKEND_GO="http://localhost:8080"
+BACKEND_GO_PORT=8080
+BACKEND_PYTHON="http://localhost:5123"
+BACKEND_PYTHON_PORT=5123

@@ -2,6 +2,8 @@ import yfinance as yf
 from newspaper import Article
 from transformers import BertTokenizer, BertForSequenceClassification
 from transformers import pipeline
+from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT, BACKEND_GO, BACKEND_GO_PORT
+import requests
 
 def creteSentimentAnalyzer():
     finbert_model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone',num_labels=3)
@@ -61,6 +63,15 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             summary = content.get('summary', '')
 
             # check if news already exists in DB
+            response = requests.get(f"{BACKEND_GO}/news_exists", params={"title": title, "summary": summary})
+            if response.status_code == 200:
+                exists = response.json().Get("exists", False)
+                if exists:
+                    print(f"News already exists in DB: {title}")
+                    continue  # skip this news item
+            else:
+                print(f"Error checking news existence for {title}: {response.status_code}")
+                continue  # skip this news item due to error
 
             url = canonicalUrl.get('url', '')
             text = ''
