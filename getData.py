@@ -28,7 +28,7 @@ def log_request():
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'method': flask.request.method,
         'path': flask.request.path,
-        'ip': flask.request.remote_addr,
+        # 'ip': flask.request.remote_addr,
         'user_agent': flask.request.headers.get('User-Agent', 'Unknown')[:50]  # Truncate UA
     }
     request_logs.append(log_entry)
