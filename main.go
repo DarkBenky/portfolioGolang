@@ -702,7 +702,7 @@ func populateFakeData(database *sql.DB) error {
 		},
 		{
 			Name: "Bitcoin",
-			Ticker: "BTC",
+			Ticker: "BTC-USD",
 			ISIN: "",
 			Exchange: "CRYPTO",
 			Etf: false,
