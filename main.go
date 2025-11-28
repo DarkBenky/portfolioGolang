@@ -1336,7 +1336,7 @@ func main() {
 
 	log.Println("Database initialized successfully")
 
-	go fetchNewsPeriodic(1 * time.Hour)
+	go fetchNewsPeriodic(30 * time.Minute)
 	go fetchPricesPeriodic(3 * time.Minute)
 
 	e := echo.New()
