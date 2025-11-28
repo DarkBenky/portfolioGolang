@@ -142,11 +142,11 @@ func fetchPrices(ticker string) error {
 		return err
 	}
 
-	now := time.Now().Unix()
-	
+	now := time.Now().UTC().Unix()
+
 	// If no previous data or invalid timestamp, start from 7 days ago
 	if lastTimestamp == 0 || lastTimestamp > now {
-		lastTimestamp = time.Now().Add(-7 * 24 * time.Hour).Unix()
+		lastTimestamp = time.Now().UTC().Add(-7 * 24 * time.Hour).Unix()
 		log.Printf("Using default start time for %s: %d", ticker, lastTimestamp)
 	}
 
@@ -994,18 +994,18 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 func (database *DB) addPrice(price Price) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	
+
 	// Validate timestamp
 	timestamp, err := strconv.ParseInt(price.Date, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp format: %v", err)
 	}
-	
-	now := time.Now().Unix()
+
+	now := time.Now().UTC().Unix()
 	if timestamp <= 0 || timestamp > now {
 		return fmt.Errorf("invalid timestamp: %d (now: %d)", timestamp, now)
 	}
-	
+
 	_, err = database.Exec(`
 		INSERT INTO prices (id_price, date, open, close, high, low, volume, id_asset, id_holding)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1020,22 +1020,22 @@ func addPriceIndexes(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_prices_asset ON prices(id_asset)`,
 		`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(date, id_holding, id_asset)`,
 	}
-	
+
 	for _, indexSQL := range indexes {
 		_, err := database.Exec(indexSQL)
 		if err != nil {
 			return fmt.Errorf("error creating index: %v", err)
 		}
 	}
-	
+
 	log.Println("Price indexes created successfully")
 	return nil
 }
 
 func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
 	var lastTimestamp sql.NullInt64
-	now := time.Now().Unix()
-	
+	now := time.Now().UTC().Unix()
+
 	err := database.QueryRow(`
 		SELECT MAX(CAST(date AS INTEGER))
 		FROM prices

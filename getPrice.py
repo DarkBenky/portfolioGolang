@@ -1,8 +1,8 @@
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     Ticker  = Ticker.strip('$')
     
     # Convert milliseconds to seconds if necessary
@@ -12,7 +12,7 @@ def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
     four_hours_ago = now - timedelta(hours=4)
     
     try:
-        timestamp_dt = datetime.fromtimestamp(lastUpdatesUnixTimeStamp)
+        timestamp_dt = datetime.fromtimestamp(lastUpdatesUnixTimeStamp, tz=timezone.utc)
     except (ValueError, OSError):
         timestamp_dt = four_hours_ago
     
