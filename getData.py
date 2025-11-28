@@ -45,6 +45,20 @@ def view_logs():
         'logs': list(request_logs)
     })
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint"""
+    return flask.jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'service': 'portfolio-python-api'
+    })
+
+
+@app.route('/')
+def index():
+    return f"OK - Backend Python running at {BACKEND_PYTHON}:{BACKEND_PYTHON_PORT}" 
+
 @lru_cache(maxsize=256)
 def get_etf_ter_and_policy(ticker, isin):
     """
