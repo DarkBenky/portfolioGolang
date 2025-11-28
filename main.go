@@ -699,6 +699,18 @@ func populateFakeData(database *sql.DB) error {
 			Policy:        "",
 			Currency:      "USD",
 		},
+		{
+			Name: "Bitcoin",
+			Ticker: "BTC",
+			ISIN: "",
+			Exchange: "CRYPTO",
+			Etf: false,
+			Quantity: 0.1,
+			PurchasePrice: 45000.00,
+			TER: 0.0,
+			Policy: "",
+			Currency: "USD",
+		},
 	}
 
 	for _, h := range holdings {
