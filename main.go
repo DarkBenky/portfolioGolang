@@ -701,16 +701,16 @@ func populateFakeData(database *sql.DB) error {
 			Currency:      "USD",
 		},
 		{
-			Name: "Bitcoin",
-			Ticker: "BTC-USD",
-			ISIN: "",
-			Exchange: "CRYPTO",
-			Etf: false,
-			Quantity: 0.1,
+			Name:          "Bitcoin",
+			Ticker:        "BTC-USD",
+			ISIN:          "",
+			Exchange:      "CRYPTO",
+			Etf:           false,
+			Quantity:      0.1,
 			PurchasePrice: 45000.00,
-			TER: 0.0,
-			Policy: "",
-			Currency: "USD",
+			TER:           0.0,
+			Policy:        "",
+			Currency:      "USD",
 		},
 	}
 
@@ -1340,6 +1340,10 @@ func main() {
 	go fetchPricesPeriodic(3 * time.Minute)
 
 	e := echo.New()
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete},
+	}))
 
 	e.POST("/register", addUser)
 	e.POST("/login", login)
