@@ -4,6 +4,7 @@ from transformers import BertTokenizer, BertForSequenceClassification
 from transformers import pipeline
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT, BACKEND_GO, BACKEND_GO_PORT
 import requests
+from datetime import datetime, timezone
 
 def creteSentimentAnalyzer():
     finbert_model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone',num_labels=3)
@@ -49,6 +50,42 @@ def getSentiment(model: pipeline, title: str, summary: str, text: str, weights: 
     
     return weighted_sentiment
 
+def convert_pubdate_to_unix(pub_date_str):
+    """
+    Convert Yahoo Finance pubDate string to Unix timestamp in UTC.
+    Yahoo typically returns timestamps as Unix seconds.
+    """
+    if not pub_date_str:
+        return int(datetime.now(timezone.utc).timestamp())
+    
+    try:
+        # Try to parse as Unix timestamp (seconds)
+        if isinstance(pub_date_str, (int, float)):
+            return int(pub_date_str)
+        
+        # If it's a string, try to convert to int
+        if isinstance(pub_date_str, str):
+            try:
+                return int(pub_date_str)
+            except ValueError:
+                pass
+            
+            # Try parsing as ISO format or common date formats
+            for fmt in ["%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                try:
+                    dt = datetime.strptime(pub_date_str, fmt)
+                    # Assume UTC if no timezone info
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return int(dt.timestamp())
+                except ValueError:
+                    continue
+    except Exception as e:
+        print(f"Error converting pubDate '{pub_date_str}': {e}")
+    
+    # Fallback to current time
+    return int(datetime.now(timezone.utc).timestamp())
+
 # BEFORE FETCHING NEW OR CLASIFIENG THEM CHECK IF WE HAVE THIS NEWS ALREADY IN DB IF SO WE CAN SKIP IT
 
 def getNews(Ticker: str, num_articles:int, model: pipeline):
@@ -65,7 +102,7 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             # check if news already exists in DB
             response = requests.get(f"{BACKEND_GO}/news_exists", params={"title": title, "summary": summary})
             if response.status_code == 200:
-                exists = response.json().Get("exists", False)
+                exists = response.json().get("exists", False)
                 if exists:
                     print(f"News already exists in DB: {title}")
                     continue  # skip this news item
@@ -83,12 +120,15 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                     text = article.text
                 except Exception as e:
                     print(f"Error fetching article from {url}: {e}")
+            
+            published_at_unix = convert_pubdate_to_unix(content.get('pubDate', ''))
+            
             news = {
                 'title': title,
                 'summary': summary,
                 'text': text,
                 'url': url,
-                'published_at': content.get('pubDate', ''),
+                'published_at': published_at_unix,
                 'author': content.get('provider', {}).get('displayName', '') if isinstance(content.get('provider'), dict) else '',
                 'img_url': content.get('thumbnail', {}).get('originalUrl', ''),
                 'sentiment': getSentiment(model, content.get('title', ''), content.get('summary', ''), text, [0.4, 0.35, 0.25])

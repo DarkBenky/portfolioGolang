@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	echojwt "github.com/labstack/echo-jwt/v4"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/crypto/bcrypt"
 )
 

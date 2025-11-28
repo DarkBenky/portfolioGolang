@@ -9,10 +9,14 @@ import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import getPrice
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import deque
+from flask_cors import CORS
 
 app = flask.Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app)
 
 model = creteSentimentAnalyzer()
 
@@ -25,7 +29,7 @@ request_logs = deque(maxlen=100)
 def log_request():
     """Log every request before it's processed"""
     log_entry = {
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
         'method': flask.request.method,
         'path': flask.request.path,
         # 'ip': flask.request.remote_addr,
@@ -33,7 +37,7 @@ def log_request():
     }
     request_logs.append(log_entry)
 
-@app.route('/logs', methods=['GET'])
+@app.route('/api/logs', methods=['GET'])
 def view_logs():
     """Display recent request logs"""
     return flask.jsonify({

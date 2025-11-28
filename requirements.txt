@@ -1,6 +1,10 @@
 flask==3.1.2
+flask-cors
 yfinance
 beautifulsoup4
 requests
 curl_cffi
 dotenv
+newspaper3k
+transformers
+torch
