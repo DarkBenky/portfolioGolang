@@ -23,7 +23,7 @@ model = creteSentimentAnalyzer()
 executor = ThreadPoolExecutor(max_workers=10)
 
 # Simple in-memory log storage (last 100 requests)
-request_logs = deque(maxlen=100)
+request_logs = deque(maxlen=512)
 
 @app.before_request
 def log_request():
