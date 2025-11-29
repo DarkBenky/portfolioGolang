@@ -122,8 +122,7 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             if url != '':
                 try:
                     article = Article(url)
-                    # Set a real browser User-Agent to avoid 403 errors
-                    article.download(input_encoding='utf-8')
+                    article.download()
                     article.parse()
                     text = article.text
                 except requests.exceptions.HTTPError as e:
@@ -145,7 +144,25 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                     else:
                         print(f"Error fetching article from {url}: {e}")
                 except Exception as e:
-                    print(f"Error fetching article from {url}: {e}")
+                    # If standard download fails, try with custom User-Agent
+                    if '403' in str(e) or 'Forbidden' in str(e):
+                        for user_agent in USER_AGENTS:
+                            try:
+                                headers = {'User-Agent': user_agent}
+                                response = requests.get(url, headers=headers, timeout=10)
+                                response.raise_for_status()
+                                
+                                article = Article(url)
+                                article.html = response.text
+                                article.parse()
+                                text = article.text
+                                break  # Success, exit loop
+                            except Exception:
+                                continue  # Try next User-Agent
+                        else:
+                            print(f"Error fetching article from {url}: {e}")
+                    else:
+                        print(f"Error fetching article from {url}: {e}")
             
             published_at_unix = convert_pubdate_to_unix(content.get('pubDate', ''))
             
