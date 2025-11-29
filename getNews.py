@@ -6,6 +6,13 @@ from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT, BACKEND_GO, BACKEND_GO_PORT
 import requests
 from datetime import datetime, timezone
 
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+]
+
 def creteSentimentAnalyzer():
     finbert_model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone',num_labels=3)
     finbert_tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
@@ -115,9 +122,28 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             if url != '':
                 try:
                     article = Article(url)
-                    article.download()
+                    # Set a real browser User-Agent to avoid 403 errors
+                    article.download(input_encoding='utf-8')
                     article.parse()
                     text = article.text
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 403:
+                        # Try with different User-Agents if 403 Forbidden
+                        for user_agent in USER_AGENTS:
+                            try:
+                                headers = {'User-Agent': user_agent}
+                                response = requests.get(url, headers=headers, timeout=10)
+                                response.raise_for_status()
+                                
+                                article = Article(url)
+                                article.html = response.text
+                                article.parse()
+                                text = article.text
+                                break  # Success, exit loop
+                            except Exception:
+                                continue  # Try next User-Agent
+                    else:
+                        print(f"Error fetching article from {url}: {e}")
                 except Exception as e:
                     print(f"Error fetching article from {url}: {e}")
             
