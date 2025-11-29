@@ -95,15 +95,14 @@ type News struct {
 }
 
 type Price struct {
-	IdPrice   string
-	Date      string
-	idAsset   string
-	idHolding string
-	Open      float64
-	Close     float64
-	High      float64
-	Low       float64
-	Volume    int64
+	IdPrice string
+	Ticker  string
+	Date    string
+	Open    float64
+	Close   float64
+	High    float64
+	Low     float64
+	Volume  int64
 }
 
 func fetchPricesPeriodic(interval time.Duration) {
@@ -188,16 +187,6 @@ func fetchPrices(ticker string) error {
 
 	log.Printf("Fetched %d price candles for %s", len(candles), ticker)
 
-	assets, err := db.getAssetsByTicker(ticker)
-	if err != nil {
-		log.Printf("Error fetching assets for ticker %s: %v", ticker, err)
-	}
-
-	holdings, err := db.getHoldingsByTicker(ticker)
-	if err != nil {
-		log.Printf("Error fetching holdings for ticker %s: %v", ticker, err)
-	}
-
 	validCandles := 0
 	for _, candle := range candles {
 		// Skip future timestamps
@@ -214,20 +203,13 @@ func fetchPrices(ticker string) error {
 
 		price := Price{
 			IdPrice: generateID(),
+			Ticker:  ticker,
 			Date:    strconv.FormatInt(candle.Timestamp, 10),
 			Open:    candle.Open,
 			High:    candle.High,
 			Low:     candle.Low,
 			Close:   candle.Close,
 			Volume:  int64(candle.Volume),
-		}
-
-		if len(assets) > 0 {
-			price.idAsset = assets[0].IdAsset
-		}
-
-		if len(holdings) > 0 {
-			price.idHolding = holdings[0].IdHolding
 		}
 
 		err = db.addPrice(price)
@@ -582,16 +564,14 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS prices (
 			id_price TEXT PRIMARY KEY,
+			ticker TEXT NOT NULL,
 			date TEXT NOT NULL,
 			open REAL NOT NULL,
 			close REAL NOT NULL,
 			high REAL NOT NULL,
 			low REAL NOT NULL,
 			volume INTEGER NOT NULL,
-			id_asset TEXT,
-			id_holding TEXT,
-			FOREIGN KEY (id_asset) REFERENCES assets(id_asset) ON DELETE CASCADE,
-			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
+			UNIQUE(ticker, date)
 		)
 	`)
 	if err != nil {
@@ -1019,19 +999,19 @@ func (database *DB) addPrice(price Price) error {
 		return fmt.Errorf("invalid timestamp: %d (now: %d)", timestamp, now)
 	}
 
+	// Use INSERT OR IGNORE to avoid duplicates (ticker, date combination must be unique)
 	_, err = database.Exec(`
-		INSERT INTO prices (id_price, date, open, close, high, low, volume, id_asset, id_holding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, price.IdPrice, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume, price.idAsset, price.idHolding)
+		INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
 	return err
 }
 
 func addPriceIndexes(database *sql.DB) error {
 	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker)`,
 		`CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date)`,
-		`CREATE INDEX IF NOT EXISTS idx_prices_holding ON prices(id_holding)`,
-		`CREATE INDEX IF NOT EXISTS idx_prices_asset ON prices(id_asset)`,
-		`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(date, id_holding, id_asset)`,
+		`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(ticker, date)`,
 	}
 
 	for _, indexSQL := range indexes {
@@ -1052,11 +1032,10 @@ func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
 	err := database.QueryRow(`
 		SELECT MAX(CAST(date AS INTEGER))
 		FROM prices
-		WHERE (id_holding IN (SELECT id_holding FROM holdings WHERE ticker = ?)
-		   OR id_asset IN (SELECT id_asset FROM assets WHERE ticker = ?))
+		WHERE ticker = ?
 		AND CAST(date AS INTEGER) > 0
 		AND CAST(date AS INTEGER) <= ?
-	`, ticker, ticker, now).Scan(&lastTimestamp)
+	`, ticker, now).Scan(&lastTimestamp)
 
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
