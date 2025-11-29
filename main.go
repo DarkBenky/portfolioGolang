@@ -323,7 +323,7 @@ func fetchNews(ticker string) error {
 		Summary     string  `json:"summary"`
 		Text        string  `json:"text"`
 		URL         string  `json:"url"`
-		PublishedAt string  `json:"published_at"`
+		PublishedAt int64   `json:"published_at"`
 		Author      string  `json:"author"`
 		ImgURL      string  `json:"img_url"`
 		Sentiment   float64 `json:"sentiment"`
@@ -355,7 +355,7 @@ func fetchNews(ticker string) error {
 			IdNews:      generateID(),
 			Title:       article.Title,
 			Link:        article.URL,
-			PublishedAt: article.PublishedAt,
+			PublishedAt: strconv.FormatInt(article.PublishedAt, 10),
 			Summary:     article.Summary,
 			Text:        article.Text,
 			Sentiment:   article.Sentiment,
