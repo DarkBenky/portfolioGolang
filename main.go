@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,13 +62,15 @@ type Holding struct {
 }
 
 type Region struct {
-	Name      string
-	IdHolding string
+	Name       string
+	Percentage float64
+	IdHolding  string
 }
 
 type Sector struct {
-	Name      string
-	IdHolding string
+	Name       string
+	Percentage float64
+	IdHolding  string
 }
 
 type Asset struct {
@@ -91,6 +94,7 @@ type News struct {
 	Text        string
 	idAsset     string
 	idHolding   string
+	Ticker      string
 	Sentiment   float64
 }
 
@@ -340,6 +344,7 @@ func fetchNews(ticker string) error {
 			PublishedAt: strconv.FormatInt(article.PublishedAt, 10),
 			Summary:     article.Summary,
 			Text:        article.Text,
+			Ticker:      ticker,
 			Sentiment:   article.Sentiment,
 		}
 
@@ -428,11 +433,12 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 		}
 	}
 
-	// Insert sectors
-	for sectorName := range etfData.Sectors {
+	// Insert sectors with percentages
+	for sectorName, percentage := range etfData.Sectors {
 		sector := Sector{
-			Name:      sectorName,
-			IdHolding: holdingID,
+			Name:       sectorName,
+			Percentage: percentage,
+			IdHolding:  holdingID,
 		}
 		err = db.addSector(sector)
 		if err != nil {
@@ -440,11 +446,12 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 		}
 	}
 
-	// Insert regions
-	for regionName := range etfData.Regions {
+	// Insert regions with percentages
+	for regionName, percentage := range etfData.Regions {
 		region := Region{
-			Name:      regionName,
-			IdHolding: holdingID,
+			Name:       regionName,
+			Percentage: percentage,
+			IdHolding:  holdingID,
 		}
 		err = db.addRegion(region)
 		if err != nil {
@@ -526,6 +533,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			summary TEXT,
 			text TEXT UNIQUE,
 			sentiment REAL,
+			ticker TEXT,
 			id_asset TEXT,
 			id_holding TEXT,
 			FOREIGN KEY (id_asset) REFERENCES assets(id_asset) ON DELETE CASCADE,
@@ -540,6 +548,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS regions (
 			name TEXT,
+			percentage REAL,
 			id_holding TEXT,
 			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
 		)
@@ -553,6 +562,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		CREATE TABLE IF NOT EXISTS sectors (
 			name TEXT,
 			id_holding TEXT,
+			percentage REAL,
 			FOREIGN KEY (id_holding) REFERENCES holdings(id_holding) ON DELETE CASCADE
 		)
 	`)
@@ -619,6 +629,14 @@ func populateFakeData(database *sql.DB) error {
 		TER           float64
 		Policy        string
 		Currency      string
+		Sectors       []struct {
+			Name       string
+			Percentage float64
+		}
+		Regions []struct {
+			Name       string
+			Percentage float64
+		}
 	}{
 		{
 			Name:          "Apple Inc.",
@@ -631,6 +649,18 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.0,
 			Policy:        "",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Technology", Percentage: 100.0},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "North America", Percentage: 100.0},
+			},
 		},
 		{
 			Name:          "Microsoft Corporation",
@@ -643,6 +673,18 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.0,
 			Policy:        "",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Technology", Percentage: 100.0},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "North America", Percentage: 100.0},
+			},
 		},
 		{
 			Name:          "Vanguard S&P 500 ETF",
@@ -655,6 +697,28 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.03,
 			Policy:        "Accumulating",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Technology", Percentage: 32.0},
+				{Name: "Healthcare", Percentage: 12.5},
+				{Name: "Financial Services", Percentage: 12.0},
+				{Name: "Consumer Cyclical", Percentage: 10.5},
+				{Name: "Communication Services", Percentage: 9.0},
+				{Name: "Industrials", Percentage: 8.5},
+				{Name: "Consumer Defensive", Percentage: 6.0},
+				{Name: "Energy", Percentage: 4.0},
+				{Name: "Utilities", Percentage: 2.5},
+				{Name: "Real Estate", Percentage: 2.0},
+				{Name: "Basic Materials", Percentage: 1.0},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "North America", Percentage: 100.0},
+			},
 		},
 		{
 			Name:          "iShares MSCI World ETF",
@@ -667,6 +731,31 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.24,
 			Policy:        "Distributing",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Technology", Percentage: 24.0},
+				{Name: "Financial Services", Percentage: 15.0},
+				{Name: "Healthcare", Percentage: 12.0},
+				{Name: "Consumer Cyclical", Percentage: 11.0},
+				{Name: "Industrials", Percentage: 10.5},
+				{Name: "Communication Services", Percentage: 7.5},
+				{Name: "Consumer Defensive", Percentage: 7.0},
+				{Name: "Energy", Percentage: 5.0},
+				{Name: "Basic Materials", Percentage: 4.0},
+				{Name: "Utilities", Percentage: 2.5},
+				{Name: "Real Estate", Percentage: 1.5},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "North America", Percentage: 70.0},
+				{Name: "Europe", Percentage: 17.0},
+				{Name: "Asia Pacific", Percentage: 10.0},
+				{Name: "Other", Percentage: 3.0},
+			},
 		},
 		{
 			Name:          "Tesla Inc.",
@@ -679,6 +768,18 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.0,
 			Policy:        "",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Consumer Cyclical", Percentage: 100.0},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "North America", Percentage: 100.0},
+			},
 		},
 		{
 			Name:          "Bitcoin",
@@ -691,6 +792,18 @@ func populateFakeData(database *sql.DB) error {
 			TER:           0.0,
 			Policy:        "",
 			Currency:      "USD",
+			Sectors: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Cryptocurrency", Percentage: 100.0},
+			},
+			Regions: []struct {
+				Name       string
+				Percentage float64
+			}{
+				{Name: "Global", Percentage: 100.0},
+			},
 		},
 	}
 
@@ -705,6 +818,28 @@ func populateFakeData(database *sql.DB) error {
 			continue
 		}
 		log.Printf("Added holding: %s (%s)", h.Name, h.Ticker)
+
+		// Add sectors for this holding
+		for _, sector := range h.Sectors {
+			_, err = database.Exec(`
+				INSERT INTO sectors (name, id_holding, percentage)
+				VALUES (?, ?, ?)
+			`, sector.Name, holdingID, sector.Percentage)
+			if err != nil {
+				log.Printf("Error inserting sector %s for %s: %v", sector.Name, h.Name, err)
+			}
+		}
+
+		// Add regions for this holding
+		for _, region := range h.Regions {
+			_, err = database.Exec(`
+				INSERT INTO regions (name, id_holding, percentage)
+				VALUES (?, ?, ?)
+			`, region.Name, holdingID, region.Percentage)
+			if err != nil {
+				log.Printf("Error inserting region %s for %s: %v", region.Name, h.Name, err)
+			}
+		}
 	}
 
 	log.Println("Test user created - Email: test@example.com, Password: test123")
@@ -884,9 +1019,9 @@ func (database *DB) addSector(sector Sector) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 	_, err := database.Exec(`
-		INSERT INTO sectors (name, id_holding)
-		VALUES (?, ?)
-	`, sector.Name, sector.IdHolding)
+		INSERT INTO sectors (name, id_holding, percentage)
+		VALUES (?, ?, ?)
+	`, sector.Name, sector.IdHolding, sector.Percentage)
 	return err
 }
 
@@ -894,9 +1029,9 @@ func (database *DB) addRegion(region Region) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 	_, err := database.Exec(`
-		INSERT INTO regions (name, id_holding)
-		VALUES (?, ?)
-	`, region.Name, region.IdHolding)
+		INSERT INTO regions (name, id_holding, percentage)
+		VALUES (?, ?, ?)
+	`, region.Name, region.IdHolding, region.Percentage)
 	return err
 }
 
@@ -904,9 +1039,9 @@ func (database *DB) addNews(news News) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 	_, err := database.Exec(`
-		INSERT INTO news (id_news, title, link, published_at, summary, text, sentiment, id_asset, id_holding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Sentiment, news.idAsset, news.idHolding)
+		INSERT INTO news (id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Sentiment, news.Ticker, news.idAsset, news.idHolding)
 	return err
 }
 
@@ -1295,7 +1430,1474 @@ func GetHoldings(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
 
-	return c.JSON(http.StatusOK, holdings)
+	// Build response with sectors and regions for each holding
+	type SectorData struct {
+		Name       string  `json:"name"`
+		Percentage float64 `json:"percentage"`
+	}
+	type RegionData struct {
+		Name       string  `json:"name"`
+		Percentage float64 `json:"percentage"`
+	}
+	type AssetData struct {
+		IdAsset  string `json:"id_asset"`
+		Name     string `json:"name"`
+		Ticker   string `json:"ticker"`
+		ISIN     string `json:"isin"`
+		Exchange string `json:"exchange"`
+		Sector   string `json:"sector"`
+		Region   string `json:"region"`
+	}
+	type HoldingWithDetails struct {
+		IdHolding     string       `json:"id_holding"`
+		Name          string       `json:"name"`
+		Ticker        string       `json:"ticker"`
+		ISIN          string       `json:"isin"`
+		Exchange      string       `json:"exchange"`
+		Policy        string       `json:"policy"`
+		Currency      string       `json:"currency"`
+		Quantity      float64      `json:"quantity"`
+		PurchasePrice float64      `json:"purchase_price"`
+		TER           float64      `json:"ter"`
+		Etf           bool         `json:"etf"`
+		Sectors       []SectorData `json:"sectors"`
+		Regions       []RegionData `json:"regions"`
+		Assets        []AssetData  `json:"assets,omitempty"`
+	}
+
+	result := make([]HoldingWithDetails, 0, len(holdings))
+
+	for _, h := range holdings {
+		// Get sectors for this holding with percentages
+		sectorRows, err := db.Query(`SELECT name, percentage FROM sectors WHERE id_holding = ?`, h.IdHolding)
+		var sectors []SectorData
+		if err == nil {
+			for sectorRows.Next() {
+				var name string
+				var percentage float64
+				if err := sectorRows.Scan(&name, &percentage); err == nil {
+					sectors = append(sectors, SectorData{Name: name, Percentage: percentage})
+				}
+			}
+			sectorRows.Close()
+		}
+
+		// Get regions for this holding with percentages
+		regionRows, err := db.Query(`SELECT name, percentage FROM regions WHERE id_holding = ?`, h.IdHolding)
+		var regions []RegionData
+		if err == nil {
+			for regionRows.Next() {
+				var name string
+				var percentage float64
+				if err := regionRows.Scan(&name, &percentage); err == nil {
+					regions = append(regions, RegionData{Name: name, Percentage: percentage})
+				}
+			}
+			regionRows.Close()
+		}
+
+		// Get assets for ETF holdings
+		var assets []AssetData
+		if h.Etf {
+			assetRows, err := db.Query(`
+				SELECT id_asset, name, ticker, isin, exchange, sector, region 
+				FROM assets 
+				WHERE id_holding = ?
+				LIMIT 10
+			`, h.IdHolding)
+			if err == nil {
+				for assetRows.Next() {
+					var a AssetData
+					if err := assetRows.Scan(&a.IdAsset, &a.Name, &a.Ticker, &a.ISIN, &a.Exchange, &a.Sector, &a.Region); err == nil {
+						assets = append(assets, a)
+					}
+				}
+				assetRows.Close()
+			}
+		}
+
+		result = append(result, HoldingWithDetails{
+			IdHolding:     h.IdHolding,
+			Name:          h.Name,
+			Ticker:        h.Ticker,
+			ISIN:          h.ISIN,
+			Exchange:      h.Exchange,
+			Policy:        h.Policy,
+			Currency:      h.currency,
+			Quantity:      h.Quantity,
+			PurchasePrice: h.PurchasePrice,
+			TER:           h.TER,
+			Etf:           h.Etf,
+			Sectors:       sectors,
+			Regions:       regions,
+			Assets:        assets,
+		})
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+func GetPortfolioValue(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+	totalValue := 0.0
+	for _, holding := range holdings {
+		// Fetch latest price for each holding
+		var latestPrice float64
+		err := db.QueryRow(`
+			SELECT close FROM prices 
+			WHERE ticker = ? 
+			ORDER BY CAST(date AS INTEGER) DESC 
+			LIMIT 1
+		`, holding.Ticker).Scan(&latestPrice)
+		if err != nil {
+			log.Printf("Error fetching latest price for %s: %v", holding.Ticker, err)
+			totalValue += holding.PurchasePrice * holding.Quantity
+			continue
+		}
+		totalValue += latestPrice * holding.Quantity
+	}
+	return c.JSON(http.StatusOK, map[string]float64{
+		"total_value": totalValue,
+	})
+}
+
+func GetPortfolioValueHistory(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	period := c.QueryParam("period")                  // e.g., "1d", "1w", "1m", "3m", "1y"
+	candleInterval := c.QueryParam("candle_interval") // e.g., "1m", "5m", "1h", "1d"
+	userID := claims.UserID
+
+	// Calculate start time based on period
+	now := time.Now().UTC()
+	var startTime time.Time
+	switch period {
+	case "1d":
+		startTime = now.Add(-24 * time.Hour)
+	case "1w":
+		startTime = now.Add(-7 * 24 * time.Hour)
+	case "1m":
+		startTime = now.Add(-30 * 24 * time.Hour)
+	case "3m":
+		startTime = now.Add(-90 * 24 * time.Hour)
+	case "1y":
+		startTime = now.Add(-365 * 24 * time.Hour)
+	default:
+		startTime = now.Add(-7 * 24 * time.Hour) // Default to 1 week
+	}
+
+	// Determine aggregation interval in seconds
+	var intervalSeconds int64
+	switch candleInterval {
+	case "1m":
+		intervalSeconds = 60
+	case "5m":
+		intervalSeconds = 300
+	case "15m":
+		intervalSeconds = 900
+	case "1h":
+		intervalSeconds = 3600
+	case "4h":
+		intervalSeconds = 14400
+	case "1d":
+		intervalSeconds = 86400
+	default:
+		intervalSeconds = 3600 // Default to 1 hour
+	}
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, []map[string]interface{}{})
+	}
+
+	// Build a map of ticker -> quantity
+	tickerQuantities := make(map[string]float64)
+	for _, holding := range holdings {
+		tickerQuantities[holding.Ticker] += holding.Quantity
+	}
+
+	// Get all unique tickers
+	tickers := make([]string, 0, len(tickerQuantities))
+	for ticker := range tickerQuantities {
+		tickers = append(tickers, ticker)
+	}
+
+	// Fetch all prices for user's tickers within the time range
+	startTimestamp := startTime.Unix()
+	endTimestamp := now.Unix()
+
+	// Build query with placeholders for all tickers
+	placeholders := ""
+	args := make([]interface{}, 0, len(tickers)+2)
+	for i, ticker := range tickers {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, ticker)
+	}
+	args = append(args, startTimestamp, endTimestamp)
+
+	query := fmt.Sprintf(`
+		SELECT ticker, date, open, high, low, close, volume
+		FROM prices
+		WHERE ticker IN (%s)
+		AND CAST(date AS INTEGER) >= ?
+		AND CAST(date AS INTEGER) <= ?
+		ORDER BY CAST(date AS INTEGER) ASC
+	`, placeholders)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Printf("Error querying prices: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving price history")
+	}
+	defer rows.Close()
+
+	// Group prices by timestamp bucket and ticker
+	type PriceData struct {
+		Open   float64
+		High   float64
+		Low    float64
+		Close  float64
+		Volume int64
+	}
+
+	// Map: bucket timestamp -> ticker -> price data
+	bucketData := make(map[int64]map[string]*PriceData)
+
+	for rows.Next() {
+		var ticker, dateStr string
+		var open, high, low, closePrice float64
+		var volume int64
+
+		err := rows.Scan(&ticker, &dateStr, &open, &high, &low, &closePrice, &volume)
+		if err != nil {
+			log.Printf("Error scanning price row: %v", err)
+			continue
+		}
+
+		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
+		bucket := (timestamp / intervalSeconds) * intervalSeconds
+
+		if bucketData[bucket] == nil {
+			bucketData[bucket] = make(map[string]*PriceData)
+		}
+
+		if bucketData[bucket][ticker] == nil {
+			bucketData[bucket][ticker] = &PriceData{
+				Open:   open,
+				High:   high,
+				Low:    low,
+				Close:  closePrice,
+				Volume: volume,
+			}
+		} else {
+			// Aggregate within the bucket
+			pd := bucketData[bucket][ticker]
+			if high > pd.High {
+				pd.High = high
+			}
+			if low < pd.Low {
+				pd.Low = low
+			}
+			pd.Close = closePrice // Last close in the bucket
+			pd.Volume += volume
+		}
+	}
+
+	// Sort buckets by timestamp
+	bucketTimestamps := make([]int64, 0, len(bucketData))
+	for ts := range bucketData {
+		bucketTimestamps = append(bucketTimestamps, ts)
+	}
+
+	// Sort timestamps
+	for i := 0; i < len(bucketTimestamps)-1; i++ {
+		for j := i + 1; j < len(bucketTimestamps); j++ {
+			if bucketTimestamps[i] > bucketTimestamps[j] {
+				bucketTimestamps[i], bucketTimestamps[j] = bucketTimestamps[j], bucketTimestamps[i]
+			}
+		}
+	}
+
+	// Calculate portfolio value for each bucket
+	type PortfolioCandle struct {
+		Timestamp int64   `json:"timestamp"`
+		Open      float64 `json:"open"`
+		High      float64 `json:"high"`
+		Low       float64 `json:"low"`
+		Close     float64 `json:"close"`
+		Volume    int64   `json:"volume"`
+	}
+
+	// Track last known prices for each ticker (for gaps in data)
+	lastKnownPrices := make(map[string]*PriceData)
+
+	result := make([]PortfolioCandle, 0, len(bucketTimestamps))
+
+	for _, bucket := range bucketTimestamps {
+		tickerPrices := bucketData[bucket]
+
+		var portfolioOpen, portfolioHigh, portfolioLow, portfolioClose float64
+		var portfolioVolume int64
+
+		for ticker, quantity := range tickerQuantities {
+			var pd *PriceData
+
+			if tickerPrices[ticker] != nil {
+				pd = tickerPrices[ticker]
+				lastKnownPrices[ticker] = pd
+			} else if lastKnownPrices[ticker] != nil {
+				pd = lastKnownPrices[ticker]
+			} else {
+				continue // No price data for this ticker yet
+			}
+
+			portfolioOpen += pd.Open * quantity
+			portfolioHigh += pd.High * quantity
+			portfolioLow += pd.Low * quantity
+			portfolioClose += pd.Close * quantity
+			portfolioVolume += pd.Volume
+		}
+
+		// Only add candle if we have data
+		if portfolioClose > 0 {
+			result = append(result, PortfolioCandle{
+				Timestamp: bucket,
+				Open:      portfolioOpen,
+				High:      portfolioHigh,
+				Low:       portfolioLow,
+				Close:     portfolioClose,
+				Volume:    portfolioVolume,
+			})
+		}
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+func getPortfolioValueChange(c echo.Context) error {
+	// return day change, day change percent, total change, total change percent
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"current_value":        0,
+			"day_change":           0,
+			"day_change_percent":   0,
+			"total_change":         0,
+			"total_change_percent": 0,
+			"total_invested":       0,
+		})
+	}
+
+	now := time.Now().UTC()
+	oneDayAgo := now.Add(-24 * time.Hour).Unix()
+
+	var currentValue float64
+	var previousDayValue float64
+	var totalInvested float64
+
+	for _, holding := range holdings {
+		totalInvested += holding.PurchasePrice * holding.Quantity
+
+		// Get current (latest) price
+		var latestPrice float64
+		err := db.QueryRow(`
+			SELECT close FROM prices 
+			WHERE ticker = ? 
+			ORDER BY CAST(date AS INTEGER) DESC 
+			LIMIT 1
+		`, holding.Ticker).Scan(&latestPrice)
+
+		if err != nil {
+			// Use purchase price as fallback
+			latestPrice = holding.PurchasePrice
+		}
+		currentValue += latestPrice * holding.Quantity
+
+		// Get price from ~24 hours ago (closest available)
+		var previousPrice float64
+		err = db.QueryRow(`
+			SELECT close FROM prices 
+			WHERE ticker = ? 
+			AND CAST(date AS INTEGER) <= ?
+			ORDER BY CAST(date AS INTEGER) DESC 
+			LIMIT 1
+		`, holding.Ticker, oneDayAgo).Scan(&previousPrice)
+
+		if err != nil {
+			// Use current price as fallback (no change)
+			previousPrice = latestPrice
+		}
+		previousDayValue += previousPrice * holding.Quantity
+	}
+
+	// Calculate day change
+	dayChange := currentValue - previousDayValue
+	dayChangePercent := 0.0
+	if previousDayValue > 0 {
+		dayChangePercent = (dayChange / previousDayValue) * 100
+	}
+
+	// Calculate total change (current value vs total invested)
+	totalChange := currentValue - totalInvested
+	totalChangePercent := 0.0
+	if totalInvested > 0 {
+		totalChangePercent = (totalChange / totalInvested) * 100
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"current_value":        currentValue,
+		"day_change":           dayChange,
+		"day_change_percent":   dayChangePercent,
+		"total_change":         totalChange,
+		"total_change_percent": totalChangePercent,
+		"total_invested":       totalInvested,
+	})
+}
+
+func getAssetValueChange(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+	assetTicker := c.QueryParam("ticker")
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	var totalQuantity float64
+	for _, holding := range holdings {
+		if holding.Ticker == assetTicker {
+			totalQuantity += holding.Quantity
+		}
+	}
+
+	if totalQuantity == 0 {
+		return c.String(http.StatusNotFound, "No holdings found for the specified asset")
+	}
+
+	// Get latest price
+	var latestPrice float64
+	err = db.QueryRow(`
+		SELECT close FROM prices 
+		WHERE ticker = ? 
+		ORDER BY CAST(date AS INTEGER) DESC 
+		LIMIT 1
+	`, assetTicker).Scan(&latestPrice)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
+	}
+
+	// Get price 24 hours ago
+	oneDayAgo := time.Now().UTC().Add(-24 * time.Hour).Unix()
+	var previousPrice float64
+	err = db.QueryRow(`
+		SELECT close FROM prices 
+		WHERE ticker = ?
+		AND CAST(date AS INTEGER) <= ?
+		ORDER BY CAST(date AS INTEGER) DESC 
+		LIMIT 1
+	`, assetTicker, oneDayAgo).Scan(&previousPrice)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving previous price")
+	}
+
+	currentValue := latestPrice * totalQuantity
+	previousValue := previousPrice * totalQuantity
+	dayChange := currentValue - previousValue
+	dayChangePercent := 0.0
+	if previousValue > 0 {
+		dayChangePercent = (dayChange / previousValue) * 100
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"current_value":      currentValue,
+		"day_change":         dayChange,
+		"day_change_percent": dayChangePercent,
+	})
+}
+
+func getLatestNewsForPortfolio(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	limitParam := c.QueryParam("limit")
+	limit, err := strconv.Atoi(limitParam)
+	if err != nil {
+		limit = 10 // default limit
+	}
+	offsetParam := c.QueryParam("offset")
+	offset, err := strconv.Atoi(offsetParam)
+	if err != nil {
+		offset = 0
+	}
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, []News{})
+	}
+
+	// Build list of tickers from user's holdings
+	tickers := make([]string, 0, len(holdings))
+	for _, h := range holdings {
+		tickers = append(tickers, h.Ticker)
+	}
+
+	// Build query with placeholders for tickers
+	placeholders := ""
+	args := make([]interface{}, 0, len(tickers)+2)
+	for i, ticker := range tickers {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, ticker)
+	}
+	args = append(args, limit, offset)
+
+	query := fmt.Sprintf(`
+		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+		FROM news
+		WHERE ticker IN (%s)
+		ORDER BY CAST(published_at AS INTEGER) DESC
+		LIMIT ? OFFSET ?
+	`, placeholders)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Printf("Error querying news: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving news")
+	}
+	defer rows.Close()
+
+	var newsList []News
+	for rows.Next() {
+		var n News
+		var idAsset, idHolding sql.NullString
+		err := rows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary, &n.Text, &n.Sentiment, &n.Ticker, &idAsset, &idHolding)
+		if err != nil {
+			log.Printf("Error scanning news row: %v", err)
+			continue
+		}
+		if idAsset.Valid {
+			n.idAsset = idAsset.String
+		}
+		if idHolding.Valid {
+			n.idHolding = idHolding.String
+		}
+		newsList = append(newsList, n)
+	}
+
+	return c.JSON(http.StatusOK, newsList)
+}
+
+func getLatestNewsForAsset(c echo.Context) error {
+	limitParam := c.QueryParam("limit")
+	limit, err := strconv.Atoi(limitParam)
+	if err != nil {
+		limit = 10 // default limit
+	}
+	offsetParam := c.QueryParam("offset")
+	offset, err := strconv.Atoi(offsetParam)
+	if err != nil {
+		offset = 0
+	}
+	ticker := c.QueryParam("ticker")
+
+	query := `
+		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+		FROM news
+		WHERE ticker = ?
+		ORDER BY CAST(published_at AS INTEGER) DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := db.Query(query, ticker, limit, offset)
+	if err != nil {
+		log.Printf("Error querying news: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving news")
+	}
+	defer rows.Close()
+
+	var newsList []News
+	for rows.Next() {
+		var n News
+		var idAsset, idHolding sql.NullString
+		err := rows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary, &n.Text, &n.Sentiment, &n.Ticker, &idAsset, &idHolding)
+		if err != nil {
+			log.Printf("Error scanning news row: %v", err)
+			continue
+		}
+		if idAsset.Valid {
+			n.idAsset = idAsset.String
+		}
+		if idHolding.Valid {
+			n.idHolding = idHolding.String
+		}
+		newsList = append(newsList, n)
+	}
+
+	return c.JSON(http.StatusOK, newsList)
+}
+
+func getPortfolioDaySentiment(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"average_sentiment": 0,
+			"news_count":        0,
+		})
+	}
+
+	// Build list of tickers from user's holdings
+	tickers := make([]string, 0, len(holdings))
+	for _, h := range holdings {
+		tickers = append(tickers, h.Ticker)
+	}
+
+	// Build query with placeholders for tickers
+	placeholders := ""
+	args := make([]interface{}, 0, len(tickers)+2)
+	for i, ticker := range tickers {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, ticker)
+	}
+
+	now := time.Now().UTC()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+	endOfDay := startOfDay + 86400
+	args = append(args, startOfDay, endOfDay)
+
+	query := fmt.Sprintf(`
+		SELECT sentiment FROM news
+		WHERE ticker IN (%s)
+		AND CAST(published_at AS INTEGER) >= ?
+		AND CAST(published_at AS INTEGER) < ?
+		AND sentiment IS NOT NULL
+	`, placeholders)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Printf("Error querying news sentiment: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving sentiment")
+	}
+	defer rows.Close()
+
+	var totalSentiment float64
+	var sentimentCount int
+
+	for rows.Next() {
+		var sentiment float64
+		if err := rows.Scan(&sentiment); err != nil {
+			continue
+		}
+		totalSentiment += sentiment
+		sentimentCount++
+	}
+
+	averageSentiment := 0.0
+	if sentimentCount > 0 {
+		averageSentiment = totalSentiment / float64(sentimentCount)
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"average_sentiment": averageSentiment,
+		"news_count":        sentimentCount,
+	})
+}
+
+func getAssetDaySentiment(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	now := time.Now().UTC()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+	endOfDay := startOfDay + 86400
+
+	query := `
+		SELECT sentiment FROM news
+		WHERE ticker = ?
+		AND CAST(published_at AS INTEGER) >= ?
+		AND CAST(published_at AS INTEGER) < ?
+		AND sentiment IS NOT NULL
+	`
+
+	rows, err := db.Query(query, ticker, startOfDay, endOfDay)
+	if err != nil {
+		log.Printf("Error querying news sentiment: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving sentiment")
+	}
+	defer rows.Close()
+
+	var totalSentiment float64
+	var sentimentCount int
+
+	for rows.Next() {
+		var sentiment float64
+		if err := rows.Scan(&sentiment); err != nil {
+			continue
+		}
+		totalSentiment += sentiment
+		sentimentCount++
+	}
+
+	averageSentiment := 0.0
+	if sentimentCount > 0 {
+		averageSentiment = totalSentiment / float64(sentimentCount)
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"ticker":            ticker,
+		"average_sentiment": averageSentiment,
+		"news_count":        sentimentCount,
+	})
+}
+
+func getPortfolioAllocation(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"sectors": []map[string]interface{}{},
+			"regions": []map[string]interface{}{},
+		})
+	}
+
+	// Calculate total portfolio value for weighting
+	totalPortfolioValue := 0.0
+	holdingValues := make(map[string]float64)
+
+	for _, h := range holdings {
+		var latestPrice float64
+		err := db.QueryRow(`
+			SELECT close FROM prices 
+			WHERE ticker = ? 
+			ORDER BY CAST(date AS INTEGER) DESC 
+			LIMIT 1
+		`, h.Ticker).Scan(&latestPrice)
+		if err != nil {
+			latestPrice = h.PurchasePrice
+		}
+		holdingValue := latestPrice * h.Quantity
+		holdingValues[h.IdHolding] = holdingValue
+		totalPortfolioValue += holdingValue
+	}
+
+	// Aggregate sectors weighted by holding value
+	sectorTotals := make(map[string]float64)
+	regionTotals := make(map[string]float64)
+
+	for _, h := range holdings {
+		holdingWeight := 0.0
+		if totalPortfolioValue > 0 {
+			holdingWeight = holdingValues[h.IdHolding] / totalPortfolioValue
+		}
+
+		// Get sectors for this holding
+		sectorRows, err := db.Query(`SELECT name, percentage FROM sectors WHERE id_holding = ?`, h.IdHolding)
+		if err == nil {
+			for sectorRows.Next() {
+				var name string
+				var percentage float64
+				if err := sectorRows.Scan(&name, &percentage); err == nil {
+					// Weight the sector percentage by the holding's weight in portfolio
+					sectorTotals[name] += percentage * holdingWeight
+				}
+			}
+			sectorRows.Close()
+		}
+
+		// Get regions for this holding
+		regionRows, err := db.Query(`SELECT name, percentage FROM regions WHERE id_holding = ?`, h.IdHolding)
+		if err == nil {
+			for regionRows.Next() {
+				var name string
+				var percentage float64
+				if err := regionRows.Scan(&name, &percentage); err == nil {
+					// Weight the region percentage by the holding's weight in portfolio
+					regionTotals[name] += percentage * holdingWeight
+				}
+			}
+			regionRows.Close()
+		}
+
+		// For non-ETF holdings (stocks), count them as 100% of their own sector/region if known
+		if !h.Etf {
+			// Add the holding itself as its own allocation
+			sectorTotals["Individual Stocks"] += holdingWeight * 100
+		}
+	}
+
+	// Convert to response format
+	type AllocationItem struct {
+		Name       string  `json:"name"`
+		Percentage float64 `json:"percentage"`
+	}
+
+	sectors := make([]AllocationItem, 0)
+	for name, percentage := range sectorTotals {
+		sectors = append(sectors, AllocationItem{Name: name, Percentage: percentage})
+	}
+
+	regions := make([]AllocationItem, 0)
+	for name, percentage := range regionTotals {
+		regions = append(regions, AllocationItem{Name: name, Percentage: percentage})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"total_value": totalPortfolioValue,
+		"sectors":     sectors,
+		"regions":     regions,
+	})
+}
+
+func GetTickerValue(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	// Fetch latest price for the ticker
+	var latestPrice float64
+	err := db.QueryRow(`
+		SELECT close FROM prices
+		WHERE ticker = ?
+		ORDER BY CAST(date AS INTEGER) DESC
+		LIMIT 1
+	`, ticker).Scan(&latestPrice)
+	if err != nil {
+		log.Printf("Error fetching latest price for %s: %v", ticker, err)
+		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
+	}
+
+	return c.JSON(http.StatusOK, map[string]float64{
+		"latest_price": latestPrice,
+	})
+}
+
+func GetAssetPriceHistory(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	period := c.QueryParam("period")                  // e.g., "1d", "1w", "1m", "3m", "1y"
+	candleInterval := c.QueryParam("candle_interval") // e.g., "1m", "5m", "1h", "1d"
+
+	// Calculate start time based on period
+	now := time.Now().UTC()
+	var startTime time.Time
+	switch period {
+	case "1d":
+		startTime = now.Add(-24 * time.Hour)
+	case "1w":
+		startTime = now.Add(-7 * 24 * time.Hour)
+	case "1m":
+		startTime = now.Add(-30 * 24 * time.Hour)
+	case "3m":
+		startTime = now.Add(-90 * 24 * time.Hour)
+	case "1y":
+		startTime = now.Add(-365 * 24 * time.Hour)
+	default:
+		startTime = now.Add(-7 * 24 * time.Hour) // Default to 1 week
+	}
+
+	// Determine aggregation interval in seconds
+	var intervalSeconds int64
+	switch candleInterval {
+	case "1m":
+		intervalSeconds = 60
+	case "5m":
+		intervalSeconds = 300
+	case "15m":
+		intervalSeconds = 900
+	case "1h":
+		intervalSeconds = 3600
+	case "4h":
+		intervalSeconds = 14400
+	case "1d":
+		intervalSeconds = 86400
+	default:
+		intervalSeconds = 3600 // Default to 1 hour
+	}
+
+	startTimestamp := startTime.Unix()
+	endTimestamp := now.Unix()
+
+	query := `
+		SELECT date, open, high, low, close, volume
+		FROM prices
+		WHERE ticker = ?
+		AND CAST(date AS INTEGER) >= ?
+		AND CAST(date AS INTEGER) <= ?
+		ORDER BY CAST(date AS INTEGER) ASC
+	`
+
+	rows, err := db.Query(query, ticker, startTimestamp, endTimestamp)
+	if err != nil {
+		log.Printf("Error querying prices for %s: %v", ticker, err)
+		return c.String(http.StatusInternalServerError, "Error retrieving price history")
+	}
+	defer rows.Close()
+
+	// Group prices by timestamp bucket
+	type PriceData struct {
+		Open   float64
+		High   float64
+		Low    float64
+		Close  float64
+		Volume int64
+	}
+
+	bucketData := make(map[int64]*PriceData)
+
+	for rows.Next() {
+		var dateStr string
+		var open, high, low, closePrice float64
+		var volume int64
+
+		err := rows.Scan(&dateStr, &open, &high, &low, &closePrice, &volume)
+		if err != nil {
+			log.Printf("Error scanning price row: %v", err)
+			continue
+		}
+
+		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
+		bucket := (timestamp / intervalSeconds) * intervalSeconds
+
+		if bucketData[bucket] == nil {
+			bucketData[bucket] = &PriceData{
+				Open:   open,
+				High:   high,
+				Low:    low,
+				Close:  closePrice,
+				Volume: volume,
+			}
+		} else {
+			// Aggregate within the bucket
+			pd := bucketData[bucket]
+			if high > pd.High {
+				pd.High = high
+			}
+			if low < pd.Low {
+				pd.Low = low
+			}
+			pd.Close = closePrice // Last close in the bucket
+			pd.Volume += volume
+		}
+	}
+
+	// Sort buckets by timestamp
+	bucketTimestamps := make([]int64, 0, len(bucketData))
+	for ts := range bucketData {
+		bucketTimestamps = append(bucketTimestamps, ts)
+	}
+
+	// Sort timestamps
+	for i := 0; i < len(bucketTimestamps)-1; i++ {
+		for j := i + 1; j < len(bucketTimestamps); j++ {
+			if bucketTimestamps[i] > bucketTimestamps[j] {
+				bucketTimestamps[i], bucketTimestamps[j] = bucketTimestamps[j], bucketTimestamps[i]
+			}
+		}
+	}
+
+	// Build result
+	type Candle struct {
+		Timestamp int64   `json:"timestamp"`
+		Open      float64 `json:"open"`
+		High      float64 `json:"high"`
+		Low       float64 `json:"low"`
+		Close     float64 `json:"close"`
+		Volume    int64   `json:"volume"`
+	}
+
+	result := make([]Candle, 0, len(bucketTimestamps))
+
+	for _, bucket := range bucketTimestamps {
+		pd := bucketData[bucket]
+		result = append(result, Candle{
+			Timestamp: bucket,
+			Open:      pd.Open,
+			High:      pd.High,
+			Low:       pd.Low,
+			Close:     pd.Close,
+			Volume:    pd.Volume,
+		})
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// PortfolioStats represents statistical metrics for a portfolio
+type PortfolioStats struct {
+	YoYReturn        float64 `json:"yoy_return"`          // Year-over-Year Average Return (%)
+	MaxDrawdown      float64 `json:"max_drawdown"`        // Maximum Drawdown (%)
+	AvgDrawdown      float64 `json:"avg_drawdown"`        // Average Drawdown (%)
+	SortinoRatio     float64 `json:"sortino_ratio"`       // Sortino Ratio
+	AggregatedTER    float64 `json:"aggregated_ter"`      // Weighted average TER (%)
+	TotalValue       float64 `json:"total_value"`         // Current portfolio value
+	TotalCost        float64 `json:"total_cost"`          // Total cost basis
+	TotalGainLoss    float64 `json:"total_gain_loss"`     // Total gain/loss
+	TotalGainLossPct float64 `json:"total_gain_loss_pct"` // Total gain/loss percentage
+}
+
+// AssetStats represents statistical metrics for a single asset
+type AssetStats struct {
+	Ticker       string  `json:"ticker"`
+	YoYReturn    float64 `json:"yoy_return"`    // Year-over-Year Return (%)
+	MaxDrawdown  float64 `json:"max_drawdown"`  // Maximum Drawdown (%)
+	AvgDrawdown  float64 `json:"avg_drawdown"`  // Average Drawdown (%)
+	SortinoRatio float64 `json:"sortino_ratio"` // Sortino Ratio
+	TER          float64 `json:"ter"`           // TER (%)
+	CurrentPrice float64 `json:"current_price"` // Current price
+	Quantity     float64 `json:"quantity"`      // Quantity held
+	CurrentValue float64 `json:"current_value"` // Current value
+	CostBasis    float64 `json:"cost_basis"`    // Cost basis
+	GainLoss     float64 `json:"gain_loss"`     // Gain/loss
+	GainLossPct  float64 `json:"gain_loss_pct"` // Gain/loss percentage
+}
+
+// calculateDrawdowns calculates max and average drawdown from a series of values
+func calculateDrawdowns(values []float64) (maxDD float64, avgDD float64) {
+	if len(values) < 2 {
+		return 0, 0
+	}
+
+	peak := values[0]
+	var drawdowns []float64
+
+	for _, value := range values {
+		if value > peak {
+			peak = value
+		}
+		if peak > 0 {
+			drawdown := (peak - value) / peak * 100
+			if drawdown > 0 {
+				drawdowns = append(drawdowns, drawdown)
+			}
+			if drawdown > maxDD {
+				maxDD = drawdown
+			}
+		}
+	}
+
+	if len(drawdowns) > 0 {
+		sum := 0.0
+		for _, dd := range drawdowns {
+			sum += dd
+		}
+		avgDD = sum / float64(len(drawdowns))
+	}
+
+	return maxDD, avgDD
+}
+
+// calculateSortinoRatio calculates the Sortino ratio from daily returns
+// Sortino = (Average Return - Risk-Free Rate) / Downside Deviation
+func calculateSortinoRatio(dailyReturns []float64, riskFreeRate float64) float64 {
+	if len(dailyReturns) < 2 {
+		return 0
+	}
+
+	// Calculate average return
+	sum := 0.0
+	for _, r := range dailyReturns {
+		sum += r
+	}
+	avgReturn := sum / float64(len(dailyReturns))
+
+	// Calculate downside deviation (only negative returns)
+	var downsideSquares []float64
+	for _, r := range dailyReturns {
+		if r < riskFreeRate {
+			diff := r - riskFreeRate
+			downsideSquares = append(downsideSquares, diff*diff)
+		}
+	}
+
+	if len(downsideSquares) == 0 {
+		return 0 // No downside risk
+	}
+
+	downsideSum := 0.0
+	for _, sq := range downsideSquares {
+		downsideSum += sq
+	}
+	downsideDeviation := math.Sqrt(downsideSum / float64(len(downsideSquares)))
+
+	if downsideDeviation == 0 {
+		return 0
+	}
+
+	// Annualize: multiply by sqrt(252) for daily data
+	annualizedReturn := avgReturn * 252
+	annualizedDownside := downsideDeviation * math.Sqrt(252)
+
+	return (annualizedReturn - riskFreeRate) / annualizedDownside
+}
+
+// calculateYoYReturn calculates Year-over-Year return from price history
+func calculateYoYReturn(prices []float64, timestamps []int64) float64 {
+	if len(prices) < 2 {
+		return 0
+	}
+
+	// Get prices from approximately 1 year ago and now
+	now := time.Now().UTC().Unix()
+	oneYearAgo := now - 365*24*3600
+
+	var startPrice, endPrice float64
+	startFound := false
+
+	for i, ts := range timestamps {
+		if !startFound && ts >= oneYearAgo {
+			startPrice = prices[i]
+			startFound = true
+		}
+		endPrice = prices[i] // Last price is the end price
+	}
+
+	if !startFound || startPrice == 0 {
+		// Use first available price
+		startPrice = prices[0]
+	}
+
+	return (endPrice - startPrice) / startPrice * 100
+}
+
+func getPortfolioStats(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, PortfolioStats{})
+	}
+
+	// Build ticker -> quantity and ticker -> holding map
+	tickerQuantities := make(map[string]float64)
+	tickerHoldings := make(map[string]Holding)
+	for _, holding := range holdings {
+		tickerQuantities[holding.Ticker] += holding.Quantity
+		tickerHoldings[holding.Ticker] = holding
+	}
+
+	tickers := make([]string, 0, len(tickerQuantities))
+	for ticker := range tickerQuantities {
+		tickers = append(tickers, ticker)
+	}
+
+	// Get 1 year of historical data
+	now := time.Now().UTC()
+	startTime := now.Add(-365 * 24 * time.Hour)
+
+	// Query prices for all tickers
+	placeholders := ""
+	args := make([]interface{}, 0, len(tickers)+2)
+	for i, ticker := range tickers {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, ticker)
+	}
+	args = append(args, startTime.Unix(), now.Unix())
+
+	query := fmt.Sprintf(`
+		SELECT ticker, date, close
+		FROM prices
+		WHERE ticker IN (%s)
+		AND CAST(date AS INTEGER) >= ?
+		AND CAST(date AS INTEGER) <= ?
+		ORDER BY CAST(date AS INTEGER) ASC
+	`, placeholders)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving price history")
+	}
+	defer rows.Close()
+
+	// Group prices by day and calculate portfolio value for each day
+	type DayPrice struct {
+		Ticker string
+		Close  float64
+	}
+	dayPrices := make(map[int64][]DayPrice)
+
+	for rows.Next() {
+		var ticker, dateStr string
+		var closePrice float64
+		if err := rows.Scan(&ticker, &dateStr, &closePrice); err != nil {
+			continue
+		}
+		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
+		dayBucket := (timestamp / 86400) * 86400
+		dayPrices[dayBucket] = append(dayPrices[dayBucket], DayPrice{ticker, closePrice})
+	}
+
+	// Sort days
+	days := make([]int64, 0, len(dayPrices))
+	for day := range dayPrices {
+		days = append(days, day)
+	}
+	for i := 0; i < len(days)-1; i++ {
+		for j := i + 1; j < len(days); j++ {
+			if days[i] > days[j] {
+				days[i], days[j] = days[j], days[i]
+			}
+		}
+	}
+
+	// Calculate daily portfolio values
+	var portfolioValues []float64
+	var timestamps []int64
+	lastPrices := make(map[string]float64)
+
+	for _, day := range days {
+		// Update last known prices
+		for _, dp := range dayPrices[day] {
+			lastPrices[dp.Ticker] = dp.Close
+		}
+
+		// Calculate portfolio value for this day
+		dayValue := 0.0
+		allTickersHavePrice := true
+		for ticker, qty := range tickerQuantities {
+			if price, ok := lastPrices[ticker]; ok {
+				dayValue += price * qty
+			} else {
+				allTickersHavePrice = false
+			}
+		}
+
+		if allTickersHavePrice && dayValue > 0 {
+			portfolioValues = append(portfolioValues, dayValue)
+			timestamps = append(timestamps, day)
+		}
+	}
+
+	// Calculate daily returns
+	var dailyReturns []float64
+	for i := 1; i < len(portfolioValues); i++ {
+		if portfolioValues[i-1] > 0 {
+			ret := (portfolioValues[i] - portfolioValues[i-1]) / portfolioValues[i-1]
+			dailyReturns = append(dailyReturns, ret)
+		}
+	}
+
+	// Calculate statistics
+	yoyReturn := calculateYoYReturn(portfolioValues, timestamps)
+	maxDD, avgDD := calculateDrawdowns(portfolioValues)
+	sortinoRatio := calculateSortinoRatio(dailyReturns, 0.0) // Assuming 0% risk-free rate
+
+	// Calculate aggregated TER (weighted by value)
+	totalValue := 0.0
+	totalCost := 0.0
+	weightedTER := 0.0
+
+	for ticker, qty := range tickerQuantities {
+		holding := tickerHoldings[ticker]
+		currentPrice := lastPrices[ticker]
+		value := currentPrice * qty
+		totalValue += value
+		totalCost += holding.PurchasePrice * qty
+		weightedTER += holding.TER * value
+	}
+
+	aggregatedTER := 0.0
+	if totalValue > 0 {
+		aggregatedTER = weightedTER / totalValue
+	}
+
+	totalGainLoss := totalValue - totalCost
+	totalGainLossPct := 0.0
+	if totalCost > 0 {
+		totalGainLossPct = totalGainLoss / totalCost * 100
+	}
+
+	stats := PortfolioStats{
+		YoYReturn:        math.Round(yoyReturn*100) / 100,
+		MaxDrawdown:      math.Round(maxDD*100) / 100,
+		AvgDrawdown:      math.Round(avgDD*100) / 100,
+		SortinoRatio:     math.Round(sortinoRatio*100) / 100,
+		AggregatedTER:    math.Round(aggregatedTER*10000) / 10000,
+		TotalValue:       math.Round(totalValue*100) / 100,
+		TotalCost:        math.Round(totalCost*100) / 100,
+		TotalGainLoss:    math.Round(totalGainLoss*100) / 100,
+		TotalGainLossPct: math.Round(totalGainLossPct*100) / 100,
+	}
+
+	return c.JSON(http.StatusOK, stats)
+}
+
+func getAssetStats(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+	ticker := c.QueryParam("ticker")
+
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "ticker parameter is required")
+	}
+
+	// Get user's holding for this ticker
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	}
+
+	var holding Holding
+	var totalQuantity float64
+	var totalCost float64
+	found := false
+
+	for _, h := range holdings {
+		if h.Ticker == ticker {
+			holding = h
+			totalQuantity += h.Quantity
+			totalCost += h.PurchasePrice * h.Quantity
+			found = true
+		}
+	}
+
+	if !found {
+		return c.String(http.StatusNotFound, "Holding not found")
+	}
+
+	// Get 1 year of historical data
+	now := time.Now().UTC()
+	startTime := now.Add(-365 * 24 * time.Hour)
+
+	query := `
+		SELECT date, close
+		FROM prices
+		WHERE ticker = ?
+		AND CAST(date AS INTEGER) >= ?
+		AND CAST(date AS INTEGER) <= ?
+		ORDER BY CAST(date AS INTEGER) ASC
+	`
+
+	rows, err := db.Query(query, ticker, startTime.Unix(), now.Unix())
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving price history")
+	}
+	defer rows.Close()
+
+	var prices []float64
+	var timestamps []int64
+
+	for rows.Next() {
+		var dateStr string
+		var closePrice float64
+		if err := rows.Scan(&dateStr, &closePrice); err != nil {
+			continue
+		}
+		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
+		prices = append(prices, closePrice)
+		timestamps = append(timestamps, timestamp)
+	}
+
+	if len(prices) == 0 {
+		return c.String(http.StatusNotFound, "No price history found")
+	}
+
+	// Calculate daily returns
+	var dailyReturns []float64
+	for i := 1; i < len(prices); i++ {
+		if prices[i-1] > 0 {
+			ret := (prices[i] - prices[i-1]) / prices[i-1]
+			dailyReturns = append(dailyReturns, ret)
+		}
+	}
+
+	// Calculate statistics
+	yoyReturn := calculateYoYReturn(prices, timestamps)
+	maxDD, avgDD := calculateDrawdowns(prices)
+	sortinoRatio := calculateSortinoRatio(dailyReturns, 0.0)
+
+	currentPrice := prices[len(prices)-1]
+	currentValue := currentPrice * totalQuantity
+	gainLoss := currentValue - totalCost
+	gainLossPct := 0.0
+	if totalCost > 0 {
+		gainLossPct = gainLoss / totalCost * 100
+	}
+
+	stats := AssetStats{
+		Ticker:       ticker,
+		YoYReturn:    math.Round(yoyReturn*100) / 100,
+		MaxDrawdown:  math.Round(maxDD*100) / 100,
+		AvgDrawdown:  math.Round(avgDD*100) / 100,
+		SortinoRatio: math.Round(sortinoRatio*100) / 100,
+		TER:          holding.TER,
+		CurrentPrice: math.Round(currentPrice*100) / 100,
+		Quantity:     totalQuantity,
+		CurrentValue: math.Round(currentValue*100) / 100,
+		CostBasis:    math.Round(totalCost*100) / 100,
+		GainLoss:     math.Round(gainLoss*100) / 100,
+		GainLossPct:  math.Round(gainLossPct*100) / 100,
+	}
+
+	return c.JSON(http.StatusOK, stats)
 }
 
 func main() {
@@ -1338,11 +2940,26 @@ func main() {
 
 	protected.GET("/profile", getProfile)
 
-	// Holdings endpoints
-	protected.POST("/holdings", AddHolding)
-	protected.GET("/holdings", GetHoldings)
-	protected.PUT("/holdings", ModifyHolding)
-	protected.DELETE("/holdings", RemoveHolding)
+	// Portfolio endpoints
+	protected.GET("portfolio/holdings", GetHoldings)
+	protected.GET("/portfolio/value", GetPortfolioValue)
+	protected.GET("/portfolio/history", GetPortfolioValueHistory)
+	protected.GET("/portfolio/change", getPortfolioValueChange)
+	protected.GET("/portfolio/news", getLatestNewsForPortfolio)
+	protected.GET("/portfolio/sentiment", getPortfolioDaySentiment)
+	protected.GET("/portfolio/allocation", getPortfolioAllocation)
+	protected.GET("/portfolio/stats", getPortfolioStats)
+
+	// Asset endpoints
+	protected.POST("/asset/holdings", AddHolding)
+	protected.PUT("/asset/holdings", ModifyHolding)
+	protected.DELETE("/asset/holdings", RemoveHolding)
+	protected.GET("/asset/news", getLatestNewsForAsset)
+	protected.GET("/asset/sentiment", getAssetDaySentiment)
+	protected.GET("/asset/change", getAssetValueChange)
+	protected.GET("/asset/value", GetTickerValue)
+	protected.GET("/asset/history", GetAssetPriceHistory)
+	protected.GET("/asset/stats", getAssetStats)
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)
