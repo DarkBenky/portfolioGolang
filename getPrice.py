@@ -9,16 +9,31 @@ def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
     if lastUpdatesUnixTimeStamp > 10**10:
         lastUpdatesUnixTimeStamp = lastUpdatesUnixTimeStamp // 1000
     
-    four_hours_ago = now - timedelta(hours=4)
+    # yfinance limits for different intervals:
+    # 1m: max 7 days
+    # 5m, 15m: max 60 days
+    # 1h: max 730 days
+    # 1d: unlimited
+    interval_max_days = {
+        "1m": 7,
+        "5m": 60,
+        "15m": 60,
+        "1h": 730,
+        "1d": 365 * 10,
+    }
+    max_days = interval_max_days.get(interval, 7)
+    earliest_allowed = now - timedelta(days=max_days)
     
     try:
         timestamp_dt = datetime.fromtimestamp(lastUpdatesUnixTimeStamp, tz=timezone.utc)
     except (ValueError, OSError):
-        timestamp_dt = four_hours_ago
+        timestamp_dt = earliest_allowed
     
-    # Ensure timestamp is valid (not in future, not too old)
-    if timestamp_dt > now or timestamp_dt < four_hours_ago:
-        timestamp_dt = four_hours_ago
+    # Ensure timestamp is valid (not in future, not before max allowed)
+    if timestamp_dt > now:
+        timestamp_dt = earliest_allowed
+    elif timestamp_dt < earliest_allowed:
+        timestamp_dt = earliest_allowed
     
     # Debug logging
     print(f"[{Ticker}] Request: from {timestamp_dt} to {now} (interval: {interval})")
