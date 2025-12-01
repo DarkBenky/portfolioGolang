@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +25,12 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// hashPasswordWithSalt creates a SHA-256 hash of password+salt to stay within bcrypt's 72-byte limit
+func hashPasswordWithSalt(password string) string {
+	hash := sha256.Sum256([]byte(password + SALT))
+	return hex.EncodeToString(hash[:])
+}
 
 const (
 	SALT       = "7a726befdfc6eff42209898e532ac1a71fc7f20290d5c1f7dd6298e5ccab4ab1"
@@ -615,8 +623,9 @@ func initDB(fakeData bool) (*sql.DB, error) {
 func populateFakeData(database *sql.DB) error {
 	testUserID := uuid.New().String()
 	password := "test123"
-	hashedPassword := password + SALT
-	hashed, err := bcrypt.GenerateFromPassword([]byte(hashedPassword), bcrypt.DefaultCost)
+	// Hash password with salt using SHA-256 first to stay within bcrypt's 72-byte limit
+	passwordHash := hashPasswordWithSalt(password)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(passwordHash), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -894,7 +903,9 @@ func (database *DB) verifyUser(email string, password string) (bool, error) {
 		return false, err
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password+SALT))
+	// Hash password with salt using SHA-256 first to match registration
+	passwordHash := hashPasswordWithSalt(password)
+	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(passwordHash))
 	if err != nil {
 		return false, nil
 	}
@@ -1213,57 +1224,76 @@ func generateJWT(userID, email string) (string, error) {
 }
 
 func addUser(c echo.Context) error {
-	userName := c.FormValue("userName")
-	email := c.FormValue("email")
-	password := c.FormValue("password")
+	var req struct {
+		UserName string `json:"user_name"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
 
-	password = password + SALT
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	if req.Email == "" || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email and password are required"})
+	}
+
+	// Hash password with salt using SHA-256 first to stay within bcrypt's 72-byte limit
+	passwordHash := hashPasswordWithSalt(req.Password)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(passwordHash), bcrypt.DefaultCost)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error hashing password")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error hashing password"})
 	}
 
 	user := User{
 		Id:       generateID(),
-		userName: userName,
-		Email:    email,
+		userName: req.UserName,
+		Email:    req.Email,
 		Password: string(hashed),
 	}
 
 	err = db.addUser(user)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error adding user to database")
+		log.Printf("Error adding user: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error adding user to database"})
 	}
 
-	return c.String(http.StatusOK, "User added successfully")
+	return c.JSON(http.StatusOK, map[string]string{"message": "User added successfully"})
 }
 
 func login(c echo.Context) error {
-	email := c.FormValue("email")
-	password := c.FormValue("password")
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
 
-	valid, err := db.verifyUser(email, password)
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	valid, err := db.verifyUser(req.Email, req.Password)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error verifying user")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error verifying user"})
 	}
 	if !valid {
-		return c.String(http.StatusUnauthorized, "Invalid email or password")
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid email or password"})
 	}
 
 	// Get user details
-	user, err := db.getUserByEmail(email)
+	user, err := db.getUserByEmail(req.Email)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error retrieving user")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error retrieving user"})
 	}
 
 	// Generate JWT token
 	token, err := generateJWT(user.Id, user.Email)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error generating token")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating token"})
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"token":   token,
+		"email":   user.Email,
 		"message": "Login successful",
 	})
 }
