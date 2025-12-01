@@ -99,28 +99,24 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
     asset = yf.Ticker(Ticker)
     articles = []
     try:
-        count = 0
         news_items = asset.news
         for item in news_items:
-            if count >= num_articles:
+            if len(articles) >= num_articles:
                 break
             content = item.get('content', item)
             canonicalUrl = content.get('canonicalUrl', '')
             title = content.get('title', '')
             summary = content.get('summary', '')
 
-            # check if news already exists in DB
-            response = requests.get(f"{BACKEND_GO}/news_exists", params={"title": title, "summary": summary})
-            if response.status_code == 200:
-                exists = response.json().get("exists", False)
-                if exists:
-                    print(f"News already exists in DB: {title}")
-                    continue  # skip this news item
+            # Handle canonicalUrl - it can be a dict or string
+            if isinstance(canonicalUrl, dict):
+                url = canonicalUrl.get('url', '')
+            elif isinstance(canonicalUrl, str):
+                url = canonicalUrl
             else:
-                print(f"Error checking news existence for {title}: {response.status_code}")
-                continue  # skip this news item due to error
-
-            url = canonicalUrl.get('url', '')
+                url = ''
+            
+            # Fetch article text first
             text = ''
             if url != '':
                 try:
@@ -129,7 +125,7 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                     article.parse()
                     text = article.text
                 except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 403:
+                    if hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
                         # Try with different User-Agents if 403 Forbidden
                         for user_agent in USER_AGENTS:
                             try:
@@ -166,10 +162,28 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                             print(f"Error fetching article from {url}: {e}")
                     else:
                         print(f"Error fetching article from {url}: {e}")
+
+            # Check if news already exists in DB (now including text)
+            try:
+                response = requests.get(
+                    f"{BACKEND_GO}/news_exists",
+                    params={"title": title, "summary": summary, "text": text[:500] if text else ""},
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    exists = response.json().get("exists", False)
+                    if exists:
+                        print(f"News already exists in DB: {title}")
+                        continue  # skip this news item
+                else:
+                    print(f"Error checking news existence for {title}: {response.status_code}")
+            except Exception as e:
+                print(f"Error checking news existence: {e}")
             
             published_at_unix = convert_pubdate_to_unix(content.get('pubDate', ''))
             
             news = {
+                'ticker': Ticker,  # Add ticker to the news item
                 'title': title,
                 'summary': summary,
                 'text': text,
@@ -179,7 +193,6 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                 'img_url': content.get('thumbnail', {}).get('originalUrl', ''),
                 'sentiment': getSentiment(model, content.get('title', ''), content.get('summary', ''), text, [0.4, 0.35, 0.25])
             }
-            count += 1
             articles.append(news)
     except Exception as e:
         print(f"Error retrieving news for {Ticker}: {e}")

@@ -263,13 +263,23 @@ func fetchNewsPeriodic(interval time.Duration) {
 	}
 }
 
-func (database *DB) newsExists(title string, summary string) (bool, error) {
+func (database *DB) newsExists(title string, summary string, text string) (bool, error) {
 	var count int
-	err := database.QueryRow(`
-        SELECT COUNT(1) FROM news WHERE title = ? OR summary = ?
-    `, title, summary).Scan(&count)
-	if err != nil {
-		return false, err
+	// Check by title, summary, or text (if provided)
+	if text != "" {
+		err := database.QueryRow(`
+			SELECT COUNT(1) FROM news WHERE title = ? OR summary = ? OR text = ?
+		`, title, summary, text).Scan(&count)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		err := database.QueryRow(`
+			SELECT COUNT(1) FROM news WHERE title = ? OR summary = ?
+		`, title, summary).Scan(&count)
+		if err != nil {
+			return false, err
+		}
 	}
 	return count > 0, nil
 }
@@ -277,7 +287,8 @@ func (database *DB) newsExists(title string, summary string) (bool, error) {
 func newsExistsWithTitle(c echo.Context) error {
 	title := c.QueryParam("title")
 	summary := c.QueryParam("summary")
-	exists, err := db.newsExists(title, summary)
+	text := c.QueryParam("text")
+	exists, err := db.newsExists(title, summary, text)
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error checking news existence")
 	}
