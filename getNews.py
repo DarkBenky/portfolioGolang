@@ -99,8 +99,11 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
     asset = yf.Ticker(Ticker)
     articles = []
     try:
-        news_items = asset.news[:num_articles]
+        count = 0
+        news_items = asset.news
         for item in news_items:
+            if count >= num_articles:
+                break
             content = item.get('content', item)
             canonicalUrl = content.get('canonicalUrl', '')
             title = content.get('title', '')
@@ -176,6 +179,7 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                 'img_url': content.get('thumbnail', {}).get('originalUrl', ''),
                 'sentiment': getSentiment(model, content.get('title', ''), content.get('summary', ''), text, [0.4, 0.35, 0.25])
             }
+            count += 1
             articles.append(news)
     except Exception as e:
         print(f"Error retrieving news for {Ticker}: {e}")
