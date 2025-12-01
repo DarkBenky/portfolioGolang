@@ -299,7 +299,7 @@ func fetchNews(ticker string) error {
 	baseURL := BASE_URL + "/fetch_news"
 	params := url.Values{}
 	params.Add("ticker", ticker)
-	params.Add("num_articles", "5")
+	params.Add("num_articles", "10")
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 	resp, err := http.Get(fullURL)
