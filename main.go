@@ -247,7 +247,7 @@ func fetchNewsPeriodic(interval time.Duration) {
 			// Fetch news for each ticker in a goroutine
 			go func(ticker string) {
 				log.Printf("Fetching news for %s...", ticker)
-				err := fetchNews(ticker)
+				err := fetchNews(ticker, 10)
 				if err != nil {
 					log.Printf("Error fetching news for %s: %v", ticker, err)
 				} else {
@@ -295,11 +295,11 @@ func newsExistsWithTitle(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{"exists": exists})
 }
 
-func fetchNews(ticker string) error {
+func fetchNews(ticker string, numArticles int) error {
 	baseURL := BASE_URL + "/fetch_news"
 	params := url.Values{}
 	params.Add("ticker", ticker)
-	params.Add("num_articles", "10")
+	params.Add("num_articles", strconv.Itoa(numArticles))
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 	resp, err := http.Get(fullURL)
@@ -1329,7 +1329,7 @@ func AddHolding(c echo.Context) error {
 
 	go func(ticker string) {
 		log.Printf("Starting background news fetch for %s...", ticker)
-		err := fetchNews(ticker)
+		err := fetchNews(ticker, 10)
 		if err != nil {
 			log.Printf("Error fetching news for %s: %v", ticker, err)
 		} else {
