@@ -1308,6 +1308,100 @@ func getProfile(c echo.Context) error {
 	})
 }
 
+func fillInBetweenPricesPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Starting periodic news fetch for all tickers...")
+
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+
+		log.Printf("Found %d unique tickers to fetch news for", len(tickers))
+
+		for _, tickerSymbol := range tickers {
+			// Fetch news for each ticker in a goroutine
+			go func(ticker string) {
+				log.Printf("Filling in between prices for %s...", ticker)
+				err := FillInBetweenPrices(ticker)
+				if err != nil {
+					log.Printf("Error filling in between prices for %s: %v", ticker, err)
+				} else {
+					log.Printf("Successfully filled in between prices for %s", ticker)
+				}
+			}(tickerSymbol)
+			// Small delay to avoid overwhelming the API
+			time.Sleep(2500 * time.Millisecond)
+		}
+	}
+}
+
+func FillInBetweenPrices(Ticker string) error {
+	//  get all prices for the ticker
+	rows, err := db.Query(`
+		SELECT date, open, close, high, low, volume
+		FROM prices
+		WHERE ticker = ?
+		ORDER BY CAST(date AS INTEGER) ASC
+	`, Ticker)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var prices []Price
+	for rows.Next() {
+		var p Price
+		err := rows.Scan(&p.Date, &p.Open, &p.Close, &p.High, &p.Low, &p.Volume)
+		if err != nil {
+			return err
+		}
+		prices = append(prices, p)
+	}
+
+	// Fill in missing dates
+	for index, price := range prices {
+		if index == 0 {
+			continue
+		}
+		prevPrice := prices[index-1]
+		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
+		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
+		if currentDateInt-prevDateInt > 60 { // more than 1 minute gap
+			// Fill in missing dates
+			fillsNeeded := (currentDateInt-prevDateInt)/60 - 1
+			for i := int64(1); i <= fillsNeeded; i++ {
+				missingDate := prevDateInt + i*60
+				interpolatedOpen := prevPrice.Close + (price.Open-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
+				interpolatedClose := prevPrice.Close + (price.Close-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
+				interpolatedHigh := prevPrice.Close + (price.High-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
+				interpolatedLow := prevPrice.Close + (price.Low-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
+				interpolatedVolume := int64(float64(prevPrice.Volume) + (float64(price.Volume)-float64(prevPrice.Volume))*float64(i)/float64(fillsNeeded+1))
+				missingPrice := Price{
+					IdPrice: generateID(),
+					Ticker:  Ticker,
+					Date:    strconv.FormatInt(missingDate, 10),
+					Open:    interpolatedOpen,
+					Close:   interpolatedClose,
+					High:    interpolatedHigh,
+					Low:     interpolatedLow,
+					Volume:  interpolatedVolume,
+				}
+				err := db.addPrice(missingPrice)
+				if err != nil {
+					log.Printf("Error adding interpolated price for %s on %d: %v", Ticker, missingDate, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // holding actions
 func AddHolding(c echo.Context) error {
 	// Get user ID from JWT token
@@ -2960,6 +3054,8 @@ func main() {
 
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
+	go fillInBetweenPricesPeriodic(60 * time.Minute)
+	// go updateSentimentsPeriodic(30 * time.Minute) // TODO: function updates dayly sentiment score for holding and adds it to database
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
