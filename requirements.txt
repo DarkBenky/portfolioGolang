@@ -8,3 +8,4 @@ dotenv
 newspaper3k
 transformers
 torch
+ollama

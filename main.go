@@ -81,6 +81,13 @@ type Sector struct {
 	IdHolding  string
 }
 
+type DailySentiment struct {
+	IdSentiment string
+	Ticker      string
+	Date        string
+	Sentiment   float64
+}
+
 type Asset struct {
 	IdAsset   string
 	Name      string
@@ -603,6 +610,21 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			UNIQUE(ticker, date)
 		)
 	`)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create daily sentiment table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS daily_sentiment (
+			id_sentiment TEXT PRIMARY KEY,
+			ticker TEXT NOT NULL,
+			date TEXT NOT NULL,
+			sentiment REAL NOT NULL,
+			UNIQUE(ticker, date)
+		)
+	`)
+
 	if err != nil {
 		return nil, err
 	}
