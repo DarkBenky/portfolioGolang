@@ -101,12 +101,12 @@ if __name__ == '__main__':
     ]
     
     test_sentiments = [
-        "positive (0.85)",
-        "positive (0.78)",
-        "neutral (0.52)",
-        "positive (0.65)",
-        "negative (-0.72)",
-        "negative (-0.88)"
+        0.85,
+        0.78,
+        0.52,
+        0.65,
+        -0.72,
+        -0.88
     ]
     
     print(f"\nInput: {len(test_news)} news items")
