@@ -3371,7 +3371,7 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	sqlDB, err := initDB(true)
+	sqlDB, err := initDB(false)
 	addPriceIndexes(sqlDB)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
