@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import getPrice
+from getSummary import summarize_daily_news, summarize_daily_portfolio_news
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 from datetime import datetime, timezone
 from collections import deque
@@ -283,6 +284,60 @@ async def api_get_price():
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(executor, getPrice, ticker, last_updates_unix_timestamp, interval)
     return flask.jsonify(data)
+
+# curl -X POST "http://localhost:5123/api/summarize_ticker" -H "Content-Type: application/json" -d '{"ticker": "AAPL", "date": "2025-12-04", "news_list": ["news1", "news2"], "sentiment_list": [0.5, -0.2]}'
+@app.route('/api/summarize_ticker', methods=['POST'])
+async def api_summarize_ticker():
+    """Generate daily summary for a single ticker"""
+    data = flask.request.get_json()
+    ticker = data.get('ticker', '')
+    date = data.get('date', '')
+    news_list = data.get('news_list', [])
+    sentiment_list = data.get('sentiment_list', [])
+    max_tokens = data.get('max_tokens', 512)
+    
+    if not ticker or not news_list:
+        return flask.jsonify({'error': 'ticker and news_list are required'}), 400
+    
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor, 
+        summarize_daily_news, 
+        news_list, 
+        sentiment_list, 
+        max_tokens,
+        ticker,
+        date
+    )
+    return flask.jsonify(result)
+
+# curl -X POST "http://localhost:5123/api/summarize_portfolio" -H "Content-Type: application/json" -d '{"user_id": "123", "date": "2025-12-04", "news_list": ["news1", "news2"], "sentiment_list": [0.5, -0.2], "tickers_list": ["AAPL", "TSLA"]}'
+@app.route('/api/summarize_portfolio', methods=['POST'])
+async def api_summarize_portfolio():
+    """Generate daily summary for entire portfolio"""
+    data = flask.request.get_json()
+    user_id = data.get('user_id', '')
+    date = data.get('date', '')
+    news_list = data.get('news_list', [])
+    sentiment_list = data.get('sentiment_list', [])
+    tickers_list = data.get('tickers_list', [])
+    max_tokens = data.get('max_tokens', 1024)
+    
+    if not news_list:
+        return flask.jsonify({'error': 'news_list is required'}), 400
+    
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor, 
+        summarize_daily_portfolio_news, 
+        news_list, 
+        sentiment_list,
+        tickers_list,
+        max_tokens,
+        user_id,
+        date
+    )
+    return flask.jsonify(result)
 
 if __name__ == '__main__':
     # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app

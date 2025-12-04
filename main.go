@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -85,6 +86,15 @@ type DailySentiment struct {
 	IdSentiment string
 	Ticker      string
 	Date        string
+	Summary     string
+	Sentiment   float64
+}
+
+type PortfolioDailySentiment struct {
+	IdSentiment string
+	UserID      string
+	Date        string
+	Summary     string
 	Sentiment   float64
 }
 
@@ -614,14 +624,28 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Create daily sentiment table
+	// Create daily sentiment/summary table for tickers
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS daily_sentiment (
 			id_sentiment TEXT PRIMARY KEY,
 			ticker TEXT NOT NULL,
 			date TEXT NOT NULL,
+			summary TEXT NOT NULL,
 			sentiment REAL NOT NULL,
 			UNIQUE(ticker, date)
+		)
+	`)
+
+	// Crete Daily Sentiment/Summary table for whole user portfolio
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS portfolio_daily_sentiment (
+			id_sentiment TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			sentiment REAL NOT NULL,
+			UNIQUE(user_id, date),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)
 	`)
 
@@ -1089,6 +1113,82 @@ func (database *DB) addNews(news News) error {
 	return err
 }
 
+func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	_, err := database.Exec(`
+		INSERT INTO daily_sentiment (id_sentiment, ticker, date, summary, sentiment)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(ticker, date) DO UPDATE SET
+			summary = excluded.summary,
+			sentiment = excluded.sentiment
+	`, sentiment.IdSentiment, sentiment.Ticker, sentiment.Date, sentiment.Summary, sentiment.Sentiment)
+	return err
+}
+
+func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentiment) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	_, err := database.Exec(`
+		INSERT INTO portfolio_daily_sentiment (id_sentiment, user_id, date, summary, sentiment)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, date) DO UPDATE SET
+			summary = excluded.summary,
+			sentiment = excluded.sentiment
+	`, sentiment.IdSentiment, sentiment.UserID, sentiment.Date, sentiment.Summary, sentiment.Sentiment)
+	return err
+}
+
+func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]News, error) {
+	rows, err := database.Query(`
+		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+		FROM news
+		WHERE ticker = ? AND date(datetime(published_at, 'unixepoch')) = ?
+		ORDER BY published_at DESC
+	`, ticker, todayDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var newsList []News
+	for rows.Next() {
+		var n News
+		var idAsset, idHolding sql.NullString
+		err := rows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary, &n.Text, &n.Sentiment, &n.Ticker, &idAsset, &idHolding)
+		if err != nil {
+			return nil, err
+		}
+		if idAsset.Valid {
+			n.idAsset = idAsset.String
+		}
+		if idHolding.Valid {
+			n.idHolding = idHolding.String
+		}
+		newsList = append(newsList, n)
+	}
+	return newsList, nil
+}
+
+func (database *DB) getAllUsers() ([]User, error) {
+	rows, err := database.Query(`SELECT id, user_name, email FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		err := rows.Scan(&u.Id, &u.userName, &u.Email)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
 func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
 	rows, err := database.Query(`
 		SELECT id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency
@@ -1422,6 +1522,214 @@ func FillInBetweenPrices(Ticker string) error {
 	}
 
 	return nil
+}
+
+// updateSentimentsPeriodic runs every 6 hours to generate daily summaries for tickers and portfolios
+func updateSentimentsPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Starting periodic sentiment/summary update...")
+		todayDate := time.Now().UTC().Format("2006-01-02")
+
+		// 1. Update daily sentiment for each ticker
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+
+		log.Printf("Updating daily sentiment for %d tickers", len(tickers))
+
+		for _, tickerSymbol := range tickers {
+			go func(tickerSym string) {
+				err := updateTickerDailySentiment(tickerSym, todayDate)
+				if err != nil {
+					log.Printf("Error updating sentiment for %s: %v", tickerSym, err)
+				} else {
+					log.Printf("Successfully updated sentiment for %s", tickerSym)
+				}
+			}(tickerSymbol)
+			time.Sleep(5 * time.Second) // Delay to avoid overwhelming Ollama
+		}
+
+		// 2. Update daily sentiment for each user's portfolio
+		users, err := db.getAllUsers()
+		if err != nil {
+			log.Printf("Error getting users: %v", err)
+			continue
+		}
+
+		log.Printf("Updating portfolio sentiment for %d users", len(users))
+
+		for _, user := range users {
+			go func(u User) {
+				err := updatePortfolioDailySentiment(u.Id, todayDate)
+				if err != nil {
+					log.Printf("Error updating portfolio sentiment for user %s: %v", u.Id, err)
+				} else {
+					log.Printf("Successfully updated portfolio sentiment for user %s", u.Id)
+				}
+			}(user)
+			time.Sleep(10 * time.Second) // Longer delay for portfolio summaries
+		}
+
+		log.Println("Completed periodic sentiment/summary update cycle")
+	}
+}
+
+func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
+	// Get today's news for this ticker
+	newsList, err := db.getNewsForTickerToday(tickerSymbol, todayDate)
+	if err != nil {
+		return fmt.Errorf("error fetching news: %v", err)
+	}
+
+	if len(newsList) == 0 {
+		log.Printf("No news found for %s on %s, skipping", tickerSymbol, todayDate)
+		return nil
+	}
+
+	// Prepare data for API call
+	var summaries []string
+	var sentiments []float64
+	for _, news := range newsList {
+		summaries = append(summaries, news.Summary)
+		sentiments = append(sentiments, news.Sentiment)
+	}
+
+	// Call Python API to generate summary
+	requestBody := map[string]interface{}{
+		"ticker":         tickerSymbol,
+		"date":           todayDate,
+		"news_list":      summaries,
+		"sentiment_list": sentiments,
+		"max_tokens":     512,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	resp, err := http.Post(BASE_URL+"/summarize_ticker", "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("error calling summarize API: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("summarize API returned status: %s", resp.Status)
+	}
+
+	var result struct {
+		Ticker    string  `json:"ticker"`
+		Date      string  `json:"date"`
+		Summary   string  `json:"summary"`
+		Sentiment float64 `json:"sentiment"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return fmt.Errorf("error decoding response: %v", err)
+	}
+
+	// Upsert to database
+	sentiment := DailySentiment{
+		IdSentiment: generateID(),
+		Ticker:      result.Ticker,
+		Date:        result.Date,
+		Summary:     result.Summary,
+		Sentiment:   result.Sentiment,
+	}
+
+	return db.upsertDailySentiment(sentiment)
+}
+
+func updatePortfolioDailySentiment(userID string, todayDate string) error {
+	// Get user's holdings
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return fmt.Errorf("error fetching holdings: %v", err)
+	}
+
+	if len(holdings) == 0 {
+		log.Printf("No holdings found for user %s, skipping", userID)
+		return nil
+	}
+
+	// Collect news from all holdings
+	var allSummaries []string
+	var allSentiments []float64
+	var allTickers []string
+
+	for _, holding := range holdings {
+		newsList, err := db.getNewsForTickerToday(holding.Ticker, todayDate)
+		if err != nil {
+			log.Printf("Error fetching news for %s: %v", holding.Ticker, err)
+			continue
+		}
+
+		for _, news := range newsList {
+			allSummaries = append(allSummaries, news.Summary)
+			allSentiments = append(allSentiments, news.Sentiment)
+			allTickers = append(allTickers, news.Ticker)
+		}
+	}
+
+	if len(allSummaries) == 0 {
+		log.Printf("No news found for user %s portfolio on %s, skipping", userID, todayDate)
+		return nil
+	}
+
+	// Call Python API to generate portfolio summary
+	requestBody := map[string]interface{}{
+		"user_id":        userID,
+		"date":           todayDate,
+		"news_list":      allSummaries,
+		"sentiment_list": allSentiments,
+		"tickers_list":   allTickers,
+		"max_tokens":     1024,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	resp, err := http.Post(BASE_URL+"/summarize_portfolio", "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("error calling summarize API: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("summarize API returned status: %s", resp.Status)
+	}
+
+	var result struct {
+		UserID    string  `json:"user_id"`
+		Date      string  `json:"date"`
+		Summary   string  `json:"summary"`
+		Sentiment float64 `json:"sentiment"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return fmt.Errorf("error decoding response: %v", err)
+	}
+
+	// Upsert to database
+	sentiment := PortfolioDailySentiment{
+		IdSentiment: generateID(),
+		UserID:      result.UserID,
+		Date:        result.Date,
+		Summary:     result.Summary,
+		Sentiment:   result.Sentiment,
+	}
+
+	return db.upsertPortfolioDailySentiment(sentiment)
 }
 
 // holding actions
@@ -3077,7 +3385,7 @@ func main() {
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
 	go fillInBetweenPricesPeriodic(60 * time.Minute)
-	// go updateSentimentsPeriodic(30 * time.Minute) // TODO: function updates dayly sentiment score for holding and adds it to database
+	go updateSentimentsPeriodic(6 * time.Hour) // Updates daily sentiment for tickers and portfolios every 6 hours
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
