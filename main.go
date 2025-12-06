@@ -3401,7 +3401,7 @@ func getAllPortfolioDaySentiments(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "date parameter is required")
 	}
 
-	portfolioSummary , err := db.getPortfolioDailySummary(userID, date)
+	portfolioSummary, err := db.getPortfolioDailySummary(userID, date)
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving portfolio summary")
 	}
@@ -3422,7 +3422,7 @@ func getAssetDailySentimentSummary(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, sentimentSummary)
-}	
+}
 
 func main() {
 	err := godotenv.Load()
@@ -3467,7 +3467,7 @@ func main() {
 	protected.GET("/profile", getProfile)
 
 	// Portfolio endpoints
-	protected.GET("portfolio/holdings", GetHoldings)
+	protected.GET("/portfolio/holdings", GetHoldings)
 	protected.GET("/portfolio/value", GetPortfolioValue)
 	protected.GET("/portfolio/history", GetPortfolioValueHistory)
 	protected.GET("/portfolio/change", getPortfolioValueChange)

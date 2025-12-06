@@ -94,6 +94,10 @@
           </v-card>
         </v-container>
 
+        <v-container v-if="activeView === 'holding'" fluid>
+
+        </v-container>
+
         <v-container v-else fluid>
           <v-card class="pa-4">
             <h3>{{ activeView.charAt(0).toUpperCase() + activeView.slice(1) }} View</h3>
@@ -139,140 +143,180 @@
   </v-app>
 </template>
 
-<script setup>
-import { ref, onMounted, watch, onUnmounted } from 'vue'
+<script>
 import LoginRegister from './components/loginRegister.vue'
 import CandleChart from './components/candleChart.vue'
 
-const isAuthenticated = ref(false)
-const userEmail = ref('')
+export default {
+  name: 'App',
 
-// Portfolio chart data
-const portfolioData = ref([])
-const portfolioLoading = ref(false)
-const portfolioError = ref('')
-const selectedPeriod = ref('1m')
-const chartWidth = ref(800)
+  components: {
+    LoginRegister,
+    CandleChart
+  },
 
-// Sidebar state
-const drawer = ref(true)
-const activeView = ref('dashboard')
+  data() {
+    return {
+      // Authentication
+      portfolioHoldings: null,
+      isAuthenticated: false,
+      userEmail: '',
 
-// Cookie utilities
-function getCookie(name) {
-  const nameEQ = name + '='
-  const cookies = document.cookie.split(';')
-  for (let cookie of cookies) {
-    cookie = cookie.trim()
-    if (cookie.indexOf(nameEQ) === 0) {
-      return cookie.substring(nameEQ.length)
+      // Portfolio chart data
+      portfolioData: [],
+      portfolioLoading: false,
+      portfolioError: '',
+      selectedPeriod: '1m',
+      chartWidth: 800,
+
+      // Sidebar state
+      drawer: true,
+      activeView: 'dashboard'
     }
-  }
-  return null
-}
+  },
 
-function deleteCookie(name) {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`
-}
+  watch: {
+    selectedPeriod() {
+      this.fetchPortfolioHistory()
+    },
 
-// Fetch portfolio value history
-async function fetchPortfolioHistory() {
-  const token = getCookie('auth_token')
-  if (!token) return
+    isAuthenticated(newVal) {
+      if (newVal) {
+        setTimeout(() => {
+          this.updateChartWidth()
+          this.fetchPortfolioHistory()
+        }, 100)
+      }
+    }
+  },
 
-  portfolioLoading.value = true
-  portfolioError.value = ''
+  mounted() {
+    const token = this.getCookie('auth_token')
+    const email = this.getCookie('user_email')
+    
+    if (token) {
+      this.isAuthenticated = true
+      this.userEmail = email || ''
+      setTimeout(() => {
+        this.updateChartWidth()
+        this.fetchPortfolioHistory()
+        this.fetchPortfolioHoldings()
+      }, 100)
+    }
 
-  try {
-    // Determine interval based on period
-    let interval = '1h'
-    if (selectedPeriod.value === '1d') interval = '5m'
-    else if (selectedPeriod.value === '1w') interval = '15m'
-    else if (selectedPeriod.value === '1m') interval = '1h'
-    else if (selectedPeriod.value === '3m') interval = '1d'
-    else if (selectedPeriod.value === '1y') interval = '1d'
+    window.addEventListener('resize', this.updateChartWidth)
+  },
 
-    const response = await fetch(
-      `http://localhost:8085/api/portfolio/history?period=${selectedPeriod.value}&interval=${interval}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`
+  beforeUnmount() {
+    window.removeEventListener('resize', this.updateChartWidth)
+  },
+
+  methods: {
+    // Cookie utilities
+    getCookie(name) {
+      const nameEQ = name + '='
+      const cookies = document.cookie.split(';')
+      for (let cookie of cookies) {
+        cookie = cookie.trim()
+        if (cookie.indexOf(nameEQ) === 0) {
+          return cookie.substring(nameEQ.length)
         }
       }
-    )
+      return null
+    },
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch portfolio history')
+    deleteCookie(name) {
+      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`
+    },
+
+    // Fetch portfolio value history
+    async fetchPortfolioHistory() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      this.portfolioLoading = true
+      this.portfolioError = ''
+
+      try {
+        // Determine interval based on period
+        let interval = '1h'
+        if (this.selectedPeriod === '1d') interval = '5m'
+        else if (this.selectedPeriod === '1w') interval = '15m'
+        else if (this.selectedPeriod === '1m') interval = '1h'
+        else if (this.selectedPeriod === '3m') interval = '1d'
+        else if (this.selectedPeriod === '1y') interval = '1d'
+
+        const response = await fetch(
+          `http://localhost:8085/api/portfolio/history?period=${this.selectedPeriod}&interval=${interval}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        )
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio history')
+        }
+
+        const data = await response.json()
+
+        // Transform data for candle chart
+        // The API returns { timestamp, open, high, low, close, value }
+        this.portfolioData = data.map(item => ({
+          timestamp: item.timestamp,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          volume: 0
+        }))
+      } catch (error) {
+        console.error('Error fetching portfolio history:', error)
+        this.portfolioError = error.message || 'Failed to load portfolio data'
+      } finally {
+        this.portfolioLoading = false
+      }
+    },
+
+    async fetchPortfolioHoldings() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      try {
+        const url = `http://localhost:8085/api/portfolio/holdings`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio holdings')
+        }
+        const data = await response.json()
+        this.portfolioHoldings = data
+        console.log('Portfolio Holdings:', data)
+      } catch (error) {
+        console.error('Error fetching portfolio holdings:', error)
+      }
+    },
+
+    // Update chart width on resize
+    updateChartWidth() {
+      const container = document.querySelector('.chart-wrapper')
+      if (container) {
+        this.chartWidth = container.clientWidth - 20
+      }
+    },
+
+    logout() {
+      this.deleteCookie('auth_token')
+      this.deleteCookie('user_email')
+      this.isAuthenticated = false
+      this.userEmail = ''
     }
-
-    const data = await response.json()
-    
-    // Transform data for candle chart
-    // The API returns { timestamp, open, high, low, close, value }
-    portfolioData.value = data.map(item => ({
-      timestamp: item.timestamp,
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-      volume: 0
-    }))
-  } catch (error) {
-    console.error('Error fetching portfolio history:', error)
-    portfolioError.value = error.message || 'Failed to load portfolio data'
-  } finally {
-    portfolioLoading.value = false
   }
 }
-
-// Update chart width on resize
-function updateChartWidth() {
-  const container = document.querySelector('.chart-wrapper')
-  if (container) {
-    chartWidth.value = container.clientWidth - 20
-  }
-}
-
-function logout() {
-  deleteCookie('auth_token')
-  deleteCookie('user_email')
-  isAuthenticated.value = false
-  userEmail.value = ''
-}
-
-// Watch for period changes
-watch(selectedPeriod, () => {
-  fetchPortfolioHistory()
-})
-
-// Watch for authentication changes
-watch(isAuthenticated, (newVal) => {
-  if (newVal) {
-    setTimeout(() => {
-      updateChartWidth()
-      fetchPortfolioHistory()
-    }, 100)
-  }
-})
-
-onMounted(() => {
-  const token = getCookie('auth_token')
-  const email = getCookie('user_email')
-  if (token) {
-    isAuthenticated.value = true
-    userEmail.value = email || ''
-    setTimeout(() => {
-      updateChartWidth()
-      fetchPortfolioHistory()
-    }, 100)
-  }
-  
-  window.addEventListener('resize', updateChartWidth)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', updateChartWidth)
-})
 </script>
 
 <style scoped>
