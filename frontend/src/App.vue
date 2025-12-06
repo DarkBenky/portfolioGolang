@@ -18,6 +18,206 @@
         <!-- Navigation Drawer / Sidebar -->
         <v-navigation-drawer v-model="drawer" permanent>
           <v-list nav>
+            <!-- Add Holding Button -->
+            <v-list-item
+              prepend-icon="mdi-plus-circle"
+              title="Add Holding"
+              :class="{ 'text-primary': showAddHolding }"
+              @click="showAddHolding = !showAddHolding"
+            >
+              <template v-slot:append>
+                <v-icon :class="{ 'text-primary': showAddHolding }">
+                  {{ showAddHolding ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+                </v-icon>
+              </template>
+            </v-list-item>
+
+            <!-- Add Holding Expandable Form -->
+            <v-expand-transition>
+              <div v-if="showAddHolding" class="add-holding-form pa-3">
+                <v-text-field
+                  v-model="searchQuery"
+                  label="Search Ticker or ISIN"
+                  placeholder="e.g., AAPL or US0378331005"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  prepend-inner-icon="mdi-magnify"
+                  @input="debouncedSearch"
+                  @click:clear="clearSearch"
+                  class="mb-2"
+                ></v-text-field>
+
+                <!-- Search Results -->
+                <v-list v-if="searchResults.length > 0" density="compact" class="search-results mb-2">
+                  <v-list-item
+                    v-for="result in searchResults"
+                    :key="result.ticker"
+                    @click="selectSearchResult(result)"
+                    :class="{ 'bg-primary-lighten-4': selectedResult?.ticker === result.ticker }"
+                  >
+                    <v-list-item-title class="text-caption font-weight-bold">
+                      {{ result.ticker }}
+                    </v-list-item-title>
+                    <v-list-item-subtitle class="text-caption">
+                      {{ result.name }}
+                    </v-list-item-subtitle>
+                    <template v-slot:append>
+                      <div class="text-right">
+                        <div class="text-caption font-weight-medium text-success">
+                          {{ result.currency }} {{ result.price }}
+                        </div>
+                        <v-chip size="x-small" :color="result.type === 'ETF' ? 'blue' : 'grey'" class="mt-1">
+                          {{ result.type }}
+                        </v-chip>
+                      </div>
+                    </template>
+                  </v-list-item>
+                </v-list>
+
+                <v-progress-linear v-if="searchLoading" indeterminate color="primary" class="mb-2"></v-progress-linear>
+
+                <!-- Selected Asset Details -->
+                <template v-if="selectedResult">
+                  <v-divider class="my-2"></v-divider>
+                  <div class="text-caption text-grey mb-2">Selected: <strong>{{ selectedResult.name }}</strong></div>
+                  
+                  <v-text-field
+                    v-model.number="newHolding.quantity"
+                    label="Number of Shares"
+                    type="number"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    min="0"
+                    step="0.01"
+                    class="mb-2"
+                  ></v-text-field>
+
+                  <v-text-field
+                    v-model.number="newHolding.purchasePrice"
+                    label="Average Purchase Price"
+                    type="number"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    min="0"
+                    step="0.01"
+                    :suffix="selectedResult.currency"
+                    class="mb-2"
+                  ></v-text-field>
+
+                  <!-- Auto-filled fields (collapsible) -->
+                  <v-expansion-panels variant="accordion" class="mb-2">
+                    <v-expansion-panel>
+                      <v-expansion-panel-title class="text-caption py-1">
+                        Additional Details
+                      </v-expansion-panel-title>
+                      <v-expansion-panel-text>
+                        <v-text-field
+                          v-model="newHolding.name"
+                          label="Name"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-text-field
+                          v-model="newHolding.ticker"
+                          label="Ticker"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-text-field
+                          v-model="newHolding.isin"
+                          label="ISIN"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-text-field
+                          v-model="newHolding.exchange"
+                          label="Exchange"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-text-field
+                          v-model="newHolding.currency"
+                          label="Currency"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-text-field
+                          v-model="newHolding.ter"
+                          label="TER (%)"
+                          type="number"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          step="0.01"
+                          class="mb-2"
+                        ></v-text-field>
+                        <v-select
+                          v-model="newHolding.policy"
+                          label="Distribution Policy"
+                          :items="['Accumulating', 'Distributing', 'N/A']"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          class="mb-2"
+                        ></v-select>
+                        <v-checkbox
+                          v-model="newHolding.etf"
+                          label="Is ETF"
+                          density="compact"
+                          hide-details
+                        ></v-checkbox>
+                      </v-expansion-panel-text>
+                    </v-expansion-panel>
+                  </v-expansion-panels>
+
+                  <v-btn
+                    color="primary"
+                    block
+                    :loading="addHoldingLoading"
+                    :disabled="!canAddHolding"
+                    @click="addHolding"
+                  >
+                    <v-icon left>mdi-plus</v-icon>
+                    Add to Portfolio
+                  </v-btn>
+
+                  <v-alert
+                    v-if="addHoldingError"
+                    type="error"
+                    density="compact"
+                    class="mt-2"
+                  >
+                    {{ addHoldingError }}
+                  </v-alert>
+
+                  <v-alert
+                    v-if="addHoldingSuccess"
+                    type="success"
+                    density="compact"
+                    class="mt-2"
+                  >
+                    Holding added successfully!
+                  </v-alert>
+                </template>
+              </div>
+            </v-expand-transition>
+
+            <v-divider class="my-2"></v-divider>
+
             <v-list-item
               prepend-icon="mdi-view-dashboard"
               title="Dashboard"
@@ -56,7 +256,63 @@
           </v-list>
         </v-navigation-drawer>
 
-        <v-container v-if="activeView === 'dashboard'" fluid>
+        <v-container v-if="activeView === 'holdings'" fluid>
+          <v-card>
+            <v-card-title class="d-flex align-center">
+              <span>My Holdings</span>
+              <v-spacer></v-spacer>
+              <v-text-field
+                v-model="holdingsSearch"
+                prepend-inner-icon="mdi-magnify"
+                label="Search holdings..."
+                single-line
+                hide-details
+                density="compact"
+                variant="outlined"
+                style="max-width: 250px;"
+                class="mr-2"
+              ></v-text-field>
+              <v-btn-toggle v-model="holdingsSortBy" mandatory density="compact" color="primary">
+                <v-btn value="ticker" size="small">Ticker</v-btn>
+                <v-btn value="value" size="small">Value</v-btn>
+                <v-btn value="change" size="small">Day %</v-btn>
+              </v-btn-toggle>
+            </v-card-title>
+
+            <v-card-text class="pa-0">
+              <div v-if="!portfolioHoldings || portfolioHoldings.length === 0" class="text-center py-8 text-grey">
+                <v-icon size="64" color="grey-lighten-1">mdi-wallet-outline</v-icon>
+                <p class="mt-4">No holdings yet. Add your first holding using the sidebar.</p>
+              </div>
+              
+              <v-table v-else fixed-header density="comfortable">
+                <thead>
+                  <tr>
+                    <th class="text-left">Chart</th>
+                    <th class="text-left">Ticker</th>
+                    <th class="text-right">Price</th>
+                    <th class="text-right">Day %</th>
+                    <th class="text-right">Day $</th>
+                    <th class="text-right">Total %</th>
+                    <th class="text-right">Total $</th>
+                    <th class="text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <HoldingView
+                    v-for="holding in filteredHoldings"
+                    :key="holding.id_holding"
+                    :holding="holding"
+                    :auth-token="getCookie('auth_token')"
+                    @click="openHoldingDetail(holding)"
+                  />
+                </tbody>
+              </v-table>
+            </v-card-text>
+          </v-card>
+        </v-container>
+
+        <v-container v-else-if="activeView === 'dashboard'" fluid>
           <!-- Portfolio Value Chart -->
           <v-card class="mb-4">
             <v-card-title class="d-flex align-center">
@@ -94,48 +350,24 @@
           </v-card>
         </v-container>
 
-        <v-container v-if="activeView === 'holding'" fluid>
-
+        <v-container v-else-if="activeView === 'news'" fluid>
+          <v-card class="pa-4">
+            <h3>News View</h3>
+            <p>This section is under construction.</p>
+          </v-card>
         </v-container>
 
-        <v-container v-else fluid>
+        <v-container v-else-if="activeView === 'allocation'" fluid>
           <v-card class="pa-4">
-            <h3>{{ activeView.charAt(0).toUpperCase() + activeView.slice(1) }} View</h3>
+            <h3>Allocation View</h3>
             <p>This section is under construction.</p>
-            <btn>Add holding</btn>
+          </v-card>
+        </v-container>
 
-            search bar (isin ticker)
-            sort by
-
-            stats
-            total assets
-            total value
-            total P/L ( $ and % )
-            daily P/L ( $ and % )
-
-            <list>
-              <li v-for="i in 5" :key="i">
-                <p>Todays price chart small</p>
-                <p>Ticker: XXX</p>
-                <p>Current Price: $123.45</p>
-                <p>Day Chang pct: 1.45%</p>
-                <p>Day Change: $1.75</p>
-                <p>Total P/L pct: 12.37%</p>
-                <p>Total P/L: $15.30</p>
-              </li>
-
-              drop down
-              chart
-              recent news + todays sentiment analysis
-              allocation if etf int sectors and regions
-
-              details
-              name, avg purches price, quannity, ticker, isin, exchange, ter, currency, policy
-
-              list of top 10 holdings with small charts (chart, ticker name, weight pct, current price, day change pct, total pl pct)
-
-
-            </list>
+        <v-container v-else-if="activeView === 'statistics'" fluid>
+          <v-card class="pa-4">
+            <h3>Statistics View</h3>
+            <p>This section is under construction.</p>
           </v-card>
         </v-container>
       </v-main>
@@ -146,13 +378,15 @@
 <script>
 import LoginRegister from './components/loginRegister.vue'
 import CandleChart from './components/candleChart.vue'
+import HoldingView from './components/holdingView.vue'
 
 export default {
   name: 'App',
 
   components: {
     LoginRegister,
-    CandleChart
+    CandleChart,
+    HoldingView
   },
 
   data() {
@@ -171,7 +405,74 @@ export default {
 
       // Sidebar state
       drawer: true,
-      activeView: 'dashboard'
+      activeView: 'dashboard',
+
+      // Add Holding state
+      showAddHolding: false,
+      searchQuery: '',
+      searchResults: [],
+      searchLoading: false,
+      selectedResult: null,
+      searchTimeout: null,
+      addHoldingLoading: false,
+      addHoldingError: '',
+      addHoldingSuccess: false,
+      newHolding: {
+        name: '',
+        ticker: '',
+        isin: '',
+        exchange: '',
+        currency: 'USD',
+        quantity: null,
+        purchasePrice: null,
+        ter: 0,
+        policy: 'N/A',
+        etf: false
+      },
+
+      // Holdings view state
+      holdingsSearch: '',
+      holdingsSortBy: 'ticker'
+    }
+  },
+
+  computed: {
+    canAddHolding() {
+      return this.selectedResult && 
+             this.newHolding.quantity > 0 && 
+             this.newHolding.purchasePrice > 0 &&
+             this.newHolding.ticker
+    },
+
+    filteredHoldings() {
+      if (!this.portfolioHoldings) return []
+      
+      let holdings = [...this.portfolioHoldings]
+      
+      // Filter by search
+      if (this.holdingsSearch) {
+        const search = this.holdingsSearch.toLowerCase()
+        holdings = holdings.filter(h => 
+          h.ticker.toLowerCase().includes(search) ||
+          h.name.toLowerCase().includes(search) ||
+          (h.isin && h.isin.toLowerCase().includes(search))
+        )
+      }
+      
+      // Sort
+      holdings.sort((a, b) => {
+        if (this.holdingsSortBy === 'ticker') {
+          return a.ticker.localeCompare(b.ticker)
+        } else if (this.holdingsSortBy === 'value') {
+          const valueA = a.quantity * a.purchase_price
+          const valueB = b.quantity * b.purchase_price
+          return valueB - valueA
+        }
+        // For 'change', we'd need real-time data which is fetched in each row
+        return 0
+      })
+      
+      return holdings
     }
   },
 
@@ -227,6 +528,155 @@ export default {
 
     deleteCookie(name) {
       document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`
+    },
+
+    // Search functionality
+    debouncedSearch() {
+      if (this.searchTimeout) {
+        clearTimeout(this.searchTimeout)
+      }
+      this.searchTimeout = setTimeout(() => {
+        this.searchTicker()
+      }, 400)
+    },
+
+    async searchTicker() {
+      if (!this.searchQuery || this.searchQuery.length < 2) {
+        this.searchResults = []
+        return
+      }
+
+      this.searchLoading = true
+      try {
+        // Determine search type (ISIN if starts with 2 letters followed by numbers)
+        const isIsin = /^[A-Z]{2}[A-Z0-9]{9,10}$/i.test(this.searchQuery)
+        const searchType = isIsin ? 'isin' : 'ticker'
+        
+        const response = await fetch(
+          `http://localhost:5123/api/search?identifier=${encodeURIComponent(this.searchQuery)}&search_type=${searchType}`
+        )
+        
+        if (response.ok) {
+          this.searchResults = await response.json()
+        } else {
+          this.searchResults = []
+        }
+      } catch (error) {
+        console.error('Search error:', error)
+        this.searchResults = []
+      } finally {
+        this.searchLoading = false
+      }
+    },
+
+    selectSearchResult(result) {
+      this.selectedResult = result
+      this.searchResults = []
+      
+      // Auto-fill the form
+      this.newHolding.name = result.name || ''
+      this.newHolding.ticker = result.ticker || ''
+      this.newHolding.isin = result.isin || ''
+      this.newHolding.exchange = result.exchange || ''
+      this.newHolding.currency = result.currency || 'USD'
+      this.newHolding.etf = result.type === 'ETF'
+      
+      // Parse TER if available
+      if (result.ter) {
+        const terValue = parseFloat(result.ter.replace('%', ''))
+        this.newHolding.ter = isNaN(terValue) ? 0 : terValue
+      } else {
+        this.newHolding.ter = 0
+      }
+      
+      this.newHolding.policy = result.distribution_policy || 'N/A'
+      
+      // Set current price as default purchase price
+      if (result.price && result.price !== 'N/A') {
+        this.newHolding.purchasePrice = parseFloat(result.price)
+      }
+      
+      this.addHoldingError = ''
+      this.addHoldingSuccess = false
+    },
+
+    clearSearch() {
+      this.searchQuery = ''
+      this.searchResults = []
+      this.selectedResult = null
+      this.resetNewHolding()
+    },
+
+    resetNewHolding() {
+      this.newHolding = {
+        name: '',
+        ticker: '',
+        isin: '',
+        exchange: '',
+        currency: 'USD',
+        quantity: null,
+        purchasePrice: null,
+        ter: 0,
+        policy: 'N/A',
+        etf: false
+      }
+      this.addHoldingError = ''
+      this.addHoldingSuccess = false
+    },
+
+    async addHolding() {
+      const token = this.getCookie('auth_token')
+      if (!token) {
+        this.addHoldingError = 'Not authenticated'
+        return
+      }
+
+      this.addHoldingLoading = true
+      this.addHoldingError = ''
+      this.addHoldingSuccess = false
+
+      try {
+        const formData = new FormData()
+        formData.append('Name', this.newHolding.name)
+        formData.append('Ticker', this.newHolding.ticker)
+        formData.append('ISIN', this.newHolding.isin)
+        formData.append('Exchange', this.newHolding.exchange)
+        formData.append('Currency', this.newHolding.currency)
+        formData.append('Quantity', this.newHolding.quantity.toString())
+        formData.append('PurchasePrice', this.newHolding.purchasePrice.toString())
+        formData.append('TER', this.newHolding.ter.toString())
+        formData.append('Policy', this.newHolding.policy)
+        formData.append('ETF', this.newHolding.etf ? 'true' : 'false')
+
+        const response = await fetch('http://localhost:8085/api/asset/holdings', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        })
+
+        if (response.ok) {
+          this.addHoldingSuccess = true
+          this.clearSearch()
+          // Refresh holdings
+          this.fetchPortfolioHoldings()
+          this.fetchPortfolioHistory()
+          
+          // Auto-hide success message after 3 seconds
+          setTimeout(() => {
+            this.addHoldingSuccess = false
+          }, 3000)
+        } else {
+          const errorText = await response.text()
+          this.addHoldingError = errorText || 'Failed to add holding'
+        }
+      } catch (error) {
+        console.error('Add holding error:', error)
+        this.addHoldingError = error.message || 'Failed to add holding'
+      } finally {
+        this.addHoldingLoading = false
+      }
     },
 
     // Fetch portfolio value history
@@ -314,6 +764,11 @@ export default {
       this.deleteCookie('user_email')
       this.isAuthenticated = false
       this.userEmail = ''
+    },
+
+    openHoldingDetail(holding) {
+      console.log('Opening holding detail:', holding)
+      // TODO: Implement holding detail view/modal
     }
   }
 }
@@ -323,5 +778,40 @@ export default {
 .chart-wrapper {
   width: 100%;
   overflow-x: auto;
+}
+
+.add-holding-form {
+  background-color: rgba(var(--v-theme-surface-variant), 0.3);
+  border-radius: 8px;
+  margin: 0 8px;
+}
+
+.search-results {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-border-color), 0.12);
+  border-radius: 4px;
+}
+
+.search-results .v-list-item {
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.08);
+  cursor: pointer;
+}
+
+.search-results .v-list-item:hover {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+}
+
+.search-results .v-list-item:last-child {
+  border-bottom: none;
+}
+
+.text-primary {
+  color: rgb(var(--v-theme-primary)) !important;
+}
+
+.bg-primary-lighten-4 {
+  background-color: rgba(var(--v-theme-primary), 0.15) !important;
 }
 </style>
