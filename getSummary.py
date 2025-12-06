@@ -5,27 +5,38 @@ def summarize_daily_news(news_list, sentiment_list, max_tokens=1024, ticker: str
         raise ValueError("news_list and sentiment_list must have equal length")
     
     average_sentiment = sum(sentiment_list) / len(sentiment_list) if sentiment_list else 0.0
+    sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
 
     combined_items = []
-    for summary, sentiment in zip(news_list, sentiment_list):
-        combined_items.append(f"- Summary: {summary}\n  Sentiment: {sentiment}")
+    for i, (summary, sentiment) in enumerate(zip(news_list, sentiment_list), 1):
+        sent_label = "+" if sentiment > 0.2 else "-" if sentiment < -0.2 else "~"
+        combined_items.append(f"{i}. [{sent_label}] {summary}")
 
     news_block = "\n".join(combined_items)
 
-    system_prompt = (
-        "You are an analytical summarization model. Your task is to read multiple news summaries "
-        "from the same day and produce a concise, factual daily briefing.\n"
-        "Your goals:\n"
-        "- Identify events with the highest real-world importance.\n"
-        "- Use sentiment scores only to understand tone.\n"
-        "- Combine related events into unified insights.\n"
-        "- Remove redundancy and subjective language.\n"
-        "- Output a structured summary with sections: Key Events, Market/Business, Technology, "
-        "Politics/Geopolitics, Other Notable Items.\n"
-        "- Never invent events not present in the input."
-    )
+    system_prompt = f"""You are a financial analyst. Summarize news for {ticker} into a brief investment update.
 
-    user_prompt = f"Here are today's collected news items:\n\n{news_block}\n\nGenerate the daily briefing for ticker {ticker}."
+RULES:
+- Focus only on {ticker}-relevant information
+- Use numbers from the news (e.g., "up 3%", "revenue +15%")
+- Do NOT invent data
+- Be concise
+
+FORMAT:
+## {ticker} ({date}) - {sentiment_label}
+
+**Key News:**
+- [Top 2-3 developments]
+
+**Impact:** [1 sentence on stock implications]
+
+**Risk:** [1 sentence if any concerns, else "None noted"]"""
+
+    user_prompt = f"""NEWS [{sentiment_label}, score: {average_sentiment:.2f}]:
+{news_block}
+
+Summarize."""
+
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
@@ -50,27 +61,43 @@ def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_
         raise ValueError("news_list and sentiment_list must have equal length")
     
     average_sentiment = sum(sentiment_list) / len(sentiment_list) if sentiment_list else 0.0
-
-    combined_items = []
+    sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
+    
+    # Group news by ticker
+    ticker_news = {}
     for summary, sentiment, ticker in zip(news_list, sentiment_list, tickers_list):
-        combined_items.append(f"- [{ticker}] Summary: {summary}\n  Sentiment: {sentiment}")
+        if ticker not in ticker_news:
+            ticker_news[ticker] = []
+        sent_label = "+" if sentiment > 0.2 else "-" if sentiment < -0.2 else "~"
+        ticker_news[ticker].append(f"[{sent_label}] {summary}")
+    
+    news_block = ""
+    for ticker, items in ticker_news.items():
+        news_block += f"{ticker}: " + " | ".join(items) + "\n"
 
-    news_block = "\n".join(combined_items)
+    unique_tickers = list(set(tickers_list))
+    
+    system_prompt = f"""You are a portfolio analyst. Summarize news for holdings: {', '.join(unique_tickers)}.
 
-    system_prompt = (
-        "You are an analytical summarization model for investment portfolios. Your task is to read multiple news summaries "
-        "from across a user's portfolio holdings and produce a concise, factual daily portfolio briefing.\n"
-        "Your goals:\n"
-        "- Identify events with the highest real-world importance to the portfolio.\n"
-        "- Use sentiment scores only to understand tone.\n"
-        "- Group related events by sector or theme.\n"
-        "- Highlight any potential risks or opportunities.\n"
-        "- Remove redundancy and subjective language.\n"
-        "- Output a structured summary with sections: Portfolio Highlights, Risks & Concerns, Opportunities, Market Overview.\n"
-        "- Never invent events not present in the input."
-    )
+RULES:
+- [+] = positive, [-] = negative, [~] = neutral
+- Prioritize by impact
+- Do NOT invent data
+- Be concise
 
-    user_prompt = f"Here are today's collected news items across my portfolio:\n\n{news_block}\n\nGenerate the daily portfolio briefing."
+FORMAT:
+## Portfolio ({date}) - {sentiment_label}
+
+**Headlines:** [Top 2-3 items across holdings]
+
+**Risks:** [Any concerns, or "None"]
+
+**Opportunities:** [Any positive catalysts, or "None"]"""
+
+    user_prompt = f"""NEWS [Overall: {sentiment_label}, {average_sentiment:.2f}]:
+{news_block}
+
+Summarize."""
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
@@ -90,30 +117,27 @@ def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_
     return res
 
 if __name__ == '__main__':
-    # Sample test data
     test_news = [
-        "Apple announces new iPhone with advanced AI capabilities, stock rises 3%",
-        "Tech giant Apple unveils latest smartphone featuring breakthrough artificial intelligence",
-        "Federal Reserve hints at possible rate cuts in Q2 2025",
-        "Ukraine and Russia agree to temporary ceasefire for humanitarian aid",
-        "Tesla recalls 50,000 vehicles due to software glitch in autopilot system",
-        "Major data breach at healthcare provider affects 2 million patients"
+        "Apple Q4 earnings beat: EPS $1.64 vs $1.58, revenue +8% YoY",
+        "Apple announces $90B buyback program",
+        "iPhone 16 gains 3% market share in China",
+        "Analyst upgrades to Strong Buy, PT $250",
+        "Key supplier reports 15% production delays"
     ]
     
-    test_sentiments = [
-        0.85,
-        0.78,
-        0.52,
-        0.65,
-        -0.72,
-        -0.88
-    ]
+    test_sentiments = [0.85, 0.78, 0.72, 0.88, -0.45]
     
-    print(f"\nInput: {len(test_news)} news items")
+    print(f"\nInput: {len(test_news)} news items for AAPL")
     print("\nGenerating summary...\n")
     
     try:
-        summary = summarize_daily_news(test_news, test_sentiments, max_tokens=512)
+        summary = summarize_daily_news(
+            test_news, 
+            test_sentiments, 
+            max_tokens=512,
+            ticker="AAPL",
+            date="2025-12-06"
+        )
         print("-" * 80)
         print(summary)
         print("-" * 80)

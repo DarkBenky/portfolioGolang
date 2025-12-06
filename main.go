@@ -1073,6 +1073,32 @@ func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
 	return holdings, nil
 }
 
+func (database *DB) getPortfolioDailySummary(userID string, date string) (*PortfolioDailySentiment, error) {
+	var summary PortfolioDailySentiment
+	err := database.QueryRow(`
+		SELECT id_sentiment, user_id, date, summary, sentiment
+		FROM portfolio_daily_sentiment
+		WHERE user_id = ? AND date = ?
+	`, userID, date).Scan(&summary.IdSentiment, &summary.UserID, &summary.Date, &summary.Summary, &summary.Sentiment)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (database *DB) getHoldingDailySummary(holdingID string, date string) (*DailySentiment, error) {
+	var summary DailySentiment
+	err := database.QueryRow(`
+		SELECT id_sentiment, ticker, date, summary, sentiment
+		FROM daily_sentiment
+		WHERE ticker = ? AND date = ?
+	`, holdingID, date).Scan(&summary.IdSentiment, &summary.Ticker, &summary.Date, &summary.Summary, &summary.Sentiment)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
 func (database *DB) addAsset(asset Asset) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -1605,7 +1631,7 @@ func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 		"date":           todayDate,
 		"news_list":      summaries,
 		"sentiment_list": sentiments,
-		"max_tokens":     512,
+		"max_tokens":     2048,
 	}
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -1690,7 +1716,7 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		"news_list":      allSummaries,
 		"sentiment_list": allSentiments,
 		"tickers_list":   allTickers,
-		"max_tokens":     1024,
+		"max_tokens":     2048,
 	}
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -3365,6 +3391,39 @@ func getAssetStats(c echo.Context) error {
 	return c.JSON(http.StatusOK, stats)
 }
 
+func getAllPortfolioDaySentiments(c echo.Context) error {
+	// Get user ID from JWT token
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+	date := c.QueryParam("date") // expected format: YYYY-MM-DD
+	if date == "" {
+		return c.String(http.StatusBadRequest, "date parameter is required")
+	}
+
+	portfolioSummary , err := db.getPortfolioDailySummary(userID, date)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving portfolio summary")
+	}
+
+	return c.JSON(http.StatusOK, portfolioSummary)
+}
+
+func getAssetDailySentimentSummary(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	date := c.QueryParam("date") // expected format: YYYY-MM-DD
+	if ticker == "" || date == "" {
+		return c.String(http.StatusBadRequest, "ticker and date parameters are required")
+	}
+
+	sentimentSummary, err := db.getHoldingDailySummary(ticker, date)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving asset sentiment summary")
+	}
+
+	return c.JSON(http.StatusOK, sentimentSummary)
+}	
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -3414,6 +3473,7 @@ func main() {
 	protected.GET("/portfolio/change", getPortfolioValueChange)
 	protected.GET("/portfolio/news", getLatestNewsForPortfolio)
 	protected.GET("/portfolio/sentiment", getPortfolioDaySentiment)
+	protected.GET("/portfolio/daily_sentiment", getAllPortfolioDaySentiments)
 	protected.GET("/portfolio/allocation", getPortfolioAllocation)
 	protected.GET("/portfolio/stats", getPortfolioStats)
 
@@ -3427,6 +3487,7 @@ func main() {
 	protected.GET("/asset/value", GetTickerValue)
 	protected.GET("/asset/history", GetAssetPriceHistory)
 	protected.GET("/asset/stats", getAssetStats)
+	protected.GET("/asset/daily_sentiment", getAssetDailySentimentSummary)
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)
