@@ -1528,7 +1528,6 @@ func FillInBetweenPrices(Ticker string) error {
 				interpolatedClose := prevPrice.Close + (price.Close-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
 				interpolatedHigh := prevPrice.Close + (price.High-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
 				interpolatedLow := prevPrice.Close + (price.Low-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
-				interpolatedVolume := int64(float64(prevPrice.Volume) + (float64(price.Volume)-float64(prevPrice.Volume))*float64(i)/float64(fillsNeeded+1))
 				missingPrice := Price{
 					IdPrice: generateID(),
 					Ticker:  Ticker,
@@ -1537,7 +1536,7 @@ func FillInBetweenPrices(Ticker string) error {
 					Close:   interpolatedClose,
 					High:    interpolatedHigh,
 					Low:     interpolatedLow,
-					Volume:  interpolatedVolume,
+					Volume:  0.0,
 				}
 				err := db.addPrice(missingPrice)
 				if err != nil {
