@@ -1,5 +1,6 @@
 <template>
-  <tr class="holding-row" @click="opened = !opened">
+  <tbody class="holding-tbody">
+    <tr class="holding-row" @click="opened = !opened">
     <!-- Mini Chart -->
     <td class="chart-cell">
       <div class="mini-chart-container">
@@ -17,11 +18,11 @@
     </td>
 
     <!-- Ticker -->
-    <td class="ticker-cell">
+    <td>
       <div class="d-flex align-center">
         <div>
           <div class="font-weight-bold">{{ holding.ticker }}</div>
-          <div class="text-caption text-grey text-truncate" style="max-width: 120px;">
+          <div class="text-caption text-grey text-truncate" style="max-width: 140px;">
             {{ holding.name }}
           </div>
         </div>
@@ -31,9 +32,7 @@
 
     <!-- Current Price -->
     <td class="text-right">
-      <div class="font-weight-medium">
-        {{ formatCurrency(currentPrice, holding.currency) }}
-      </div>
+      <span class="font-weight-medium">{{ formatCurrency(currentPrice, holding.currency) }}</span>
     </td>
 
     <!-- Day Change % -->
@@ -42,11 +41,9 @@
         :color="isPositiveDay ? 'success' : 'error'"
         size="small"
         variant="tonal"
+        label
       >
-        <v-icon size="x-small" class="mr-1">
-          {{ isPositiveDay ? 'mdi-arrow-up' : 'mdi-arrow-down' }}
-        </v-icon>
-        {{ formatPercent(dayChangePercent) }}
+        {{ isPositiveDay ? '+' : '' }}{{ formatPercent(dayChangePercent) }}
       </v-chip>
     </td>
 
@@ -63,11 +60,9 @@
         :color="isPositiveTotal ? 'success' : 'error'"
         size="small"
         variant="tonal"
+        label
       >
-        <v-icon size="x-small" class="mr-1">
-          {{ isPositiveTotal ? 'mdi-arrow-up' : 'mdi-arrow-down' }}
-        </v-icon>
-        {{ formatPercent(totalChangePercent) }}
+        {{ isPositiveTotal ? '+' : '' }}{{ formatPercent(totalChangePercent) }}
       </v-chip>
     </td>
 
@@ -80,25 +75,424 @@
 
     <!-- Current Value -->
     <td class="text-right">
-      <div class="font-weight-bold">
-        {{ formatCurrency(currentValue, holding.currency) }}
-      </div>
-      <div class="text-caption text-grey">
-        {{ holding.quantity }} shares
-      </div>
+      <div class="font-weight-bold">{{ formatCurrency(currentValue, holding.currency) }}</div>
+      <div class="text-caption text-grey">{{ formatQuantity(holding.quantity) }} {{ holding.etf ? 'units' : 'shares' }}</div>
     </td>
 
-    <!-- detail view -->
-        <!-- price chart -->
-        <!-- news list -->
-        <!-- asset details -->
-    <!-- detail view -->
+    <!-- Expand Icon -->
+    <td class="text-center expand-cell">
+      <v-icon size="small" :class="{ 'rotate-180': opened }">
+        mdi-chevron-down
+      </v-icon>
+    </td>
   </tr>
+
+  <!-- Expandable Detail Row -->
+  <tr v-if="opened" class="detail-row">
+    <td colspan="9" class="pa-0">
+      <div class="detail-container">
+        <!-- Full Price Chart at Top -->
+        <v-row class="mb-4">
+          <v-col cols="12">
+            <v-card variant="outlined">
+              <v-card-title class="d-flex justify-space-between align-center pb-2">
+                <div class="d-flex align-center">
+                  <v-icon size="small" class="mr-2">mdi-chart-line</v-icon>
+                  Price Chart - {{ holding.ticker }}
+                </div>
+                <div class="d-flex ga-2">
+                  <v-btn-toggle v-model="chartPeriod" mandatory density="compact" color="primary">
+                    <v-btn value="1d" size="x-small">1D</v-btn>
+                    <v-btn value="1w" size="x-small">1W</v-btn>
+                    <v-btn value="1m" size="x-small">1M</v-btn>
+                    <v-btn value="3m" size="x-small">3M</v-btn>
+                    <v-btn value="1y" size="x-small">1Y</v-btn>
+                  </v-btn-toggle>
+                </div>
+              </v-card-title>
+              <v-card-text class="pa-0">
+                <div v-if="chartLoading" class="d-flex justify-center align-center" style="height: 300px;">
+                  <v-progress-circular indeterminate color="primary" size="40"></v-progress-circular>
+                </div>
+                <CandleChart
+                  v-else-if="fullPriceHistory.length > 0"
+                  :data="fullPriceHistory"
+                  :height="300"
+                  theme="dark"
+                />
+                <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
+                  No chart data available
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Info Cards Row -->
+        <v-row>
+          <!-- Left Column: Asset Info -->
+          <v-col cols="12" md="4">
+            <v-card variant="outlined" class="h-100">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-information-outline</v-icon>
+                Asset Details
+              </v-card-title>
+              <v-card-text>
+                <div class="detail-grid">
+                  <div class="detail-item">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">{{ holding.name }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Ticker</span>
+                    <span class="detail-value font-weight-bold">{{ holding.ticker }}</span>
+                  </div>
+                  <div v-if="holding.isin && holding.isin !== 'N/A'" class="detail-item">
+                    <span class="detail-label">ISIN</span>
+                    <span class="detail-value text-mono">{{ holding.isin }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Exchange</span>
+                    <span class="detail-value">{{ holding.exchange || 'N/A' }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Currency</span>
+                    <span class="detail-value">{{ holding.currency }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Type</span>
+                    <v-chip :color="holding.etf ? 'blue' : 'grey'" size="x-small">
+                      {{ holding.etf ? 'ETF' : 'Stock/Crypto' }}
+                    </v-chip>
+                  </div>
+                  <div v-if="holding.etf && holding.ter > 0" class="detail-item">
+                    <span class="detail-label">TER</span>
+                    <span class="detail-value">{{ holding.ter.toFixed(2) }}%</span>
+                  </div>
+                  <div v-if="holding.policy && holding.policy !== 'N/A'" class="detail-item">
+                    <span class="detail-label">Distribution</span>
+                    <v-chip :color="holding.policy === 'Accumulating' ? 'purple' : 'orange'" size="x-small">
+                      {{ holding.policy }}
+                    </v-chip>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <!-- Middle Column: Position Info -->
+          <v-col cols="12" md="4">
+            <v-card variant="outlined" class="h-100">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-wallet-outline</v-icon>
+                Position
+              </v-card-title>
+              <v-card-text>
+                <div class="detail-grid">
+                  <div class="detail-item">
+                    <span class="detail-label">Quantity</span>
+                    <span class="detail-value font-weight-bold">{{ formatQuantity(holding.quantity) }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Avg. Purchase Price</span>
+                    <span class="detail-value">{{ formatCurrency(holding.purchase_price, holding.currency) }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Cost Basis</span>
+                    <span class="detail-value">{{ formatCurrency(costBasis, holding.currency) }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Current Price</span>
+                    <span class="detail-value font-weight-bold">{{ formatCurrency(currentPrice, holding.currency) }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Current Value</span>
+                    <span class="detail-value font-weight-bold text-primary">{{ formatCurrency(currentValue, holding.currency) }}</span>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <!-- Right Column: Performance -->
+          <v-col cols="12" md="4">
+            <v-card variant="outlined" class="h-100">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-trending-up</v-icon>
+                Performance
+              </v-card-title>
+              <v-card-text>
+                <div class="detail-grid">
+                  <div class="detail-item">
+                    <span class="detail-label">Today's Change</span>
+                    <div>
+                      <span :class="isPositiveDay ? 'text-success' : 'text-error'" class="font-weight-bold">
+                        {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(dayChange, holding.currency) }}
+                      </span>
+                      <v-chip :color="isPositiveDay ? 'success' : 'error'" size="x-small" class="ml-2">
+                        {{ isPositiveDay ? '+' : '' }}{{ dayChangePercent.toFixed(2) }}%
+                      </v-chip>
+                    </div>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Total Gain/Loss</span>
+                    <div>
+                      <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-bold">
+                        {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, holding.currency) }}
+                      </span>
+                      <v-chip :color="isPositiveTotal ? 'success' : 'error'" size="x-small" class="ml-2">
+                        {{ isPositiveTotal ? '+' : '' }}{{ totalChangePercent.toFixed(2) }}%
+                      </v-chip>
+                    </div>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">Return on Investment</span>
+                    <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="detail-value font-weight-bold text-h6">
+                      {{ isPositiveTotal ? '+' : '' }}{{ totalChangePercent.toFixed(2) }}%
+                    </span>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Daily Summary Section -->
+        <v-row class="mt-4">
+          <v-col cols="12">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+                <div class="d-flex align-center">
+                  <v-icon size="small" class="mr-2">mdi-text-box-outline</v-icon>
+                  Today's Summary - {{ holding.ticker }}
+                </div>
+                <v-chip 
+                  v-if="dailySummary?.sentiment !== undefined"
+                  :color="getSentimentColor(dailySummary.sentiment)" 
+                  size="small"
+                  variant="tonal"
+                >
+                  Sentiment: {{ getSentimentLabel(dailySummary.sentiment) }}
+                </v-chip>
+              </v-card-title>
+              <v-card-text>
+                <div v-if="dailySummaryLoading" class="d-flex justify-center py-4">
+                  <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+                </div>
+                <div v-else-if="dailySummary?.summary" class="summary-content">
+                  <div class="text-body-2 markdown-content" v-html="formatMarkdown(dailySummary.summary)"></div>
+                </div>
+                <div v-else class="text-center text-grey py-4">
+                  <v-icon size="36" class="mb-2">mdi-text-box-remove-outline</v-icon>
+                  <div>No summary available for today</div>
+                  <div class="text-caption mt-1">Summaries are generated periodically from recent news</div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Pie Charts for ETFs - Sectors & Regions -->
+        <v-row v-if="holding.etf && (holding.sectors?.length > 0 || holding.regions?.length > 0)" class="mt-4">
+          <v-col v-if="holding.sectors?.length > 0" cols="12" md="6">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-domain</v-icon>
+                Sector Allocation
+              </v-card-title>
+              <v-card-text>
+                <div class="pie-chart-container">
+                  <svg viewBox="0 0 200 200" class="pie-chart">
+                    <g transform="translate(100, 100)">
+                      <path
+                        v-for="(slice, index) in sectorPieSlices"
+                        :key="'sector-' + index"
+                        :d="slice.path"
+                        :fill="slice.color"
+                        class="pie-slice"
+                        @mouseenter="hoveredSlice = { type: 'sector', index }"
+                        @mouseleave="hoveredSlice = null"
+                      />
+                    </g>
+                  </svg>
+                  <div class="pie-legend">
+                    <div 
+                      v-for="(sector, index) in holding.sectors.slice(0, 6)" 
+                      :key="sector.name" 
+                      class="legend-item"
+                      :class="{ 'legend-item-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                    >
+                      <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                      <span class="legend-text">{{ sector.name }}</span>
+                      <span class="legend-value">{{ sector.percentage.toFixed(1) }}%</span>
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <v-col v-if="holding.regions?.length > 0" cols="12" md="6">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-earth</v-icon>
+                Region Allocation
+              </v-card-title>
+              <v-card-text>
+                <div class="pie-chart-container">
+                  <svg viewBox="0 0 200 200" class="pie-chart">
+                    <g transform="translate(100, 100)">
+                      <path
+                        v-for="(slice, index) in regionPieSlices"
+                        :key="'region-' + index"
+                        :d="slice.path"
+                        :fill="slice.color"
+                        class="pie-slice"
+                        @mouseenter="hoveredSlice = { type: 'region', index }"
+                        @mouseleave="hoveredSlice = null"
+                      />
+                    </g>
+                  </svg>
+                  <div class="pie-legend">
+                    <div 
+                      v-for="(region, index) in holding.regions.slice(0, 6)" 
+                      :key="region.name" 
+                      class="legend-item"
+                      :class="{ 'legend-item-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                    >
+                      <span class="legend-color" :style="{ backgroundColor: pieColors2[index % pieColors2.length] }"></span>
+                      <span class="legend-text">{{ region.name }}</span>
+                      <span class="legend-value">{{ region.percentage.toFixed(1) }}%</span>
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Top 10 Holdings for ETFs -->
+        <v-row v-if="holding.etf && holding.assets?.length > 0" class="mt-4">
+          <v-col cols="12">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+                <div class="d-flex align-center">
+                  <v-icon size="small" class="mr-2">mdi-view-list</v-icon>
+                  Top Holdings
+                </div>
+                <v-chip size="small" color="blue" variant="tonal">
+                  {{ holding.assets.length }} Assets
+                </v-chip>
+              </v-card-title>
+              <v-card-text class="pa-0">
+                <v-table density="compact" class="holdings-sub-table">
+                  <thead>
+                    <tr>
+                      <th class="text-left">Ticker</th>
+                      <th class="text-left">Name</th>
+                      <th class="text-left">ISIN</th>
+                      <th class="text-left">Sector</th>
+                      <th class="text-left">Region</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="asset in holding.assets" :key="asset.id_asset" class="asset-row">
+                      <td class="font-weight-bold">{{ asset.ticker }}</td>
+                      <td class="text-truncate" style="max-width: 200px;">{{ asset.name }}</td>
+                      <td class="text-mono text-caption">{{ asset.isin || 'N/A' }}</td>
+                      <td>
+                        <v-chip v-if="asset.sector" size="x-small" color="primary" variant="tonal">
+                          {{ asset.sector }}
+                        </v-chip>
+                        <span v-else class="text-grey">-</span>
+                      </td>
+                      <td>
+                        <v-chip v-if="asset.region" size="x-small" color="secondary" variant="tonal">
+                          {{ asset.region }}
+                        </v-chip>
+                        <span v-else class="text-grey">-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- News Section -->
+        <v-row class="mt-4">
+          <v-col cols="12">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+                <div class="d-flex align-center">
+                  <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
+                  Latest News - {{ holding.ticker }}
+                </div>
+                <v-btn 
+                  v-if="newsList.length > 0" 
+                  variant="text" 
+                  size="small" 
+                  color="primary"
+                  @click="loadMoreNews"
+                  :loading="newsLoading"
+                >
+                  Load More
+                </v-btn>
+              </v-card-title>
+              <v-card-text>
+                <div v-if="newsLoading && newsList.length === 0" class="d-flex justify-center py-4">
+                  <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+                </div>
+                <div v-else-if="newsList.length === 0" class="text-center text-grey py-4">
+                  <v-icon size="48" class="mb-2">mdi-newspaper-remove</v-icon>
+                  <div>No news available for {{ holding.ticker }}</div>
+                </div>
+                <div v-else class="news-list">
+                  <div 
+                    v-for="news in newsList" 
+                    :key="news.id_news" 
+                    class="news-item"
+                    @click="openNewsLink(news.link)"
+                  >
+                    <div class="news-header">
+                      <span class="news-title">{{ news.title }}</span>
+                      <v-chip 
+                        :color="getSentimentColor(news.sentiment)" 
+                        size="x-small" 
+                        variant="tonal"
+                        class="ml-2"
+                      >
+                        {{ getSentimentLabel(news.sentiment) }}
+                      </v-chip>
+                    </div>
+                    <div class="news-summary text-caption text-grey" v-html="formatMarkdown(news.summary || 'No summary available')">
+                    </div>
+                    <div class="news-meta text-caption">
+                      <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
+                      {{ formatNewsDate(news.published_at) }}
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+      </div>
+    </td>
+  </tr>
+  </tbody>
 </template>
 
 <script>
+import CandleChart from './candleChart.vue'
+
 export default {
   name: 'HoldingView',
+
+  components: {
+    CandleChart
+  },
 
   props: {
     holding: {
@@ -115,14 +509,28 @@ export default {
 
   data() {
     return {
-      opened : false,
+      opened: false,
       priceHistory: [],
+      fullPriceHistory: [],
       currentPrice: 0,
       dayChange: 0,
       dayChangePercent: 0,
       loading: false,
+      chartLoading: false,
       chartWidth: 80,
-      chartHeight: 30
+      chartHeight: 30,
+      chartPeriod: '1w',
+      // News
+      newsList: [],
+      newsLoading: false,
+      newsOffset: 0,
+      // Daily Summary
+      dailySummary: null,
+      dailySummaryLoading: false,
+      // Pie chart
+      hoveredSlice: null,
+      pieColors: ['#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0', '#00BCD4', '#795548', '#607D8B'],
+      pieColors2: ['#3F51B5', '#8BC34A', '#FFC107', '#F44336', '#673AB7', '#009688', '#FF5722', '#03A9F4']
     }
   },
 
@@ -175,6 +583,31 @@ export default {
       })
 
       return points.join(' ')
+    },
+
+    // Pie chart slices for sectors
+    sectorPieSlices() {
+      return this.generatePieSlices(this.holding.sectors?.slice(0, 6) || [], this.pieColors)
+    },
+
+    // Pie chart slices for regions
+    regionPieSlices() {
+      return this.generatePieSlices(this.holding.regions?.slice(0, 6) || [], this.pieColors2)
+    }
+  },
+
+  watch: {
+    opened(newVal) {
+      if (newVal) {
+        this.fetchFullPriceHistory()
+        this.fetchNews()
+        this.fetchDailySummary()
+      }
+    },
+    chartPeriod() {
+      if (this.opened) {
+        this.fetchFullPriceHistory()
+      }
     }
   },
 
@@ -222,6 +655,38 @@ export default {
       }
     },
 
+    async fetchFullPriceHistory() {
+      this.chartLoading = true
+      try {
+        const intervalMap = {
+          '1d': '5m',
+          '1w': '1h',
+          '1m': '1d',
+          '3m': '1d',
+          '1y': '1d'
+        }
+        const interval = intervalMap[this.chartPeriod] || '1h'
+        
+        const response = await fetch(
+          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.holding.ticker)}&period=${this.chartPeriod}&interval=${interval}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          this.fullPriceHistory = data || []
+        }
+      } catch (error) {
+        console.error('Error fetching full price history:', error)
+      } finally {
+        this.chartLoading = false
+      }
+    },
+
     async fetchAssetChange() {
       try {
         const response = await fetch(
@@ -246,6 +711,105 @@ export default {
       } catch (error) {
         console.error('Error fetching asset change:', error)
       }
+    },
+
+    async fetchNews() {
+      this.newsLoading = true
+      try {
+        const response = await fetch(
+          `http://localhost:8085/api/asset/news?ticker=${encodeURIComponent(this.holding.ticker)}&limit=5&offset=${this.newsOffset}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          console.log('News data received:', data)
+          if (this.newsOffset === 0) {
+            this.newsList = data || []
+          } else {
+            this.newsList = [...this.newsList, ...(data || [])]
+          }
+        } else {
+          console.error('News fetch failed with status:', response.status, await response.text())
+        }
+      } catch (error) {
+        console.error('Error fetching news:', error)
+      } finally {
+        this.newsLoading = false
+      }
+    },
+
+    loadMoreNews() {
+      this.newsOffset += 5
+      this.fetchNews()
+    },
+
+    async fetchDailySummary() {
+      this.dailySummaryLoading = true
+      try {
+        const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD format
+        const response = await fetch(
+          `http://localhost:8085/api/asset/daily_sentiment?ticker=${encodeURIComponent(this.holding.ticker)}&date=${today}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          this.dailySummary = data
+        }
+      } catch (error) {
+        console.error('Error fetching daily summary:', error)
+      } finally {
+        this.dailySummaryLoading = false
+      }
+    },
+
+    // Generate SVG pie chart slices
+    generatePieSlices(items, colors) {
+      if (!items || items.length === 0) return []
+      
+      const total = items.reduce((sum, item) => sum + item.percentage, 0)
+      const slices = []
+      let currentAngle = -90 // Start from top
+
+      items.forEach((item, index) => {
+        const percentage = (item.percentage / total) * 100
+        const angle = (percentage / 100) * 360
+        const startAngle = currentAngle
+        const endAngle = currentAngle + angle
+
+        const startRad = (startAngle * Math.PI) / 180
+        const endRad = (endAngle * Math.PI) / 180
+
+        const radius = 80
+        const x1 = Math.cos(startRad) * radius
+        const y1 = Math.sin(startRad) * radius
+        const x2 = Math.cos(endRad) * radius
+        const y2 = Math.sin(endRad) * radius
+
+        const largeArc = angle > 180 ? 1 : 0
+
+        const path = `M 0 0 L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
+
+        slices.push({
+          path,
+          color: colors[index % colors.length],
+          percentage: item.percentage,
+          name: item.name
+        })
+
+        currentAngle = endAngle
+      })
+
+      return slices
     },
 
     formatCurrency(value, currency = 'USD') {
@@ -278,19 +842,127 @@ export default {
         return '-'
       }
       return Math.abs(value).toFixed(2) + '%'
+    },
+
+    formatQuantity(value) {
+      if (value === null || value === undefined || isNaN(value)) {
+        return '-'
+      }
+      // For small quantities (like crypto), show more decimals
+      if (value < 1) {
+        return value.toFixed(6)
+      } else if (value < 100) {
+        return value.toFixed(4)
+      } else {
+        return value.toFixed(2)
+      }
+    },
+
+    formatNewsDate(timestamp) {
+      if (!timestamp) return 'Unknown'
+      const date = new Date(parseInt(timestamp) * 1000)
+      const now = new Date()
+      const diff = now - date
+      
+      if (diff < 3600000) {
+        return Math.floor(diff / 60000) + ' min ago'
+      } else if (diff < 86400000) {
+        return Math.floor(diff / 3600000) + ' hours ago'
+      } else if (diff < 604800000) {
+        return Math.floor(diff / 86400000) + ' days ago'
+      } else {
+        return date.toLocaleDateString()
+      }
+    },
+
+    getSentimentColor(sentiment) {
+      if (sentiment > 0.3) return 'success'
+      if (sentiment < -0.3) return 'error'
+      return 'grey'
+    },
+
+    getSentimentLabel(sentiment) {
+      if (sentiment > 0.3) return 'Positive'
+      if (sentiment < -0.3) return 'Negative'
+      return 'Neutral'
+    },
+
+    openNewsLink(link) {
+      if (link) {
+        window.open(link, '_blank')
+      }
+    },
+
+    formatMarkdown(text) {
+      if (!text) return ''
+      
+      let html = text
+      
+      // Escape HTML to prevent XSS
+      html = html.replace(/&/g, '&amp;')
+                 .replace(/</g, '&lt;')
+                 .replace(/>/g, '&gt;')
+      
+      // Headers (h1-h3)
+      html = html.replace(/^### (.+)$/gm, '<h4 class="text-subtitle-2 font-weight-bold mt-3 mb-1">$1</h4>')
+      html = html.replace(/^## (.+)$/gm, '<h3 class="text-subtitle-1 font-weight-bold mt-3 mb-1">$1</h3>')
+      html = html.replace(/^# (.+)$/gm, '<h2 class="text-h6 font-weight-bold mt-3 mb-2">$1</h2>')
+      
+      // Bold and italic
+      html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+      html = html.replace(/_(.+?)_/g, '<em>$1</em>')
+      
+      // Bullet lists
+      html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+      html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="ml-4 my-2">$&</ul>')
+      
+      // Numbered lists
+      html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+      
+      // Inline code
+      html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded" style="background: rgba(var(--v-theme-surface-variant), 0.5);">$1</code>')
+      
+      // Links
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-primary">$1</a>')
+      
+      // Line breaks - convert double newlines to paragraphs
+      html = html.replace(/\n\n/g, '</p><p class="mb-2">')
+      html = '<p class="mb-2">' + html + '</p>'
+      
+      // Single line breaks
+      html = html.replace(/\n/g, '<br>')
+      
+      // Clean up empty paragraphs
+      html = html.replace(/<p class="mb-2"><\/p>/g, '')
+      html = html.replace(/<p class="mb-2">(<h[2-4])/g, '$1')
+      html = html.replace(/(<\/h[2-4]>)<\/p>/g, '$1')
+      
+      return html
     }
   }
 }
 </script>
 
 <style scoped>
+.holding-tbody {
+  display: table-row-group;
+}
+
 .holding-row {
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color 0.15s ease;
 }
 
 .holding-row:hover {
-  background-color: rgba(var(--v-theme-primary), 0.05);
+  background-color: rgba(var(--v-theme-primary), 0.04);
+}
+
+.holding-row td {
+  padding: 12px 8px !important;
+  vertical-align: middle !important;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.08);
 }
 
 .chart-cell {
@@ -302,14 +974,22 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(var(--v-theme-surface-variant), 0.3);
+  border-radius: 4px;
+  padding: 4px;
 }
 
 .mini-chart {
   display: block;
 }
 
-.ticker-cell {
-  min-width: 150px;
+.expand-cell {
+  width: 50px;
+  opacity: 0.5;
+}
+
+.holding-row:hover .expand-cell {
+  opacity: 1;
 }
 
 .text-truncate {
@@ -318,8 +998,261 @@ export default {
   white-space: nowrap;
 }
 
-td {
-  padding: 12px 16px !important;
-  vertical-align: middle !important;
+/* Expand icon rotation */
+.rotate-180 {
+  transform: rotate(180deg);
+}
+
+.v-icon {
+  transition: transform 0.2s ease-in-out;
+}
+
+/* Detail row styles */
+.detail-row td {
+  padding: 0 !important;
+  background-color: rgba(var(--v-theme-surface-variant), 0.15);
+}
+
+.detail-row:hover td {
+  background-color: rgba(var(--v-theme-surface-variant), 0.15);
+}
+
+.detail-container {
+  padding: 20px 24px;
+  border-bottom: 2px solid rgba(var(--v-theme-primary), 0.2);
+}
+
+.detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-label {
+  font-size: 0.7rem;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.detail-value {
+  font-size: 0.9rem;
+  color: rgba(var(--v-theme-on-surface), 0.87);
+}
+
+.text-mono {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.h-100 {
+  height: 100%;
+}
+
+/* Pie Chart Styles */
+.pie-chart-container {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.pie-chart {
+  width: 140px;
+  height: 140px;
+  flex-shrink: 0;
+}
+
+.pie-slice {
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform-origin: center;
+}
+
+.pie-slice:hover {
+  opacity: 0.8;
+  transform: scale(1.02);
+}
+
+.pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.legend-item-active {
+  background-color: rgba(var(--v-theme-primary), 0.1);
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  flex: 1;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+/* Holdings Sub-Table Styles */
+.holdings-sub-table {
+  background: transparent !important;
+}
+
+.holdings-sub-table th {
+  font-size: 0.75rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(var(--v-theme-on-surface), 0.5) !important;
+  padding: 8px 12px !important;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.1) !important;
+}
+
+.holdings-sub-table td {
+  padding: 10px 12px !important;
+  font-size: 0.85rem;
+}
+
+.asset-row {
+  transition: background-color 0.15s ease;
+}
+
+.asset-row:hover {
+  background-color: rgba(var(--v-theme-primary), 0.04);
+}
+
+/* News Styles */
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.news-item {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(var(--v-theme-surface-variant), 0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.news-item:hover {
+  background: rgba(var(--v-theme-surface-variant), 0.5);
+  border-color: rgba(var(--v-theme-primary), 0.2);
+}
+
+.news-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.news-title {
+  font-weight: 500;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: rgba(var(--v-theme-on-surface), 0.9);
+}
+
+.news-summary {
+  line-height: 1.5;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.news-meta {
+  display: flex;
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+/* Summary Section */
+.summary-content {
+  background: rgba(var(--v-theme-surface-variant), 0.2);
+  border-radius: 8px;
+  padding: 16px;
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+}
+
+.summary-content p {
+  margin: 0;
+  color: rgba(var(--v-theme-on-surface), 0.85);
+}
+
+/* Markdown Content Styles */
+.markdown-content {
+  line-height: 1.7;
+}
+
+.markdown-content p {
+  margin-bottom: 8px;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.markdown-content li {
+  margin-bottom: 4px;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content h2, .markdown-content h3, .markdown-content h4 {
+  color: rgba(var(--v-theme-on-surface), 0.95);
+}
+
+.markdown-content a {
+  text-decoration: underline;
+}
+
+.markdown-content a:hover {
+  opacity: 0.8;
 }
 </style>

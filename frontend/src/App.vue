@@ -285,28 +285,26 @@
                 <p class="mt-4">No holdings yet. Add your first holding using the sidebar.</p>
               </div>
               
-              <v-table v-else fixed-header density="comfortable">
+              <v-table v-else fixed-header density="comfortable" class="holdings-table">
                 <thead>
                   <tr>
-                    <th class="text-left">Chart</th>
-                    <th class="text-left">Ticker</th>
-                    <th class="text-right">Price</th>
-                    <th class="text-right">Day %</th>
-                    <th class="text-right">Day $</th>
-                    <th class="text-right">Total %</th>
-                    <th class="text-right">Total $</th>
-                    <th class="text-right">Value</th>
+                    <th style="width: 90px;">Chart</th>
+                    <th style="min-width: 180px;">Ticker</th>
+                    <th style="width: 100px;" class="text-right">Price</th>
+                    <th style="width: 100px;" class="text-right">Day %</th>
+                    <th style="width: 100px;" class="text-right">Day $</th>
+                    <th style="width: 100px;" class="text-right">Total %</th>
+                    <th style="width: 110px;" class="text-right">Total $</th>
+                    <th style="width: 120px;" class="text-right">Value</th>
+                    <th style="width: 50px;"></th>
                   </tr>
                 </thead>
-                <tbody>
-                  <HoldingView
-                    v-for="holding in filteredHoldings"
-                    :key="holding.id_holding"
-                    :holding="holding"
-                    :auth-token="getCookie('auth_token')"
-                    @click="openHoldingDetail(holding)"
-                  />
-                </tbody>
+                <HoldingView
+                  v-for="holding in filteredHoldings"
+                  :key="holding.id_holding"
+                  :holding="holding"
+                  :auth-token="getCookie('auth_token')"
+                />
               </v-table>
             </v-card-text>
           </v-card>
@@ -813,5 +811,26 @@ export default {
 
 .bg-primary-lighten-4 {
   background-color: rgba(var(--v-theme-primary), 0.15) !important;
+}
+
+/* Holdings table styling */
+.holdings-table {
+  width: 100%;
+}
+
+.holdings-table :deep(thead th) {
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  color: rgba(var(--v-theme-on-surface), 0.6) !important;
+  background-color: rgba(var(--v-theme-surface-variant), 0.4) !important;
+  padding: 12px 8px !important;
+  white-space: nowrap;
+}
+
+.holdings-table :deep(table) {
+  table-layout: fixed;
+  width: 100%;
 }
 </style>

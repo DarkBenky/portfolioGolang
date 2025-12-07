@@ -83,19 +83,19 @@ type Sector struct {
 }
 
 type DailySentiment struct {
-	IdSentiment string
-	Ticker      string
-	Date        string
-	Summary     string
-	Sentiment   float64
+	IdSentiment string  `json:"id_sentiment"`
+	Ticker      string  `json:"ticker"`
+	Date        string  `json:"date"`
+	Summary     string  `json:"summary"`
+	Sentiment   float64 `json:"sentiment"`
 }
 
 type PortfolioDailySentiment struct {
-	IdSentiment string
-	UserID      string
-	Date        string
-	Summary     string
-	Sentiment   float64
+	IdSentiment string  `json:"id_sentiment"`
+	UserID      string  `json:"user_id"`
+	Date        string  `json:"date"`
+	Summary     string  `json:"summary"`
+	Sentiment   float64 `json:"sentiment"`
 }
 
 type Asset struct {
@@ -111,16 +111,16 @@ type Asset struct {
 }
 
 type News struct {
-	IdNews      string
-	Title       string
-	Link        string
-	PublishedAt string
-	Summary     string
-	Text        string
+	IdNews      string `json:"id_news"`
+	Title       string `json:"title"`
+	Link        string `json:"link"`
+	PublishedAt string `json:"published_at"`
+	Summary     string `json:"summary"`
+	Text        string `json:"text"`
 	idAsset     string
 	idHolding   string
-	Ticker      string
-	Sentiment   float64
+	Ticker      string  `json:"ticker"`
+	Sentiment   float64 `json:"sentiment"`
 }
 
 type Price struct {
