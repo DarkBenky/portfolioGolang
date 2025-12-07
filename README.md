@@ -1,0 +1,8 @@
+- [ ] Add holding sentiment chart
+- [ ] Add portfolio view
+    - [ ] sentiment
+    - [ ] news
+    - [ ] allocation region sector assets
+- [ ] News tab
+- [ ] Statistics
+- [ ] Back testing
