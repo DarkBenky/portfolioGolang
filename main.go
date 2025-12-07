@@ -117,6 +117,7 @@ type News struct {
 	PublishedAt string `json:"published_at"`
 	Summary     string `json:"summary"`
 	Text        string `json:"text"`
+	Author      string `json:"author"`
 	idAsset     string
 	idHolding   string
 	Ticker      string  `json:"ticker"`
@@ -380,6 +381,7 @@ func fetchNews(ticker string, numArticles int) error {
 			PublishedAt: strconv.FormatInt(article.PublishedAt, 10),
 			Summary:     article.Summary,
 			Text:        article.Text,
+			Author:      article.Author,
 			Ticker:      ticker,
 			Sentiment:   article.Sentiment,
 		}
@@ -568,6 +570,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			published_at TEXT,
 			summary TEXT,
 			text TEXT UNIQUE,
+			author TEXT,
 			sentiment REAL,
 			ticker TEXT,
 			id_asset TEXT,
@@ -1133,9 +1136,9 @@ func (database *DB) addNews(news News) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 	_, err := database.Exec(`
-		INSERT INTO news (id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Sentiment, news.Ticker, news.idAsset, news.idHolding)
+		INSERT INTO news (id_news, title, link, published_at, summary, text, author, sentiment, ticker, id_asset, id_holding)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Author, news.Sentiment, news.Ticker, news.idAsset, news.idHolding)
 	return err
 }
 
@@ -3423,6 +3426,51 @@ func getAssetDailySentimentSummary(c echo.Context) error {
 	return c.JSON(http.StatusOK, sentimentSummary)
 }
 
+func GetAssetSentiments(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	query := `
+		SELECT published_at, sentiment
+		FROM news
+		WHERE ticker = ?
+		AND sentiment IS NOT NULL
+		ORDER BY CAST(published_at AS INTEGER) DESC
+		LIMIT 100
+	`
+
+	rows, err := db.Query(query, ticker)
+	if err != nil {
+		log.Printf("Error querying asset sentiments: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving sentiments")
+	}
+	defer rows.Close()
+
+	type SentimentEntry struct {
+		PublishedAt int64   `json:"published_at"`
+		Sentiment   float64 `json:"sentiment"`
+	}
+
+	var sentiments []SentimentEntry
+	for rows.Next() {
+		var publishedAtStr string
+		var sentiment float64
+		if err := rows.Scan(&publishedAtStr, &sentiment); err != nil {
+			log.Printf("Error scanning sentiment row: %v", err)
+			continue
+		}
+		publishedAt, _ := strconv.ParseInt(publishedAtStr, 10, 64)
+		sentiments = append(sentiments, SentimentEntry{
+			PublishedAt: publishedAt,
+			Sentiment:   sentiment,
+		})
+	}
+
+	return c.JSON(http.StatusOK, sentiments)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -3477,6 +3525,7 @@ func main() {
 	protected.GET("/portfolio/stats", getPortfolioStats)
 
 	// Asset endpoints
+	protected.GET("/asset/sentiments", GetAssetSentiments)
 	protected.POST("/asset/holdings", AddHolding)
 	protected.PUT("/asset/holdings", ModifyHolding)
 	protected.DELETE("/asset/holdings", RemoveHolding)

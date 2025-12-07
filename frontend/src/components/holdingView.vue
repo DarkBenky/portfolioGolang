@@ -453,24 +453,95 @@
                     v-for="news in newsList" 
                     :key="news.id_news" 
                     class="news-item"
-                    @click="openNewsLink(news.link)"
                   >
-                    <div class="news-header">
-                      <span class="news-title">{{ news.title }}</span>
+                    <div class="news-header" @click="toggleNewsExpand(news.id_news)">
+                      <div class="d-flex align-center flex-grow-1">
+                        <v-icon 
+                          size="small" 
+                          class="mr-2 news-expand-icon"
+                          :class="{ 'rotate-180': expandedNews[news.id_news] }"
+                        >
+                          mdi-chevron-down
+                        </v-icon>
+                        <span class="news-title">{{ news.title }}</span>
+                      </div>
                       <v-chip 
                         :color="getSentimentColor(news.sentiment)" 
                         size="x-small" 
                         variant="tonal"
-                        class="ml-2"
+                        class="ml-2 flex-shrink-0"
                       >
-                        {{ getSentimentLabel(news.sentiment) }}
+                        {{ news.sentiment?.toFixed(2) || '0.00' }}
                       </v-chip>
                     </div>
-                    <div class="news-summary text-caption text-grey" v-html="formatMarkdown(news.summary || 'No summary available')">
+                    
+                    <!-- Summary Preview (always visible) -->
+                    <div class="news-preview text-caption text-grey mt-2" v-if="!expandedNews[news.id_news]">
+                      {{ truncateText(news.summary, 150) }}
                     </div>
-                    <div class="news-meta text-caption">
+                    
+                    <!-- Expanded Content -->
+                    <div v-if="expandedNews[news.id_news]" class="news-expanded mt-3">
+                      <!-- Author & Date -->
+                      <div class="news-info d-flex flex-wrap ga-3 mb-3">
+                        <div v-if="news.author" class="d-flex align-center">
+                          <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
+                          <span class="text-caption">{{ news.author }}</span>
+                        </div>
+                        <div class="d-flex align-center">
+                          <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
+                          <span class="text-caption">{{ formatNewsDate(news.published_at) }}</span>
+                        </div>
+                        <div class="d-flex align-center">
+                          <v-icon size="x-small" class="mr-1">mdi-emoticon-outline</v-icon>
+                          <span class="text-caption">Sentiment: {{ news.sentiment?.toFixed(3) || 'N/A' }}</span>
+                          <v-chip 
+                            :color="getSentimentColor(news.sentiment)" 
+                            size="x-small" 
+                            variant="tonal"
+                            class="ml-1"
+                          >
+                            {{ getSentimentLabel(news.sentiment) }}
+                          </v-chip>
+                        </div>
+                      </div>
+                      
+                      <!-- Summary -->
+                      <div class="news-full-summary mb-3">
+                        <div class="text-caption text-uppercase text-grey mb-1">Summary</div>
+                        <div class="text-body-2 markdown-content" v-html="formatMarkdown(news.summary || 'No summary available')"></div>
+                      </div>
+                      
+                      <!-- Full Text -->
+                      <div v-if="news.text" class="news-full-text mb-3">
+                        <div class="text-caption text-uppercase text-grey mb-1">Full Article</div>
+                        <div class="text-body-2 markdown-content news-text-content" v-html="formatMarkdown(news.text)"></div>
+                      </div>
+                      
+                      <!-- Source Link -->
+                      <div class="news-source mt-3 pt-3">
+                        <v-btn 
+                          v-if="news.link"
+                          variant="outlined" 
+                          size="small" 
+                          color="primary"
+                          :href="news.link"
+                          target="_blank"
+                          prepend-icon="mdi-open-in-new"
+                        >
+                          View Original Source
+                        </v-btn>
+                      </div>
+                    </div>
+                    
+                    <!-- Collapsed Meta -->
+                    <div v-if="!expandedNews[news.id_news]" class="news-meta text-caption mt-2">
                       <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
                       {{ formatNewsDate(news.published_at) }}
+                      <span v-if="news.author" class="ml-3">
+                        <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
+                        {{ news.author }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -524,6 +595,7 @@ export default {
       newsList: [],
       newsLoading: false,
       newsOffset: 0,
+      expandedNews: {},
       // Daily Summary
       dailySummary: null,
       dailySummaryLoading: false,
@@ -887,6 +959,19 @@ export default {
       return 'Neutral'
     },
 
+    toggleNewsExpand(newsId) {
+      this.expandedNews = {
+        ...this.expandedNews,
+        [newsId]: !this.expandedNews[newsId]
+      }
+    },
+
+    truncateText(text, maxLength) {
+      if (!text) return ''
+      if (text.length <= maxLength) return text
+      return text.substring(0, maxLength) + '...'
+    },
+
     openNewsLink(link) {
       if (link) {
         window.open(link, '_blank')
@@ -1159,7 +1244,6 @@ export default {
   padding: 12px 16px;
   border-radius: 8px;
   background: rgba(var(--v-theme-surface-variant), 0.3);
-  cursor: pointer;
   transition: all 0.2s ease;
   border: 1px solid transparent;
 }
@@ -1171,10 +1255,18 @@ export default {
 
 .news-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.news-expand-icon {
+  transition: transform 0.2s ease;
+}
+
+.news-expand-icon.rotate-180 {
+  transform: rotate(180deg);
 }
 
 .news-title {
@@ -1184,14 +1276,38 @@ export default {
   color: rgba(var(--v-theme-on-surface), 0.9);
 }
 
-.news-summary {
+.news-preview {
   line-height: 1.5;
-  margin-bottom: 8px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.news-expanded {
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.1);
+  padding-top: 12px;
+}
+
+.news-info {
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.news-full-summary,
+.news-full-text {
+  background: rgba(var(--v-theme-surface-variant), 0.2);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.news-text-content {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.news-source {
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.1);
 }
 
 .news-meta {
