@@ -294,6 +294,7 @@ async def api_summarize_ticker():
     date = data.get('date', '')
     news_list = data.get('news_list', [])
     sentiment_list = data.get('sentiment_list', [])
+    full_text_list = data.get('full_text_list', None)
     max_tokens = data.get('max_tokens', 2048)
     
     if not ticker or not news_list:
@@ -307,7 +308,8 @@ async def api_summarize_ticker():
         sentiment_list, 
         max_tokens,
         ticker,
-        date
+        date,
+        full_text_list
     )
     return flask.jsonify(result)
 
@@ -321,6 +323,7 @@ async def api_summarize_portfolio():
     news_list = data.get('news_list', [])
     sentiment_list = data.get('sentiment_list', [])
     tickers_list = data.get('tickers_list', [])
+    full_text_list = data.get('full_text_list', None)
     max_tokens = data.get('max_tokens', 2048)
     
     if not news_list:
@@ -335,7 +338,8 @@ async def api_summarize_portfolio():
         tickers_list,
         max_tokens,
         user_id,
-        date
+        date,
+        full_text_list
     )
     return flask.jsonify(result)
 

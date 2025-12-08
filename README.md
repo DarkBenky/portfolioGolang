@@ -3,6 +3,7 @@
     - [ ] sentiment
     - [ ] news
     - [ ] allocation region sector assets
+- [ ] add pie chart showing top 10 alocatios of etf
 - [ ] News tab
 - [ ] Statistics
 - [ ] Back testing

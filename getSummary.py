@@ -1,6 +1,6 @@
 import ollama
 
-def summarize_daily_news(news_list, sentiment_list, max_tokens=1024, ticker: str = "", date: str = ""):
+def summarize_daily_news(news_list, sentiment_list, max_tokens=2048, ticker: str = "", date: str = "", full_text_list=None):
     if not news_list:
         return {
             'ticker': ticker,
@@ -12,52 +12,99 @@ def summarize_daily_news(news_list, sentiment_list, max_tokens=1024, ticker: str
     if len(news_list) != len(sentiment_list):
         raise ValueError("news_list and sentiment_list must have equal length")
     
+    if full_text_list and len(full_text_list) != len(news_list):
+        raise ValueError("full_text_list must have same length as news_list")
+    
     average_sentiment = sum(sentiment_list) / len(sentiment_list) if sentiment_list else 0.0
     sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
 
+    # Estimate token count (rough: 1 token ≈ 4 chars)
+    # Reserve ~1500 tokens for prompt structure and response
+    max_context_chars = (32000 - 1500 - max_tokens) * 4
+    
     combined_items = []
+    current_chars = 0
+    
     for i, (summary, sentiment) in enumerate(zip(news_list, sentiment_list), 1):
         sent_label = "+" if sentiment > 0.2 else "-" if sentiment < -0.2 else "~"
-        combined_items.append(f"{i}. [{sent_label}] {summary}")
+        
+        # Try to use full text if available and fits in context window
+        content = summary
+        if full_text_list and full_text_list[i-1]:
+            full_text = full_text_list[i-1].strip()
+            # Only use full text if it's significantly longer and we have room
+            if len(full_text) > len(summary) * 1.5:
+                estimated_item_chars = len(full_text) + 50  # +50 for formatting
+                if current_chars + estimated_item_chars <= max_context_chars:
+                    content = full_text
+                    current_chars += estimated_item_chars
+                else:
+                    # Not enough room for full text, use summary
+                    content = summary
+                    current_chars += len(summary) + 50
+            else:
+                content = summary
+                current_chars += len(summary) + 50
+        else:
+            current_chars += len(summary) + 50
+        
+        combined_items.append(f"Article {i} [{sent_label} {sentiment:.2f}]:\n{content}")
 
-    news_block = "\n".join(combined_items)
+    news_block = "\n\n".join(combined_items)
 
-    prompt = f"""Summarize today's news for {ticker} ({date}).
+    prompt = f"""You are a financial analyst. Create a detailed daily market summary for {ticker} on {date}.
 
-NEWS:
+ARTICLES ({len(news_list)} total):
 {news_block}
 
-Overall sentiment: {sentiment_label} (score: {average_sentiment:.2f})
+Overall Sentiment: {sentiment_label} (avg score: {average_sentiment:.2f})
 
-Write a brief 3-4 sentence summary covering:
-1. The most important development today
-2. How it might affect the stock price
-3. Any risks to watch
+Write a comprehensive summary (8-12 sentences) in markdown format covering:
 
-Be specific - use actual numbers and facts from the news. Do not use bullet points or headers."""
+## TL;DR
+[2-3 sentences: What happened today and why it matters]
+
+## Key Developments
+[3-5 bullet points of most important news with specific details, numbers, dates]
+
+## Market Impact
+[2-3 sentences: How this affects stock price, investor sentiment, fundamentals]
+
+## What to Watch
+[1-2 sentences: Risks, opportunities, or upcoming events]
+
+Be factual and specific. Include company names, numbers, percentages, dates, analyst targets, earnings figures, and other concrete details from the articles. Use markdown formatting (headers, bold, lists)."""
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
         prompt=prompt,
         options={
             "num_predict": max_tokens,
-            "temperature": 0.3,
-            "repeat_penalty": 1.2,
-            "stop": ["\n\n\n", "---", "NEWS:", "##"]
+            "temperature": 0.4,
+            "repeat_penalty": 1.15,
+            "top_k": 40,
+            "top_p": 0.9,
         }
     )
 
     summary_text = response['response'].strip()
     
-    # Clean up any repetitive content
+    # Clean up repetitive content while preserving structure
     lines = summary_text.split('\n')
-    seen = set()
+    seen_content = set()
     clean_lines = []
+    
     for line in lines:
         line_stripped = line.strip()
-        if line_stripped and line_stripped not in seen:
-            seen.add(line_stripped)
+        # Keep headers and formatting even if similar
+        if line_stripped.startswith('#') or line_stripped.startswith('-') or line_stripped.startswith('*'):
             clean_lines.append(line)
+        elif line_stripped and line_stripped not in seen_content:
+            seen_content.add(line_stripped)
+            clean_lines.append(line)
+        elif not line_stripped:  # Keep blank lines for formatting
+            clean_lines.append(line)
+    
     summary_text = '\n'.join(clean_lines)
 
     res = {
@@ -68,8 +115,7 @@ Be specific - use actual numbers and facts from the news. Do not use bullet poin
     }
     return res
 
-def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_tokens=1024, user_id: str = "", date: str = ""):
-    """Summarize news across entire portfolio"""
+def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_tokens=2048, user_id: str = "", date: str = "", full_text_list=None):
     if not news_list:
         return {
             'user_id': user_id,
@@ -81,75 +127,126 @@ def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_
     if len(news_list) != len(sentiment_list):
         raise ValueError("news_list and sentiment_list must have equal length")
     
+    if full_text_list and len(full_text_list) != len(news_list):
+        raise ValueError("full_text_list must have same length as news_list")
+    
     average_sentiment = sum(sentiment_list) / len(sentiment_list) if sentiment_list else 0.0
     sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
     
-    # Group news by ticker
+    # Token budget management (32k context window)
+    max_context_chars = (32000 - 1500 - max_tokens) * 4
+    
+    # Group news by ticker with full text when available
     ticker_news = {}
-    for summary, sentiment, ticker in zip(news_list, sentiment_list, tickers_list):
+    current_chars = 0
+    
+    for i, (summary, sentiment, ticker) in enumerate(zip(news_list, sentiment_list, tickers_list)):
         if ticker not in ticker_news:
             ticker_news[ticker] = []
+        
         sent_label = "+" if sentiment > 0.2 else "-" if sentiment < -0.2 else "~"
-        ticker_news[ticker].append(f"[{sent_label}] {summary}")
+        
+        # Use full text if available and fits
+        content = summary
+        if full_text_list and full_text_list[i]:
+            full_text = full_text_list[i].strip()
+            if len(full_text) > len(summary) * 1.5:
+                estimated_chars = len(full_text) + 100
+                if current_chars + estimated_chars <= max_context_chars:
+                    content = full_text
+                    current_chars += estimated_chars
+                else:
+                    content = summary
+                    current_chars += len(summary) + 100
+            else:
+                content = summary
+                current_chars += len(summary) + 100
+        else:
+            current_chars += len(summary) + 100
+        
+        ticker_news[ticker].append({
+            'label': sent_label,
+            'sentiment': sentiment,
+            'content': content
+        })
     
-    # Build concise news block
-    news_items = []
+    # Build news block grouped by ticker
+    news_sections = []
     for ticker, items in ticker_news.items():
-        # Limit to top 3 news per ticker to avoid overwhelming the model
-        for item in items[:3]:
-            news_items.append(f"{ticker}: {item}")
+        ticker_section = f"### {ticker}\n"
+        for idx, item in enumerate(items[:5], 1):  # Max 5 articles per ticker
+            ticker_section += f"Article {idx} [{item['label']} {item['sentiment']:.2f}]:\n{item['content']}\n\n"
+        news_sections.append(ticker_section)
     
-    news_block = "\n".join(news_items[:15])  # Limit total items
+    news_block = "\n".join(news_sections[:10])  # Max 10 tickers to avoid overflow
     unique_tickers = list(set(tickers_list))
 
-    prompt = f"""Portfolio Update for {date}
+    prompt = f"""You are a portfolio analyst. Create a comprehensive daily portfolio update for {date}.
 
-Holdings: {', '.join(unique_tickers)}
+PORTFOLIO HOLDINGS: {', '.join(unique_tickers[:15])}
 Overall Sentiment: {sentiment_label} (score: {average_sentiment:.2f})
 
-Today's News:
+NEWS BY HOLDING:
 {news_block}
 
-Write a 4-5 sentence portfolio summary:
-1. Which holdings had significant news today and what happened
-2. The biggest mover (positive or negative) and why
-3. Any earnings, upgrades/downgrades, or major announcements
-4. Key risk or opportunity to watch
+Write a detailed portfolio summary (10-15 sentences) in markdown format:
 
-Use specific facts and numbers. Write in plain paragraphs, no bullet points or headers."""
+## TL;DR
+[3-4 sentences: Overall market day, biggest movers, key themes]
+
+## Top Movers
+[3-5 bullet points: Which holdings had significant news, what happened, specific numbers/percentages]
+
+## Earnings & Fundamentals
+[2-3 sentences: Any earnings reports, revenue/EPS beats/misses, guidance changes]
+
+## Catalysts & Events
+[2-3 sentences: Product launches, upgrades/downgrades, regulatory news, partnerships]
+
+## Risk & Opportunity
+[2-3 sentences: What to watch, upcoming events, potential concerns]
+
+Be specific with numbers, dates, company names, analyst targets, and financial metrics. Use markdown formatting."""
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
         prompt=prompt,
         options={
             "num_predict": max_tokens,
-            "temperature": 0.3,
-            "repeat_penalty": 1.3,
-            "stop": ["\n\n\n", "---", "Today's News:", "Holdings:", "##", "**"]
+            "temperature": 0.4,
+            "repeat_penalty": 1.15,
+            "top_k": 40,
+            "top_p": 0.9,
         }
     )
 
     summary_text = response['response'].strip()
     
-    # Clean up any repetitive content
+    # Clean up repetitive content while preserving markdown structure
     lines = summary_text.split('\n')
-    seen = set()
+    seen_content = set()
     clean_lines = []
+    
     for line in lines:
         line_stripped = line.strip()
-        if line_stripped and line_stripped not in seen:
-            seen.add(line_stripped)
+        # Keep markdown formatting
+        if line_stripped.startswith('#') or line_stripped.startswith('-') or line_stripped.startswith('*'):
             clean_lines.append(line)
+        elif line_stripped and line_stripped not in seen_content:
+            seen_content.add(line_stripped)
+            clean_lines.append(line)
+        elif not line_stripped:
+            clean_lines.append(line)
+    
     summary_text = '\n'.join(clean_lines)
     
     # Fallback if model produced garbage
-    if len(summary_text) < 50 or summary_text.count('**') > 4:
-        # Generate a simple factual summary
+    if len(summary_text) < 100:
         summary_parts = []
-        for ticker, items in list(ticker_news.items())[:3]:
+        for ticker, items in list(ticker_news.items())[:5]:
             if items:
-                summary_parts.append(f"{ticker}: {items[0].replace('[+]', '').replace('[-]', '').replace('[~]', '').strip()}")
-        summary_text = f"Portfolio update ({sentiment_label}): " + " | ".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
+                summary_parts.append(f"**{ticker}**: {items[0]['content'][:200]}")
+        summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
 
     res = {
         'user_id': user_id,
