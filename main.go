@@ -653,8 +653,11 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			UNIQUE(ticker, date)
 		)
 	`)
+	if err != nil {
+		return nil, err
+	}
 
-	// Crete Daily Sentiment/Summary table for whole user portfolio
+	// Create Daily Sentiment/Summary table for whole user portfolio
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS portfolio_daily_sentiment (
 			id_sentiment TEXT PRIMARY KEY,
@@ -666,7 +669,6 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)
 	`)
-
 	if err != nil {
 		return nil, err
 	}
