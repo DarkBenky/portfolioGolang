@@ -28,18 +28,19 @@ import (
 )
 
 // hashPasswordWithSalt creates a SHA-256 hash of password+salt to stay within bcrypt's 72-byte limit
-var (
-	SALT       string
-	JWT_SECRET string
-	BASE_URL   string
-	db         *DB
-	dbMutex    sync.Mutex
-)
-
 func hashPasswordWithSalt(password string) string {
 	hash := sha256.Sum256([]byte(password + SALT))
 	return hex.EncodeToString(hash[:])
 }
+
+const (
+	SALT       = "7a726befdfc6eff42209898e532ac1a71fc7f20290d5c1f7dd6298e5ccab4ab1"
+	JWT_SECRET = "5ce80dd0f1070f65168ad0593f1669a000adfbc54c9977331de0434d3c9319c9"
+	BASE_URL   = "http://localhost:5123/api"
+)
+
+var db *DB
+var dbMutex sync.Mutex
 
 type User struct {
 	userName string
@@ -216,13 +217,15 @@ func fetchPrices(ticker string) error {
 
 	log.Printf("Fetched %d price candles for %s", len(candles), ticker)
 
-	var validPrices []Price
+	validCandles := 0
 	for _, candle := range candles {
+		// Skip future timestamps
 		if candle.Timestamp > now {
 			log.Printf("Warning: Skipping future timestamp %d for %s", candle.Timestamp, ticker)
 			continue
 		}
 
+		// Skip invalid/zero timestamps
 		if candle.Timestamp <= 0 {
 			log.Printf("Warning: Skipping invalid timestamp %d for %s", candle.Timestamp, ticker)
 			continue
@@ -238,18 +241,16 @@ func fetchPrices(ticker string) error {
 			Close:   candle.Close,
 			Volume:  int64(candle.Volume),
 		}
-		validPrices = append(validPrices, price)
-	}
 
-	if len(validPrices) > 0 {
-		err = db.addPrices(validPrices)
+		err = db.addPrice(price)
 		if err != nil {
-			log.Printf("Error batch inserting prices for %s: %v", ticker, err)
-			return err
+			log.Printf("Error adding price data for %s at %s: %v", ticker, price.Date, err)
+		} else {
+			validCandles++
 		}
 	}
 
-	log.Printf("Successfully processed %d valid price candles for %s", len(validPrices), ticker)
+	log.Printf("Successfully processed %d valid price candles for %s", validCandles, ticker)
 	return nil
 }
 
@@ -430,13 +431,12 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 
 	var etfData struct {
 		Holdings []struct {
-			Name       string  `json:"name"`
-			Ticker     string  `json:"ticker"`
-			ISIN       string  `json:"isin"`
-			Exchange   string  `json:"exchange"`
-			Sector     string  `json:"sector"`
-			Region     string  `json:"region"`
-			Percentage float64 `json:"percentage"`
+			Name     string `json:"name"`
+			Ticker   string `json:"ticker"`
+			ISIN     string `json:"isin"`
+			Exchange string `json:"exchange"`
+			Sector   string `json:"sector"`
+			Region   string `json:"region"`
 		} `json:"holdings"`
 		Sectors map[string]float64 `json:"sectors"`
 		Regions map[string]float64 `json:"regions"`
@@ -502,22 +502,7 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 }
 
 func initDB(fakeData bool) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = db.Exec("PRAGMA journal_mode=WAL;")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = db.Exec("PRAGMA synchronous=NORMAL;")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = db.Exec("PRAGMA cache_size=-64000;")
+	db, err := sql.Open("sqlite3", "./portfolio.db")
 	if err != nil {
 		return nil, err
 	}
@@ -1157,59 +1142,6 @@ func (database *DB) addNews(news News) error {
 	return err
 }
 
-func (database *DB) deleteETFDataForHolding(holdingID string) error {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
-
-	tx, err := database.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(`DELETE FROM assets WHERE id_holding = ?`, holdingID)
-	if err != nil {
-		return fmt.Errorf("error deleting assets: %v", err)
-	}
-
-	_, err = tx.Exec(`DELETE FROM sectors WHERE id_holding = ?`, holdingID)
-	if err != nil {
-		return fmt.Errorf("error deleting sectors: %v", err)
-	}
-
-	_, err = tx.Exec(`DELETE FROM regions WHERE id_holding = ?`, holdingID)
-	if err != nil {
-		return fmt.Errorf("error deleting regions: %v", err)
-	}
-
-	return tx.Commit()
-}
-
-func (database *DB) getAllETFHoldings() ([]Holding, error) {
-	rows, err := database.Query(`
-		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
-		FROM holdings
-		WHERE etf = 1
-	`)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var holdings []Holding
-	for rows.Next() {
-		var h Holding
-		err := rows.Scan(&h.IdHolding, &h.Name, &h.Ticker, &h.ISIN, &h.Exchange, &h.Etf, &h.Quantity, &h.PurchasePrice, &h.TER, &h.Policy, &h.userID, &h.currency)
-		if err != nil {
-			return nil, err
-		}
-		holdings = append(holdings, h)
-	}
-
-	return holdings, nil
-}
-
 func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -1361,6 +1293,8 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 }
 
 func (database *DB) addPrice(price Price) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
 
 	// Validate timestamp
 	timestamp, err := strconv.ParseInt(price.Date, 10, 64)
@@ -1373,41 +1307,12 @@ func (database *DB) addPrice(price Price) error {
 		return fmt.Errorf("invalid timestamp: %d (now: %d)", timestamp, now)
 	}
 
+	// Use INSERT OR IGNORE to avoid duplicates (ticker, date combination must be unique)
 	_, err = database.Exec(`
 		INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
 	return err
-}
-
-func (database *DB) addPrices(prices []Price) error {
-	if len(prices) == 0 {
-		return nil
-	}
-
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
-
-	tx, err := database.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, price := range prices {
-		_, err = stmt.Exec(price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
-		if err != nil {
-			log.Printf("Error adding price for %s on %s: %v", price.Ticker, price.Date, err)
-		}
-	}
-
-	return tx.Commit()
 }
 
 func addPriceIndexes(database *sql.DB) error {
@@ -1554,19 +1459,6 @@ func getProfile(c echo.Context) error {
 	})
 }
 
-func healthCheck(c echo.Context) error {
-	if err := db.Ping(); err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{
-			"status": "unhealthy",
-			"error":  err.Error(),
-		})
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"status": "healthy",
-	})
-}
-
 func fillInBetweenPricesPeriodic(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1600,6 +1492,7 @@ func fillInBetweenPricesPeriodic(interval time.Duration) {
 }
 
 func FillInBetweenPrices(Ticker string) error {
+	//  get all prices for the ticker
 	rows, err := db.Query(`
 		SELECT date, open, close, high, low, volume
 		FROM prices
@@ -1611,25 +1504,26 @@ func FillInBetweenPrices(Ticker string) error {
 	}
 	defer rows.Close()
 
-	var existingPrices []Price
+	var prices []Price
 	for rows.Next() {
 		var p Price
 		err := rows.Scan(&p.Date, &p.Open, &p.Close, &p.High, &p.Low, &p.Volume)
 		if err != nil {
 			return err
 		}
-		existingPrices = append(existingPrices, p)
+		prices = append(prices, p)
 	}
 
-	var missingPrices []Price
-	for index, price := range existingPrices {
+	// Fill in missing dates
+	for index, price := range prices {
 		if index == 0 {
 			continue
 		}
-		prevPrice := existingPrices[index-1]
+		prevPrice := prices[index-1]
 		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
 		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
-		if currentDateInt-prevDateInt > 60 {
+		if currentDateInt-prevDateInt > 60 { // more than 1 minute gap
+			// Fill in missing dates
 			fillsNeeded := (currentDateInt-prevDateInt)/60 - 1
 			for i := int64(1); i <= fillsNeeded; i++ {
 				missingDate := prevDateInt + i*60
@@ -1645,38 +1539,13 @@ func FillInBetweenPrices(Ticker string) error {
 					Close:   interpolatedClose,
 					High:    interpolatedHigh,
 					Low:     interpolatedLow,
-					Volume:  0,
+					Volume:  0.0,
 				}
-				missingPrices = append(missingPrices, missingPrice)
+				err := db.addPrice(missingPrice)
+				if err != nil {
+					log.Printf("Error adding interpolated price for %s on %d: %v", Ticker, missingDate, err)
+				}
 			}
-		}
-	}
-
-	if len(missingPrices) > 0 {
-		dbMutex.Lock()
-		defer dbMutex.Unlock()
-
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-
-		for _, price := range missingPrices {
-			_, err = stmt.Exec(price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
-			if err != nil {
-				log.Printf("Error adding interpolated price for %s on %s: %v", Ticker, price.Date, err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 	}
 
@@ -1738,46 +1607,6 @@ func updateSentimentsPeriodic(interval time.Duration) {
 	}
 }
 
-func updateETFDataPeriodic(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		log.Println("Starting periodic ETF data update...")
-
-		etfHoldings, err := db.getAllETFHoldings()
-		if err != nil {
-			log.Printf("Error getting ETF holdings: %v", err)
-			continue
-		}
-
-		log.Printf("Updating ETF data for %d ETF holdings", len(etfHoldings))
-
-		for _, holding := range etfHoldings {
-			go func(h Holding) {
-				log.Printf("Updating ETF data for %s (ID: %s)", h.Ticker, h.IdHolding)
-
-				err := db.deleteETFDataForHolding(h.IdHolding)
-				if err != nil {
-					log.Printf("Error deleting old ETF data for %s: %v", h.Ticker, err)
-					return
-				}
-
-				err = fetchAndStoreETFData(h.IdHolding, h.Ticker, h.ISIN, h.Name)
-				if err != nil {
-					log.Printf("Error fetching new ETF data for %s: %v", h.Ticker, err)
-					return
-				}
-
-				log.Printf("Successfully updated ETF data for %s", h.Ticker)
-			}(holding)
-			time.Sleep(10 * time.Second)
-		}
-
-		log.Println("Completed periodic ETF data update cycle")
-	}
-}
-
 func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 	// Get today's news for this ticker
 	newsList, err := db.getNewsForTickerToday(tickerSymbol, todayDate)
@@ -1793,11 +1622,9 @@ func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 	// Prepare data for API call
 	var summaries []string
 	var sentiments []float64
-	var fullTexts []string
 	for _, news := range newsList {
 		summaries = append(summaries, news.Summary)
 		sentiments = append(sentiments, news.Sentiment)
-		fullTexts = append(fullTexts, news.Text)
 	}
 
 	// Call Python API to generate summary
@@ -1806,7 +1633,6 @@ func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 		"date":           todayDate,
 		"news_list":      summaries,
 		"sentiment_list": sentiments,
-		"full_text_list": fullTexts,
 		"max_tokens":     2048,
 	}
 
@@ -1861,11 +1687,10 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		return nil
 	}
 
-	// Collect news from all holdings - include full text
+	// Collect news from all holdings
 	var allSummaries []string
 	var allSentiments []float64
 	var allTickers []string
-	var allFullTexts []string
 
 	for _, holding := range holdings {
 		newsList, err := db.getNewsForTickerToday(holding.Ticker, todayDate)
@@ -1878,7 +1703,6 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 			allSummaries = append(allSummaries, news.Summary)
 			allSentiments = append(allSentiments, news.Sentiment)
 			allTickers = append(allTickers, news.Ticker)
-			allFullTexts = append(allFullTexts, news.Text)
 		}
 	}
 
@@ -1894,7 +1718,6 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		"news_list":      allSummaries,
 		"sentiment_list": allSentiments,
 		"tickers_list":   allTickers,
-		"full_text_list": allFullTexts,
 		"max_tokens":     2048,
 	}
 
@@ -1974,11 +1797,6 @@ func AddHolding(c echo.Context) error {
 		currency:      Currency,
 	}
 
-	err := db.addHolding(holding)
-	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error adding holding to database")
-	}
-
 	if holding.Etf {
 		go func(holdingID, ticker, isin, name string) {
 			log.Printf("Starting background ETF data fetch for %s...", ticker)
@@ -2010,6 +1828,11 @@ func AddHolding(c echo.Context) error {
 			log.Printf("Successfully completed background price fetch for %s", ticker)
 		}
 	}(holding.Ticker)
+
+	err := db.addHolding(holding)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error adding holding to database")
+	}
 
 	return c.String(http.StatusOK, "Holding added successfully")
 }
@@ -3648,53 +3471,36 @@ func GetAssetSentiments(c echo.Context) error {
 	return c.JSON(http.StatusOK, sentiments)
 }
 
-// startTursoServer is removed as we are using local SQLite file
-
 func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 
-	SALT = os.Getenv("SALT")
-	JWT_SECRET = os.Getenv("JWT_SECRET")
-	BASE_URL = os.Getenv("BASE_URL")
-
-	if SALT == "" || JWT_SECRET == "" || BASE_URL == "" {
-		log.Fatal("Required environment variables (SALT, JWT_SECRET, BASE_URL) not set")
-	}
-
 	sqlDB, err := initDB(false)
+	addPriceIndexes(sqlDB)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
 	defer sqlDB.Close()
 
-	err = addPriceIndexes(sqlDB)
-	if err != nil {
-		log.Fatal("Failed to create price indexes:", err)
-	}
-
-	db = &DB{DB: sqlDB}
+	db = &DB{sqlDB}
 
 	log.Println("Database initialized successfully")
 
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
 	go fillInBetweenPricesPeriodic(60 * time.Minute)
-	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(12 * time.Hour)
+	go updateSentimentsPeriodic(6 * time.Hour) // Updates daily sentiment for tickers and portfolios every 6 hours
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
 	}))
 
 	e.POST("/register", addUser)
 	e.POST("/login", login)
-	e.GET("/health", healthCheck)
 	e.GET("/news_exists", newsExistsWithTitle) // public for now TODO: secure later
 
 	protected := e.Group("/api")

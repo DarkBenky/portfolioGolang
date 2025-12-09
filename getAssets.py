@@ -1,23 +1,51 @@
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, Callable
 import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 import re
-from functools import lru_cache
+from functools import wraps
 import time
+from datetime import datetime, timedelta
+import os
 
-# (Name, Ticker, ISIN, Exchange, Sector, Region)
-HoldingInfo = Tuple[str, str, str, str, str, str]
 
-# ETF aggregate data structure
+def ttl_cache(maxsize: int = 128, ttl_hours: int = 4):
+    def decorator(func: Callable) -> Callable:
+        cache: Dict[str, Tuple[Any, datetime]] = {}
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = str(args) + str(kwargs)
+            now = datetime.now()
+            
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < timedelta(hours=ttl_hours):
+                    return result
+                else:
+                    del cache[key]
+            
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            
+            if len(cache) > maxsize:
+                oldest_key = min(cache.keys(), key=lambda k: cache[k][1])
+                del cache[oldest_key]
+            
+            return result
+        
+        return wrapper
+    return decorator
+
+HoldingInfo = Tuple[str, str, str, str, str, str, float]
+
 class ETFData:
     def __init__(self):
         self.holdings: List[HoldingInfo] = []
-        self.sectors: Dict[str, float] = {}  # {sector_name: percentage}
-        self.regions: Dict[str, float] = {}  # {country/region: percentage}
+        self.sectors: Dict[str, float] = {}
+        self.regions: Dict[str, float] = {}
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert ETFData to a JSON-serializable dictionary"""
         return {
             'holdings': [
                 {
@@ -26,7 +54,8 @@ class ETFData:
                     'isin': h[2],
                     'exchange': h[3],
                     'sector': h[4],
-                    'region': h[5]
+                    'region': h[5],
+                    'percentage': h[6]
                 }
                 for h in self.holdings
             ],
@@ -34,7 +63,7 @@ class ETFData:
             'regions': self.regions
         }
 
-@lru_cache(maxsize=1000)
+@ttl_cache(maxsize=2048, ttl_hours=4)
 def fetch_isin_from_multiple_sources(ticker: str) -> Optional[str]:
     """Try multiple methods to get ISIN"""
     try:
@@ -73,7 +102,7 @@ def fetch_isin_from_multiple_sources(ticker: str) -> Optional[str]:
     
     return None
 
-@lru_cache(maxsize=1000)
+@ttl_cache(maxsize=2048, ttl_hours=4)
 def get_ticker_details(ticker: str) -> Dict[str, str]:
     try:
         stock = yf.Ticker(ticker)
@@ -98,26 +127,126 @@ def get_ticker_details(ticker: str) -> Dict[str, str]:
             'region': 'Unknown'
         }
 
-def enrich_holdings_with_details(holdings: List[Tuple[str, float]]) -> List[HoldingInfo]:
+def enrich_holdings_with_details(holdings: List[Tuple[str, str, float]]) -> List[HoldingInfo]:
+    """Enrich holdings with yfinance data - holdings format: (name, isin, percentage)"""
     enriched = []
     
-    for ticker, percentage in holdings:
-        details = get_ticker_details(ticker)
+    for name, isin, percentage in holdings:
+        # Try to get ticker from yfinance using ISIN
+        ticker = 'N/A'
+        exchange = 'Unknown'
+        sector = 'Unknown'
+        region = 'Unknown'
+        
+        # If we have ISIN, try to fetch additional details
+        if isin and isin != 'N/A':
+            try:
+                # Try to find ticker using ISIN search (this is limited)
+                # For now, we'll use the name and ISIN as-is
+                pass
+            except:
+                pass
         
         enriched.append((
-            details['name'],
+            name,
             ticker,
-            details['isin'],
-            details['exchange'],
-            details['sector'],
-            details['region']
+            isin,
+            exchange,
+            sector,
+            region,
+            percentage  # Add percentage to the tuple
         ))
     
     return enriched
 
-@lru_cache(maxsize=1000)
-def get_sectors_and_regions_from_justetf(isin: str) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """Scrape sector and country/region breakdown from JustETF with Selenium for JS expansion"""
+@ttl_cache(maxsize=2048, ttl_hours=4)
+def get_holdings_from_justetf(isin: str, html_file: Optional[str] = None) -> Optional[List[Tuple[str, str, float]]]:
+    holdings = []
+    
+    try:
+        if not isin or isin == 'N/A':
+            return None
+        
+        if html_file and os.path.exists(html_file):
+            print(f"  Loading from HTML file: {html_file}")
+            with open(html_file, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            soup = BeautifulSoup(html_content, 'html.parser')
+        else:
+            url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
+            print(f"  Fetching live data from JustETF...")
+            
+            try:
+                from playwright.sync_api import sync_playwright
+                
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.goto(url, wait_until="networkidle", timeout=30000)
+                    page.wait_for_selector("table[data-testid='etf-holdings_top-holdings_table']", timeout=15000)
+                    time.sleep(2)
+                    
+                    try:
+                        holdings_btn = page.locator("a[data-testid='etf-holdings_top-holdings_load-more_link']")
+                        if holdings_btn.is_visible(timeout=3000):
+                            holdings_btn.scroll_into_view_if_needed()
+                            time.sleep(0.5)
+                            holdings_btn.click()
+                            print("  Clicked 'Show more' for holdings")
+                            time.sleep(2)
+                    except:
+                        pass
+                    
+                    html_content = page.content()
+                    browser.close()
+                
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+            except Exception as e:
+                print(f"  Playwright failed ({e}), falling back to requests")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.content, 'html.parser')
+        
+        holdings_table = soup.find('table', {'data-testid': 'etf-holdings_top-holdings_table'})
+        if holdings_table:
+            tbody = holdings_table.find('tbody')
+            if tbody:
+                rows = tbody.find_all('tr', {'data-testid': 'etf-holdings_top-holdings_row'})
+                
+                for row in rows:
+                    tds = row.find_all('td')
+                    if len(tds) >= 2:
+                        link = tds[0].find('a', {'data-testid': 'tl_etf-holdings_top-holdings_link_name'})
+                        if link:
+                            company_name = link.find('span').get_text(strip=True)
+                            href = link.get('href', '')
+                            
+                            isin_match = re.search(r'/stock-profiles/([A-Z0-9]+)', href)
+                            holding_isin = isin_match.group(1) if isin_match else 'N/A'
+                            
+                            pct_span = tds[1].find('span', {'data-testid': 'tl_etf-holdings_top-holdings_value_percentage'})
+                            if pct_span:
+                                pct_text = pct_span.get_text(strip=True)
+                                pct_match = re.search(r'(\d+\.?\d*)', pct_text)
+                                
+                                if pct_match and company_name:
+                                    percentage = float(pct_match.group(1))
+                                    holdings.append((company_name, holding_isin, percentage))
+        
+        print(f"  Found {len(holdings)} holdings from JustETF")
+        return holdings if holdings else None
+        
+    except Exception as e:
+        print(f"JustETF holdings scraping failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+@ttl_cache(maxsize=2048, ttl_hours=4)
+def get_sectors_and_regions_from_justetf(isin: str, html_file: Optional[str] = None) -> Tuple[Dict[str, float], Dict[str, float]]:
     sectors = {}
     regions = {}
     
@@ -125,73 +254,75 @@ def get_sectors_and_regions_from_justetf(isin: str) -> Tuple[Dict[str, float], D
         if not isin or isin == 'N/A':
             return sectors, regions
         
-        url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
-        
-        try:
-            from selenium import webdriver
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.chrome.service import Service
-            from webdriver_manager.chrome import ChromeDriverManager
-            
-            # Setup headless Chrome
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-            driver.get(url)
-            
-            # Wait for the page to load
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "table[data-testid='etf-holdings_countries_table']"))
-            )
-            
-            # Click "Show more" for countries if exists
-            try:
-                countries_show_more = driver.find_element(By.CSS_SELECTOR, "a[data-testid='etf-holdings_countries_load-more_link']")
-                driver.execute_script("arguments[0].click();", countries_show_more)
-                time.sleep(1)
-            except:
-                pass
-            
-            # Click "Show more" for sectors if exists
-            try:
-                sectors_show_more = driver.find_element(By.CSS_SELECTOR, "a[data-testid='etf-holdings_sectors_load-more_link']")
-                driver.execute_script("arguments[0].click();", sectors_show_more)
-                time.sleep(1)
-            except:
-                pass
-            
-            # Now get the expanded HTML
-            html_content = driver.page_source
-            driver.quit()
-            
+        if html_file and os.path.exists(html_file):
+            print(f"  Loading from HTML file: {html_file}")
+            with open(html_file, 'r', encoding='utf-8') as f:
+                html_content = f.read()
             soup = BeautifulSoup(html_content, 'html.parser')
+        else:
+            url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
+            print(f"  Fetching live data from JustETF...")
             
-        except Exception as e:
-            print(f"  Selenium failed ({e}), falling back to regular requests")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.get(url, headers=headers, timeout=15)
-            soup = BeautifulSoup(response.content, 'html.parser')
+            try:
+                from playwright.sync_api import sync_playwright
+                
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.goto(url, wait_until="networkidle", timeout=30000)
+                    page.wait_for_selector("table[data-testid='etf-holdings_countries_table']", timeout=15000)
+                    time.sleep(2)
+                    
+                    try:
+                        countries_btn = page.locator("a[data-testid='etf-holdings_countries_load-more_link']")
+                        if countries_btn.is_visible(timeout=3000):
+                            countries_btn.scroll_into_view_if_needed()
+                            time.sleep(0.5)
+                            countries_btn.click()
+                            print("  Clicked 'Show more' for countries")
+                            time.sleep(2)
+                    except:
+                        pass
+                    
+                    try:
+                        sectors_btn = page.locator("a[data-testid='etf-holdings_sectors_load-more_link']")
+                        if sectors_btn.is_visible(timeout=3000):
+                            sectors_btn.scroll_into_view_if_needed()
+                            time.sleep(0.5)
+                            sectors_btn.click()
+                            print("  Clicked 'Show more' for sectors")
+                            time.sleep(2)
+                    except:
+                        pass
+                    
+                    html_content = page.content()
+                    browser.close()
+                
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+            except Exception as e:
+                print(f"  Playwright failed ({e}), falling back to requests")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Extract all country rows
         countries_table = soup.find('table', {'data-testid': 'etf-holdings_countries_table'})
         if countries_table:
             tbody = countries_table.find('tbody')
             if tbody:
-                all_rows = tbody.find_all('tr')
+                all_rows = tbody.find_all('tr', {'data-testid': 'etf-holdings_countries_row'})
                 for row in all_rows:
-                    tds = row.find_all('td')
-                    if len(tds) >= 2:
-                        country_name = tds[0].get_text(strip=True)
-                        pct_span = tds[1].find('span')
+                    country_td = row.find('td', {'data-testid': 'tl_etf-holdings_countries_value_name'})
+                    if not country_td:
+                        tds = row.find_all('td')
+                        country_td = tds[0] if len(tds) >= 2 else None
+                    
+                    if country_td:
+                        country_name = country_td.get_text(strip=True)
+                        
+                        pct_span = row.find('span', {'data-testid': 'tl_etf-holdings_countries_value_percentage'})
                         if pct_span:
                             pct_text = pct_span.get_text(strip=True)
                             pct_match = re.search(r'(\d+\.?\d*)', pct_text)
@@ -199,17 +330,21 @@ def get_sectors_and_regions_from_justetf(isin: str) -> Tuple[Dict[str, float], D
                             if pct_match and country_name and country_name.lower() != 'other':
                                 regions[country_name] = float(pct_match.group(1))
         
-        # Extract all sector rows
         sectors_table = soup.find('table', {'data-testid': 'etf-holdings_sectors_table'})
         if sectors_table:
             tbody = sectors_table.find('tbody')
             if tbody:
-                all_rows = tbody.find_all('tr')
+                all_rows = tbody.find_all('tr', {'data-testid': 'etf-holdings_sectors_row'})
                 for row in all_rows:
-                    tds = row.find_all('td')
-                    if len(tds) >= 2:
-                        sector_name = tds[0].get_text(strip=True)
-                        pct_span = tds[1].find('span')
+                    sector_td = row.find('td', {'data-testid': 'tl_etf-holdings_sectors_value_name'})
+                    if not sector_td:
+                        tds = row.find_all('td')
+                        sector_td = tds[0] if len(tds) >= 2 else None
+                    
+                    if sector_td:
+                        sector_name = sector_td.get_text(strip=True)
+                        
+                        pct_span = row.find('span', {'data-testid': 'tl_etf-holdings_sectors_value_percentage'})
                         if pct_span:
                             pct_text = pct_span.get_text(strip=True)
                             pct_match = re.search(r'(\d+\.?\d*)', pct_text)
@@ -217,123 +352,185 @@ def get_sectors_and_regions_from_justetf(isin: str) -> Tuple[Dict[str, float], D
                             if pct_match and sector_name and sector_name.lower() != 'other':
                                 sectors[sector_name] = float(pct_match.group(1))
         
-        
     except Exception as e:
         print(f"JustETF sector/region scraping failed: {e}")
         import traceback
         traceback.print_exc()
     
     return sectors, regions
-    
-@lru_cache(maxsize=1000)
-def get_top_holdings_from_yfinance(ticker: str) -> Optional[List[Tuple[str, float]]]:
-    """Get top 10 holdings from Yahoo Finance"""
-    try:
-        etf = yf.Ticker(ticker)
-        
-        # Try funds_data.top_holdings first
-        try:
-            funds_data = etf.funds_data
-            if funds_data and hasattr(funds_data, 'top_holdings'):
-                top_holdings = funds_data.top_holdings
-                if top_holdings is not None and not top_holdings.empty:
-                    result = []
-                    for idx, row in top_holdings.iterrows():
-                        symbol = row.get('Symbol', idx)
-                        percentage = row.get('Holding Percent', 0)
-                        result.append((symbol, percentage))
-                    return result
-        except:
-            pass
-        
-        # Fallback to info.holdings
-        holdings = etf.info.get('holdings', [])
-        if holdings and len(holdings) > 0:
-            top_holdings = sorted(holdings, key=lambda x: x.get('holdingPercent', 0), reverse=True)[:10]
-            return [(h.get('symbol', 'Unknown'), h.get('holdingPercent', 0)) for h in top_holdings]
-        
-        return None
-    except Exception as e:
-        print(f"yfinance holdings fetch failed for {ticker}: {e}")
-        return None
-    
-def get_holdings_from_yfinance(ticker: str) -> Optional[List[Tuple[str, float]]]:
-    try:
-        etf = yf.Ticker(ticker)
-        
-        holdings = etf.info.get('holdings', [])
-        if holdings and len(holdings) > 0:
-            all_holdings = sorted(holdings, key=lambda x: x.get('holdingPercent', 0), reverse=True)
-            return [(h.get('symbol', 'Unknown'), h.get('holdingPercent', 0)) for h in all_holdings]
-        
-        try:
-            funds_data = etf.funds_data
-            if funds_data and hasattr(funds_data, 'top_holdings'):
-                top_holdings = funds_data.top_holdings
-                if top_holdings is not None and not top_holdings.empty:
-                    result = []
-                    for idx, row in top_holdings.iterrows():
-                        symbol = row.get('Symbol', idx)
-                        percentage = row.get('Holding Percent', 0)
-                        result.append((symbol, percentage))
-                    return result
-        except:
-            pass
-        
-        return None
-    except Exception as e:
-        print(f"yfinance holdings fetch failed for {ticker}: {e}")
-        return None
 
-@lru_cache(maxsize=2048)
-def get_etf_data(ticker: str, isin: str = None, etf_name: str = None) -> ETFData:
-    """
-    Get ETF data including:
-    - Top 10 holdings with details (Name, Ticker, ISIN, Exchange, Sector, Region)
-    - Overall sector breakdown
-    - Overall region/country breakdown
-    """
+@ttl_cache(maxsize=2048, ttl_hours=4)
+def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[str, str, float]]], Dict[str, float], Dict[str, float]]:
+    holdings = []
+    sectors = {}
+    regions = {}
+    
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
+        print(f"  Fetching from JustETF with Playwright...")
+        
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            page = context.new_page()
+            
+            page.goto(url, wait_until="load", timeout=30000)
+            
+            try:
+                page.wait_for_selector("#CybotCookiebotDialog", timeout=3000)
+                page.evaluate("document.getElementById('CybotCookiebotDialog').remove()")
+                print("  Removed cookie dialog")
+            except:
+                pass
+            
+            page.wait_for_selector("table[data-testid='etf-holdings_top-holdings_table']", timeout=10000)
+            time.sleep(1)
+            
+            try:
+                holdings_btn = page.locator("a[data-testid='etf-holdings_top-holdings_load-more_link']")
+                if holdings_btn.count() > 0:
+                    holdings_btn.click(timeout=5000)
+                    print("  Clicked 'Show more' for holdings")
+                    time.sleep(2)
+            except Exception as e:
+                pass
+            
+            try:
+                countries_btn = page.locator("a[data-testid='etf-holdings_countries_load-more_link']")
+                if countries_btn.count() > 0:
+                    countries_btn.scroll_into_view_if_needed()
+                    time.sleep(0.5)
+                    countries_btn.click(timeout=5000)
+                    print("  Clicked 'Show more' for countries")
+                    time.sleep(2)
+            except Exception as e:
+                print(f"  Could not click countries button: {str(e)[:100]}")
+            
+            try:
+                sectors_btn = page.locator("a[data-testid='etf-holdings_sectors_load-more_link']")
+                if sectors_btn.count() > 0:
+                    sectors_btn.scroll_into_view_if_needed()
+                    time.sleep(0.5)
+                    sectors_btn.click(timeout=5000)
+                    print("  Clicked 'Show more' for sectors")
+                    time.sleep(2)
+            except Exception as e:
+                print(f"  Could not click sectors button: {str(e)[:100]}")
+            
+            html_content = page.content()
+            browser.close()
+            
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            holdings_table = soup.find('table', {'data-testid': 'etf-holdings_top-holdings_table'})
+            if holdings_table:
+                tbody = holdings_table.find('tbody')
+                if tbody:
+                    rows = tbody.find_all('tr', {'data-testid': 'etf-holdings_top-holdings_row'})
+                    for row in rows:
+                        tds = row.find_all('td')
+                        if len(tds) >= 2:
+                            link = tds[0].find('a', {'data-testid': 'tl_etf-holdings_top-holdings_link_name'})
+                            if link:
+                                company_name = link.find('span').get_text(strip=True)
+                                href = link.get('href', '')
+                                isin_match = re.search(r'/stock-profiles/([A-Z0-9]+)', href)
+                                holding_isin = isin_match.group(1) if isin_match else 'N/A'
+                                pct_span = tds[1].find('span', {'data-testid': 'tl_etf-holdings_top-holdings_value_percentage'})
+                                if pct_span:
+                                    pct_text = pct_span.get_text(strip=True)
+                                    pct_match = re.search(r'(\d+\.?\d*)', pct_text)
+                                    if pct_match and company_name:
+                                        holdings.append((company_name, holding_isin, float(pct_match.group(1))))
+            
+            countries_table = soup.find('table', {'data-testid': 'etf-holdings_countries_table'})
+            if countries_table:
+                tbody = countries_table.find('tbody')
+                if tbody:
+                    for row in tbody.find_all('tr', {'data-testid': 'etf-holdings_countries_row'}):
+                        country_td = row.find('td', {'data-testid': 'tl_etf-holdings_countries_value_name'})
+                        if country_td:
+                            country_name = country_td.get_text(strip=True)
+                            pct_span = row.find('span', {'data-testid': 'tl_etf-holdings_countries_value_percentage'})
+                            if pct_span:
+                                pct_match = re.search(r'(\d+\.?\d*)', pct_span.get_text(strip=True))
+                                if pct_match and country_name.lower() != 'other':
+                                    regions[country_name] = float(pct_match.group(1))
+            
+            sectors_table = soup.find('table', {'data-testid': 'etf-holdings_sectors_table'})
+            if sectors_table:
+                tbody = sectors_table.find('tbody')
+                if tbody:
+                    for row in tbody.find_all('tr', {'data-testid': 'etf-holdings_sectors_row'}):
+                        sector_td = row.find('td', {'data-testid': 'tl_etf-holdings_sectors_value_name'})
+                        if sector_td:
+                            sector_name = sector_td.get_text(strip=True)
+                            pct_span = row.find('span', {'data-testid': 'tl_etf-holdings_sectors_value_percentage'})
+                            if pct_span:
+                                pct_match = re.search(r'(\d+\.?\d*)', pct_span.get_text(strip=True))
+                                if pct_match and sector_name.lower() != 'other':
+                                    sectors[sector_name] = float(pct_match.group(1))
+    
+    except Exception as e:
+        print(f"  Playwright failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return (holdings if holdings else None, sectors, regions)
+
+@ttl_cache(maxsize=2048, ttl_hours=4)
+def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file: Optional[str] = None) -> ETFData:
     result = ETFData()
     
     print(f"Fetching ETF data for {ticker} (ISIN: {isin})...")
     
-    # Step 1: Get top holdings from yfinance
-    basic_holdings = get_top_holdings_from_yfinance(ticker)
-    if basic_holdings and len(basic_holdings) > 0:
-        result.holdings = enrich_holdings_with_details(basic_holdings)
-    else:
-        # Use generic fallback
-        generic_tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ']
-        equal_weight = 1.0 / len(generic_tickers)
-        basic_holdings = [(ticker, equal_weight) for ticker in generic_tickers]
-        result.holdings = enrich_holdings_with_details(basic_holdings)
+    if not isin or isin == 'N/A':
+        return result
     
-    # Step 2: Get sector and region breakdown from JustETF
-    if isin and isin != 'N/A':
-        sectors, regions = get_sectors_and_regions_from_justetf(isin)
-        result.sectors = sectors
-        result.regions = regions
+    if html_file and os.path.exists(html_file):
+        print(f"  Loading from HTML file: {html_file}")
+        justetf_holdings = get_holdings_from_justetf(isin, html_file)
+        sectors, regions = get_sectors_and_regions_from_justetf(isin, html_file)
+    else:
+        justetf_holdings, sectors, regions = fetch_complete_etf_data_playwright(isin)
+    
+    if justetf_holdings and len(justetf_holdings) > 0:
+        result.holdings = enrich_holdings_with_details(justetf_holdings)
+        print(f"  ✓ Total: {len(result.holdings)} holdings")
+    
+    result.sectors = sectors
+    result.regions = regions
+    print(f"  ✓ Total: {len(sectors)} sectors and {len(regions)} regions")
     
     return result
 
 if __name__ == "__main__":
     start = time.time()
+    
     etf_data = get_etf_data(
-        ticker="VWCE.DE", 
-        isin="IE00BK5BQT80", 
-        etf_name="Vanguard FTSE All-World"
+        ticker="XMME.DE", 
+        isin="IE00BTJRMP35",
+        etf_name="Xtrackers MSCI Emerging Markets"
     )
-    print(f"Time taken: {time.time() - start:.2f} seconds")
-    print("Top Holdings:", etf_data.holdings)
-    print("Sectors:", etf_data.sectors)
-    print("Regions:", etf_data.regions)
+    print(f"\nTime taken: {time.time() - start:.2f} seconds")
+    print(f"\nAll Holdings ({len(etf_data.holdings)} total):")
+    for i, h in enumerate(etf_data.holdings, 1):
+        print(f"  {i}. {h[0]} ({h[2]}) - {h[6]:.2f}%")
+    print(f"\nAll Sectors ({len(etf_data.sectors)} total):")
+    for sector, pct in sorted(etf_data.sectors.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {sector}: {pct}%")
+    print(f"\nAll Regions ({len(etf_data.regions)} total):")
+    for region, pct in sorted(etf_data.regions.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {region}: {pct}%")
+    
+    print("\n" + "="*50)
+    print("Testing cache...")
     start = time.time()
     etf_data = get_etf_data(
-        ticker="VWCE.DE", 
-        isin="IE00BK5BQT80", 
-        etf_name="Vanguard FTSE All-World"
+        ticker="XMME.DE", 
+        isin="IE00BTJRMP35",
+        etf_name="Xtrackers MSCI Emerging Markets"
     )
-    print(f"Time taken (HOT): {time.time() - start:.2f} seconds")
-    print("Top Holdings:", etf_data.holdings)
-    print("Sectors:", etf_data.sectors)
-    print("Regions:", etf_data.regions)
+    print(f"Time taken (CACHED): {time.time() - start:.2f} seconds")

@@ -9,3 +9,5 @@ newspaper3k
 transformers
 torch
 ollama
+selenium 
+webdriver-manager
