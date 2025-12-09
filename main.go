@@ -3664,7 +3664,7 @@ func main() {
 		log.Fatal("Required environment variables (SALT, JWT_SECRET, BASE_URL) not set")
 	}
 
-	sqlDB, err := initDB(false)
+	sqlDB, err := initDB(true)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
