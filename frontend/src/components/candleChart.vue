@@ -471,7 +471,7 @@ export default {
 .chart-legend {
   position: absolute;
   top: 10px;
-  left: 10px;
+  left: 35px;
   display: flex;
   gap: 12px;
   font-size: 12px;

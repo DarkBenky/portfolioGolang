@@ -114,12 +114,12 @@
                 <div v-if="chartLoading" class="d-flex justify-center align-center" style="height: 300px;">
                   <v-progress-circular indeterminate color="primary" size="40"></v-progress-circular>
                 </div>
-                <CandleChart
-                  v-else-if="fullPriceHistory.length > 0"
+                <div v-else-if="fullPriceHistory.length > 0" style="width: 100%;">
+                  <CandleChart
                   :data="fullPriceHistory"
-                  :height="300"
-                  theme="dark"
-                />
+                  :height="350"
+                  theme="dark"/>
+                </div>
                 <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
                   No chart data available
                 </div>
@@ -292,9 +292,9 @@
           </v-col>
         </v-row>
 
-        <!-- Pie Charts for ETFs - Sectors & Regions -->
-        <v-row v-if="holding.etf && (holding.sectors?.length > 0 || holding.regions?.length > 0)" class="mt-4">
-          <v-col v-if="holding.sectors?.length > 0" cols="12" md="6">
+        <!-- Pie Charts for ETFs - Sectors, Regions & Top 10 Holdings -->
+        <v-row v-if="holding.etf && (holding.sectors?.length > 0 || holding.regions?.length > 0 || holding.assets?.length > 0)" class="mt-4">
+          <v-col v-if="holding.sectors?.length > 0" cols="12" md="4">
             <v-card variant="outlined">
               <v-card-title class="text-subtitle-1 pb-2">
                 <v-icon size="small" class="mr-2">mdi-domain</v-icon>
@@ -332,7 +332,7 @@
             </v-card>
           </v-col>
 
-          <v-col v-if="holding.regions?.length > 0" cols="12" md="6">
+          <v-col v-if="holding.regions?.length > 0" cols="12" md="4">
             <v-card variant="outlined">
               <v-card-title class="text-subtitle-1 pb-2">
                 <v-icon size="small" class="mr-2">mdi-earth</v-icon>
@@ -369,6 +369,44 @@
               </v-card-text>
             </v-card>
           </v-col>
+
+          <v-col v-if="holding.assets?.length > 0" cols="12" md="4">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-chart-pie</v-icon>
+                Top 10 Holdings
+              </v-card-title>
+              <v-card-text>
+                <div class="pie-chart-container" style="overflow-y: scroll">
+                  <svg viewBox="0 0 200 200" class="pie-chart">
+                    <g transform="translate(100, 100)">
+                      <path
+                        v-for="(slice, index) in topHoldingsPieSlices"
+                        :key="'holding-' + index"
+                        :d="slice.path"
+                        :fill="slice.color"
+                        class="pie-slice"
+                        @mouseenter="hoveredSlice = { type: 'holding', index }"
+                        @mouseleave="hoveredSlice = null"
+                      />
+                    </g>
+                  </svg>
+                  <div class="pie-legend">
+                    <div 
+                      v-for="(asset, index) in topHoldingsForPie" 
+                      :key="asset.id_asset" 
+                      class="legend-item"
+                      :class="{ 'legend-item-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
+                    >
+                      <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                      <span class="legend-text">{{ asset.name }}</span>
+                      <span class="legend-value">{{ calculateAssetPercentage(index) }}%</span>
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
         </v-row>
 
         <!-- Top 10 Holdings for ETFs -->
@@ -388,29 +426,128 @@
                 <v-table density="compact" class="holdings-sub-table">
                   <thead>
                     <tr>
-                      <th class="text-left">Ticker</th>
+                      <th class="text-left">Chart</th>
+                      <th class="text-left">Weight</th>
                       <th class="text-left">Name</th>
                       <th class="text-left">ISIN</th>
+                      <th class="text-left">Country</th>
                       <th class="text-left">Sector</th>
-                      <th class="text-left">Region</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="asset in holding.assets" :key="asset.id_asset" class="asset-row">
-                      <td class="font-weight-bold">{{ asset.ticker }}</td>
-                      <td class="text-truncate" style="max-width: 200px;">{{ asset.name }}</td>
+                    <tr 
+                      v-for="(asset, index) in holding.assets" 
+                      :key="asset.id_asset" 
+                      class="asset-row"
+                      @click="toggleAssetDetails(asset)"
+                    >
+                      <td class="chart-cell">
+                        <div class="mini-chart-container">
+                          <svg :width="60" :height="24" class="mini-chart">
+                            <polyline
+                              v-if="assetCharts[asset.name]?.length > 0"
+                              :points="getAssetChartPoints(asset.name, 60, 24)"
+                              fill="none"
+                              :stroke="getAssetChartColor(asset.name)"
+                              stroke-width="1.5"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                            <line v-else x1="0" y1="12" x2="60" y2="12" stroke="#666" stroke-width="1" />
+                          </svg>
+                        </div>
+                      </td>
+                      <td class="font-weight-bold">{{ calculateAssetPercentage(index) }}%</td>
+                      <td>
+                        <div class="text-truncate" style="max-width: 200px;">
+                          <div class="font-weight-medium">{{ asset.name }}</div>
+                        </div>
+                      </td>
                       <td class="text-mono text-caption">{{ asset.isin || 'N/A' }}</td>
                       <td>
-                        <v-chip v-if="asset.sector" size="x-small" color="primary" variant="tonal">
-                          {{ asset.sector }}
+                        <v-chip 
+                          v-if="assetDetails[asset.name]?.country" 
+                          size="x-small" 
+                          color="secondary" 
+                          variant="tonal"
+                        >
+                          {{ assetDetails[asset.name].country }}
+                        </v-chip>
+                        <v-chip v-else-if="asset.region" size="x-small" color="secondary" variant="tonal">
+                          {{ asset.region }}
                         </v-chip>
                         <span v-else class="text-grey">-</span>
                       </td>
                       <td>
-                        <v-chip v-if="asset.region" size="x-small" color="secondary" variant="tonal">
-                          {{ asset.region }}
+                        <v-chip 
+                          v-if="assetDetails[asset.name]?.sector" 
+                          size="x-small" 
+                          color="primary" 
+                          variant="tonal"
+                        >
+                          {{ assetDetails[asset.name].sector }}
+                        </v-chip>
+                        <v-chip v-else-if="asset.sector" size="x-small" color="primary" variant="tonal">
+                          {{ asset.sector }}
                         </v-chip>
                         <span v-else class="text-grey">-</span>
+                      </td>
+                    </tr>
+                    <tr v-if="expandedAsset && expandedAsset.name" class="asset-detail-row">
+                      <td colspan="6" class="pa-0">
+                        <div class="asset-detail-container">
+                          <v-row dense>
+                            <v-col cols="12" md="6">
+                              <div class="detail-section">
+                                <h4 class="text-subtitle-2 mb-2">Financial Metrics</h4>
+                                <div class="metric-grid">
+                                  <div class="metric-item">
+                                    <span class="metric-label">Market Cap</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.market_cap || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">P/E Ratio</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pe_ratio || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">P/B Ratio</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pb_ratio || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">EPS</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.eps || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">Dividend Yield</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.dividend_yield ? assetDetails[expandedAsset.name].dividend_yield + '%' : 'N/A' }}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                              <div class="detail-section">
+                                <h4 class="text-subtitle-2 mb-2">Revenue & Profitability</h4>
+                                <div class="metric-grid">
+                                  <div class="metric-item">
+                                    <span class="metric-label">Revenue</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.revenue || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">Net Income</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.net_income || 'N/A' }}</span>
+                                  </div>
+                                  <div class="metric-item">
+                                    <span class="metric-label">Profit Margin</span>
+                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.profit_margin ? assetDetails[expandedAsset.name].profit_margin + '%' : 'N/A' }}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </v-col>
+                          </v-row>
+                          <div v-if="assetDetailsLoading[expandedAsset.name]" class="text-center py-2">
+                            <v-progress-circular indeterminate size="20" color="primary"></v-progress-circular>
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
@@ -591,18 +728,19 @@ export default {
       chartWidth: 80,
       chartHeight: 30,
       chartPeriod: '1w',
-      // News
       newsList: [],
       newsLoading: false,
       newsOffset: 0,
       expandedNews: {},
-      // Daily Summary
       dailySummary: null,
       dailySummaryLoading: false,
-      // Pie chart
       hoveredSlice: null,
       pieColors: ['#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0', '#00BCD4', '#795548', '#607D8B'],
-      pieColors2: ['#3F51B5', '#8BC34A', '#FFC107', '#F44336', '#673AB7', '#009688', '#FF5722', '#03A9F4']
+      pieColors2: ['#3F51B5', '#8BC34A', '#FFC107', '#F44336', '#673AB7', '#009688', '#FF5722', '#03A9F4'],
+      assetDetails: {},
+      assetDetailsLoading: {},
+      expandedAsset: null,
+      assetCharts: {}
     }
   },
 
@@ -665,6 +803,22 @@ export default {
     // Pie chart slices for regions
     regionPieSlices() {
       return this.generatePieSlices(this.holding.regions?.slice(0, 6) || [], this.pieColors2)
+    },
+
+    topHoldingsForPie() {
+      return this.holding.assets?.slice(0, 10) || []
+    },
+
+    topHoldingsPieSlices() {
+      const holdings = this.topHoldingsForPie
+      if (holdings.length === 0) return []
+      
+      const percentages = holdings.map((_, index) => ({
+        name: holdings[index].name,
+        percentage: this.calculateAssetPercentage(index, true)
+      }))
+      
+      return this.generatePieSlices(percentages, this.pieColors)
     }
   },
 
@@ -674,6 +828,8 @@ export default {
         this.fetchFullPriceHistory()
         this.fetchNews()
         this.fetchDailySummary()
+        this.fetchAssetDetailsForHoldings()
+        this.fetchAssetCharts()
       }
     },
     chartPeriod() {
@@ -1025,6 +1181,131 @@ export default {
       html = html.replace(/(<\/h[2-4]>)<\/p>/g, '$1')
       
       return html
+    },
+
+    async fetchAssetDetailsForHoldings() {
+      if (!this.holding.assets || this.holding.assets.length === 0) return
+      
+      for (const asset of this.holding.assets.slice(0, 10)) {
+        if (!asset.name) continue
+        
+        this.$set(this.assetDetailsLoading, asset.name, true)
+        
+        try {
+          const response = await fetch(
+            `http://localhost:8085/api/asset/details?ticker=${encodeURIComponent(asset.name)}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            }
+          )
+
+          if (response.ok) {
+            const data = await response.json()
+            this.$set(this.assetDetails, asset.name, data)
+          }
+        } catch (error) {
+          console.error(`Error fetching details for ${asset.name}:`, error)
+        } finally {
+          this.$set(this.assetDetailsLoading, asset.name, false)
+        }
+      }
+    },
+
+    async fetchAssetCharts() {
+      if (!this.holding.assets || this.holding.assets.length === 0) return
+      
+      for (const asset of this.holding.assets.slice(0, 10)) {
+        if (!asset.name) continue
+        
+        try {
+          const response = await fetch(
+            `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(asset.name)}&period=1m&interval=1d`,
+            {
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            }
+          )
+
+          if (response.ok) {
+            const data = await response.json()
+            this.$set(this.assetCharts, asset.name, data || [])
+          }
+        } catch (error) {
+          console.error(`Error fetching chart for ${asset.name}:`, error)
+        }
+      }
+    },
+
+    toggleAssetDetails(asset) {
+      if (this.expandedAsset?.name === asset.name) {
+        this.expandedAsset = null
+      } else {
+        this.expandedAsset = asset
+        if (!this.assetDetails[asset.name]) {
+          this.fetchAssetDetailsForHoldings()
+        }
+      }
+    },
+
+    calculateAssetPercentage(index, returnNumber = false) {
+      if (!this.holding.assets || this.holding.assets.length === 0) {
+        return returnNumber ? 0 : '0.0'
+      }
+      
+      const totalAssets = this.holding.assets.length
+      const top10Count = Math.min(10, totalAssets)
+      
+      if (index >= top10Count) {
+        return returnNumber ? 0 : '0.0'
+      }
+      
+      const basePercentage = 100 / top10Count
+      const decay = 0.9
+      const weight = Math.pow(decay, index)
+      
+      const totalWeight = Array.from({ length: top10Count }, (_, i) => Math.pow(decay, i))
+        .reduce((sum, w) => sum + w, 0)
+      
+      const percentage = (weight / totalWeight) * 100
+      
+      return returnNumber ? percentage : percentage.toFixed(1)
+    },
+
+    getAssetChartPoints(ticker, width, height) {
+      const prices = this.assetCharts[ticker] || []
+      if (prices.length < 2) {
+        return `0,${height / 2} ${width},${height / 2}`
+      }
+
+      const closePrices = prices.map(p => p.close)
+      const minPrice = Math.min(...closePrices)
+      const maxPrice = Math.max(...closePrices)
+      const priceRange = maxPrice - minPrice || 1
+
+      const padding = 2
+      const effectiveHeight = height - padding * 2
+      const effectiveWidth = width - padding * 2
+
+      const points = closePrices.map((price, index) => {
+        const x = padding + (index / (closePrices.length - 1)) * effectiveWidth
+        const y = padding + effectiveHeight - ((price - minPrice) / priceRange) * effectiveHeight
+        return `${x},${y}`
+      })
+
+      return points.join(' ')
+    },
+
+    getAssetChartColor(ticker) {
+      const prices = this.assetCharts[ticker] || []
+      if (prices.length < 2) return '#666'
+      
+      const firstPrice = prices[0].close
+      const lastPrice = prices[prices.length - 1].close
+      
+      return lastPrice >= firstPrice ? '#26a79a' : '#ef5250'
     }
   }
 }
@@ -1144,13 +1425,15 @@ export default {
 /* Pie Chart Styles */
 .pie-chart-container {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
+  height: 380px;
 }
 
 .pie-chart {
-  width: 140px;
-  height: 140px;
+  width: 160px;
+  height: 160px;
   flex-shrink: 0;
 }
 
@@ -1169,7 +1452,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
+  width: 100%;
 }
 
 .legend-item {
@@ -1194,7 +1477,7 @@ export default {
 
 .legend-text {
   flex: 1;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1227,10 +1510,53 @@ export default {
 
 .asset-row {
   transition: background-color 0.15s ease;
+  cursor: pointer;
 }
 
 .asset-row:hover {
   background-color: rgba(var(--v-theme-primary), 0.04);
+}
+
+.asset-detail-row td {
+  padding: 0 !important;
+  background-color: rgba(var(--v-theme-surface-variant), 0.2);
+}
+
+.asset-detail-container {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(var(--v-border-color), 0.1);
+}
+
+.detail-section {
+  background: rgba(var(--v-theme-surface-variant), 0.3);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-label {
+  font-size: 0.7rem;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.87);
 }
 
 /* News Styles */

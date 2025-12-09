@@ -775,7 +775,6 @@ export default {
 <style scoped>
 .chart-wrapper {
   width: 100%;
-  overflow-x: auto;
 }
 
 .add-holding-form {

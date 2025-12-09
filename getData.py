@@ -9,6 +9,7 @@ import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import getPrice
 from getSummary import summarize_daily_news, summarize_daily_portfolio_news
+from getStock import get_stock_data
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 from datetime import datetime, timezone
 from collections import deque
@@ -342,6 +343,21 @@ async def api_summarize_portfolio():
         full_text_list
     )
     return flask.jsonify(result)
+
+@app.route('/api/stock/<isin>', methods=['GET'])
+async def api_stock_data(isin):
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, get_stock_data, isin)
+        if result:
+            return flask.jsonify({
+                'isin': isin,
+                'metrics': result.metrics.__dict__ if hasattr(result.metrics, '__dict__') else result.metrics,
+                'financials': result.financials.__dict__ if hasattr(result.financials, '__dict__') else result.financials
+            })
+        return flask.jsonify({'error': 'Could not fetch stock data for this ISIN'}), 404
+    except Exception as e:
+        return flask.jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app

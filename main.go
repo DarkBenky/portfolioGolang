@@ -109,6 +109,23 @@ type Asset struct {
 	currency  string
 }
 
+type AssetDetails struct {
+	Ticker        string `json:"ticker"`
+	MarketCap     string `json:"market_cap"`
+	MarketCapEur  string `json:"market_cap_eur"`
+	Country       string `json:"country"`
+	Sector        string `json:"sector"`
+	Eps           string `json:"eps"`
+	PbRatio       string `json:"pb_ratio"`
+	PeRatio       string `json:"pe_ratio"`
+	DividendYield string `json:"dividend_yield"`
+	Revenue       string `json:"revenue"`
+	NetIncome     string `json:"net_income"`
+	ProfitMargin  string `json:"profit_margin"`
+	Hash          string `json:"hash"`
+	Date          string `json:"date"`
+}
+
 type News struct {
 	IdNews      string `json:"id_news"`
 	Title       string `json:"title"`
@@ -132,6 +149,56 @@ type Price struct {
 	High    float64
 	Low     float64
 	Volume  int64
+}
+
+func (detail *AssetDetails) hashDetails() string {
+	var buffer bytes.Buffer
+	buffer.WriteString(detail.Ticker)
+	buffer.WriteString(detail.MarketCap)
+	buffer.WriteString(detail.MarketCapEur)
+	buffer.WriteString(detail.Country)
+	buffer.WriteString(detail.Sector)
+	buffer.WriteString(detail.Eps)
+	buffer.WriteString(detail.PbRatio)
+	buffer.WriteString(detail.PeRatio)
+	buffer.WriteString(detail.DividendYield)
+	buffer.WriteString(detail.Revenue)
+	buffer.WriteString(detail.NetIncome)
+	buffer.WriteString(detail.ProfitMargin)
+	hash := sha256.Sum256(buffer.Bytes())
+	return hex.EncodeToString(hash[:])
+}
+
+func (database *DB) addAssetDetails(detail AssetDetails) error {
+	_, err := database.Exec(`INSERT INTO asset_details (id_asset, ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, generateID(), detail.Ticker, detail.MarketCap, detail.MarketCapEur, detail.Country, detail.Sector, detail.Eps, detail.PbRatio, detail.PeRatio, detail.DividendYield, detail.Revenue, detail.NetIncome, detail.ProfitMargin, detail.Hash, detail.Date)
+	return err
+}
+
+func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
+	var detail AssetDetails
+	err := database.QueryRow(`SELECT ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? ORDER BY CAST(date AS INTEGER) DESC LIMIT 1`, ticker).Scan(&detail.Ticker, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &detail, err
+}
+
+func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error) {
+	rows, err := database.Query(`SELECT ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? ORDER BY CAST(date AS INTEGER) DESC`, ticker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var details []AssetDetails
+	for rows.Next() {
+		var detail AssetDetails
+		err := rows.Scan(&detail.Ticker, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
+		if err != nil {
+			return nil, err
+		}
+		details = append(details, detail)
+	}
+	return details, nil
 }
 
 func fetchPricesPeriodic(interval time.Duration) {
@@ -669,6 +736,31 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)
 	`)
+	if err != nil {
+		return nil, err
+	}
+
+	// Crete Asset Details table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS asset_details (
+			id_asset TEXT PRIMARY KEY,
+			ticker TEXT NOT NULL,
+			market_cap TEXT,
+			market_cap_eur TEXT,
+			country TEXT,
+			sector TEXT,
+			eps TEXT,
+			pb_ratio TEXT,
+			pe_ratio TEXT,
+			dividend_yield TEXT,
+			revenue TEXT,
+			net_income TEXT,
+			profit_margin TEXT,
+			hash TEXT,
+			date TEXT
+		)
+	`)
+
 	if err != nil {
 		return nil, err
 	}
@@ -3650,7 +3742,168 @@ func GetAssetSentiments(c echo.Context) error {
 	return c.JSON(http.StatusOK, sentiments)
 }
 
-// startTursoServer is removed as we are using local SQLite file
+func fetchAssetDetails(ticker string) error {
+	url := fmt.Sprintf("%s/api/stock/%s", BASE_URL, ticker)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Error fetching asset details for %s: %v", ticker, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Error fetching asset details for %s: status %d", ticker, resp.StatusCode)
+		return fmt.Errorf("status code %d", resp.StatusCode)
+	}
+
+	var response struct {
+		ISIN    string `json:"isin"`
+		Metrics struct {
+			MarketCap     string  `json:"market_cap"`
+			MarketCapEur  string  `json:"market_cap_eur"`
+			Country       string  `json:"country"`
+			Sector        string  `json:"sector"`
+			DividendYield float64 `json:"dividend_yield"`
+			Eps           float64 `json:"eps"`
+			PbRatio       float64 `json:"pb_ratio"`
+			PeRatio       float64 `json:"pe_ratio"`
+		} `json:"metrics"`
+		Financials struct {
+			Revenue      string  `json:"revenue"`
+			NetIncome    string  `json:"net_income"`
+			ProfitMargin float64 `json:"profit_margin"`
+		} `json:"financials"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
+		log.Printf("Error decoding asset details for %s: %v", ticker, err)
+		return err
+	}
+
+	newDetail := AssetDetails{
+		Ticker:        ticker,
+		MarketCap:     response.Metrics.MarketCap,
+		MarketCapEur:  response.Metrics.MarketCapEur,
+		Country:       response.Metrics.Country,
+		Sector:        response.Metrics.Sector,
+		Eps:           fmt.Sprintf("%.2f", response.Metrics.Eps),
+		PbRatio:       fmt.Sprintf("%.2f", response.Metrics.PbRatio),
+		PeRatio:       fmt.Sprintf("%.2f", response.Metrics.PeRatio),
+		DividendYield: fmt.Sprintf("%.2f", response.Metrics.DividendYield),
+		Revenue:       response.Financials.Revenue,
+		NetIncome:     response.Financials.NetIncome,
+		ProfitMargin:  fmt.Sprintf("%.2f", response.Financials.ProfitMargin),
+		Date:          fmt.Sprintf("%d", time.Now().UTC().Unix()),
+	}
+
+	newDetail.Hash = newDetail.hashDetails()
+
+	latestDetail, err := db.getLatestAssetDetails(ticker)
+	if err != nil {
+		log.Printf("Error getting latest asset details for %s: %v", ticker, err)
+		return err
+	}
+
+	if latestDetail == nil || latestDetail.Hash != newDetail.Hash {
+		dbMutex.Lock()
+		err = db.addAssetDetails(newDetail)
+		dbMutex.Unlock()
+		if err != nil {
+			log.Printf("Error saving asset details for %s: %v", ticker, err)
+			return err
+		}
+		log.Printf("Added new asset details for %s", ticker)
+	} else {
+		log.Printf("No changes in asset details for %s, keeping existing record", ticker)
+	}
+
+	return nil
+}
+
+func fetchAssetDetailsPeriodic(interval time.Duration) {
+	log.Println("Starting periodic asset details fetching...")
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Fetching asset details for all holdings...")
+		holdings, err := db.getAllETFHoldings()
+		if err != nil {
+			log.Printf("Error getting ETF holdings: %v", err)
+			continue
+		}
+
+		for _, holding := range holdings {
+			if holding.ISIN != "" && holding.ISIN != "N/A" {
+				err := fetchAssetDetails(holding.ISIN)
+				if err != nil {
+					log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", holding.Ticker, holding.ISIN, err)
+				}
+				time.Sleep(2 * time.Second)
+			}
+		}
+
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+
+		for _, tickerStr := range tickers {
+			assets, err := db.getAssetsByTicker(tickerStr)
+			if err != nil {
+				continue
+			}
+
+			for _, asset := range assets {
+				if asset.ISIN != "" && asset.ISIN != "N/A" {
+					err := fetchAssetDetails(asset.ISIN)
+					if err != nil {
+						log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", asset.Ticker, asset.ISIN, err)
+					}
+					time.Sleep(2 * time.Second)
+					break
+				}
+			}
+		}
+		log.Println("Finished fetching asset details")
+	}
+}
+
+func getAssetDetails(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	details, err := db.getAssetDetailsHistory(ticker)
+	if err != nil {
+		log.Printf("Error getting asset details: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving asset details")
+	}
+
+	return c.JSON(http.StatusOK, details)
+}
+
+func getLatestAssetDetailsEndpoint(c echo.Context) error {
+	ticker := c.QueryParam("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	detail, err := db.getLatestAssetDetails(ticker)
+	if err != nil {
+		log.Printf("Error getting latest asset details: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving asset details")
+	}
+
+	if detail == nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"message": "No details found"})
+	}
+
+	return c.JSON(http.StatusOK, detail)
+}
 
 func main() {
 	err := godotenv.Load()
@@ -3686,6 +3939,7 @@ func main() {
 	go fillInBetweenPricesPeriodic(60 * time.Minute)
 	go updateSentimentsPeriodic(6 * time.Hour)
 	go updateETFDataPeriodic(12 * time.Hour)
+	go fetchAssetDetailsPeriodic(12 * time.Hour)
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
@@ -3732,6 +3986,8 @@ func main() {
 	protected.GET("/asset/history", GetAssetPriceHistory)
 	protected.GET("/asset/stats", getAssetStats)
 	protected.GET("/asset/daily_sentiment", getAssetDailySentimentSummary)
+	protected.GET("/asset/details", getLatestAssetDetailsEndpoint)
+	protected.GET("/asset/details/history", getAssetDetails)
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)
