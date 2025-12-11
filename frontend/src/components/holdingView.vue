@@ -1187,13 +1187,13 @@ export default {
       if (!this.holding.assets || this.holding.assets.length === 0) return
       
       for (const asset of this.holding.assets.slice(0, 10)) {
-        if (!asset.name) continue
+        if (!asset.name || !asset.isin) continue
         
         this.$set(this.assetDetailsLoading, asset.name, true)
         
         try {
           const response = await fetch(
-            `http://localhost:8085/api/asset/details?ticker=${encodeURIComponent(asset.name)}`,
+            `http://localhost:8085/api/asset/details?ticker=${encodeURIComponent(asset.isin)}`,
             {
               headers: {
                 'Authorization': `Bearer ${this.authToken}`
@@ -1203,7 +1203,9 @@ export default {
 
           if (response.ok) {
             const data = await response.json()
-            this.$set(this.assetDetails, asset.name, data)
+            if (data && data.length > 0) {
+              this.$set(this.assetDetails, asset.name, data[0])
+            }
           }
         } catch (error) {
           console.error(`Error fetching details for ${asset.name}:`, error)
@@ -1217,11 +1219,11 @@ export default {
       if (!this.holding.assets || this.holding.assets.length === 0) return
       
       for (const asset of this.holding.assets.slice(0, 10)) {
-        if (!asset.name) continue
+        if (!asset.name || !asset.isin) continue
         
         try {
           const response = await fetch(
-            `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(asset.name)}&period=1m&interval=1d`,
+            `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(asset.isin)}&period=1m&interval=1d`,
             {
               headers: {
                 'Authorization': `Bearer ${this.authToken}`

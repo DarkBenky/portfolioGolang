@@ -170,8 +170,21 @@ func (detail *AssetDetails) hashDetails() string {
 }
 
 func (database *DB) addAssetDetails(detail AssetDetails) error {
-	_, err := database.Exec(`INSERT INTO asset_details (id_asset, ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, generateID(), detail.Ticker, detail.MarketCap, detail.MarketCapEur, detail.Country, detail.Sector, detail.Eps, detail.PbRatio, detail.PeRatio, detail.DividendYield, detail.Revenue, detail.NetIncome, detail.ProfitMargin, detail.Hash, detail.Date)
-	return err
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`INSERT INTO asset_details (id_asset, ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, generateID(), detail.Ticker, detail.MarketCap, detail.MarketCapEur, detail.Country, detail.Sector, detail.Eps, detail.PbRatio, detail.PeRatio, detail.DividendYield, detail.Revenue, detail.NetIncome, detail.ProfitMargin, detail.Hash, detail.Date)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
@@ -214,8 +227,14 @@ func fetchPricesPeriodic(interval time.Duration) {
 		}
 		log.Printf("Found %d unique tickers to fetch prices for", len(tickers))
 
+		var wg sync.WaitGroup
+
 		for _, tickerSymbol := range tickers {
+			wg.Add(1)
+
 			go func(ticker string) {
+				defer wg.Done()
+
 				log.Printf("Fetching prices for %s...", ticker)
 				err := fetchPrices(ticker)
 				if err != nil {
@@ -224,9 +243,11 @@ func fetchPricesPeriodic(interval time.Duration) {
 					log.Printf("Successfully fetched prices for %s", ticker)
 				}
 			}(tickerSymbol)
-			time.Sleep(250 * time.Millisecond)
+
+			time.Sleep(200 * time.Millisecond)
 		}
 
+		wg.Wait()
 		log.Println("Completed periodic price fetch cycle")
 	}
 }
@@ -335,9 +356,14 @@ func fetchNewsPeriodic(interval time.Duration) {
 
 		log.Printf("Found %d unique tickers to fetch news for", len(tickers))
 
+		var wg sync.WaitGroup
+
 		for _, tickerSymbol := range tickers {
-			// Fetch news for each ticker in a goroutine
+			wg.Add(1)
+
 			go func(ticker string) {
+				defer wg.Done()
+
 				log.Printf("Fetching news for %s...", ticker)
 				err := fetchNews(ticker, 10)
 				if err != nil {
@@ -347,10 +373,10 @@ func fetchNewsPeriodic(interval time.Duration) {
 				}
 			}(tickerSymbol)
 
-			// Small delay to avoid overwhelming the API
-			time.Sleep(2500 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
 		}
 
+		wg.Wait()
 		log.Println("Completed periodic news fetch cycle")
 	}
 }
@@ -569,10 +595,14 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 }
 
 func initDB(fakeData bool) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL")
 	if err != nil {
 		return nil, err
 	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 
 	_, err = db.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
@@ -585,6 +615,11 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec("PRAGMA cache_size=-64000;")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA wal_autocheckpoint=1000;")
 	if err != nil {
 		return nil, err
 	}
@@ -1031,11 +1066,22 @@ type DB struct {
 func (database *DB) addUser(user User) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO users (id, user_name, email, password)
 		VALUES (?, ?, ?, ?)
 	`, user.Id, user.userName, user.Email, user.Password)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) getUserByEmail(email string) (*User, error) {
@@ -1075,8 +1121,14 @@ func (database *DB) addHolding(holding Holding) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var existingHolding Holding
-	err := database.QueryRow(`
+	err = tx.QueryRow(`
 		SELECT id_holding, quantity, purchase_price 
 		FROM holdings 
 		WHERE user_id = ? AND ticker = ? AND exchange = ?
@@ -1087,11 +1139,14 @@ func (database *DB) addHolding(holding Holding) error {
 	)
 
 	if err == sql.ErrNoRows {
-		_, err := database.Exec(`
+		_, err = tx.Exec(`
 			INSERT INTO holdings (id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, holding.IdHolding, holding.Name, holding.Ticker, holding.ISIN, holding.Exchange, holding.Etf, holding.Quantity, holding.PurchasePrice, holding.TER, holding.Policy, holding.userID, holding.currency)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
 	} else if err != nil {
 		return err
 	}
@@ -1100,20 +1155,30 @@ func (database *DB) addHolding(holding Holding) error {
 	newQuantity := existingHolding.Quantity + holding.Quantity
 	newAvgPrice := totalCost / newQuantity
 
-	_, err = database.Exec(`
+	_, err = tx.Exec(`
 		UPDATE holdings 
 		SET quantity = ?, purchase_price = ?, name = ?, isin = ?, ter = ?, policy = ?, currency = ?
 		WHERE id_holding = ?
 	`, newQuantity, newAvgPrice, holding.Name, holding.ISIN, holding.TER, holding.Policy, holding.currency, existingHolding.IdHolding)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) removeHolding(holdingID string, userID string) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 
-	result, err := database.Exec(`
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`
 		DELETE FROM holdings 
 		WHERE id_holding = ? AND user_id = ?
 	`, holdingID, userID)
@@ -1128,17 +1193,23 @@ func (database *DB) removeHolding(holdingID string, userID string) error {
 	}
 
 	if rowsAffected == 0 {
-		return sql.ErrNoRows
+		return tx.Rollback()
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (database *DB) modifyHolding(holding Holding) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 
-	result, err := database.Exec(`
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`
 		UPDATE holdings 
 		SET name = ?, ticker = ?, isin = ?, exchange = ?, etf = ?, quantity = ?, purchase_price = ?, ter = ?, policy = ?, currency = ?
 		WHERE id_holding = ? AND user_id = ?
@@ -1157,7 +1228,7 @@ func (database *DB) modifyHolding(holding Holding) error {
 		return sql.ErrNoRows
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
@@ -1214,41 +1285,86 @@ func (database *DB) getHoldingDailySummary(holdingID string, date string) (*Dail
 func (database *DB) addAsset(asset Asset) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO assets (id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, asset.IdAsset, asset.Name, asset.Ticker, asset.ISIN, asset.Exchange, asset.Sector, asset.Region, asset.idHolding, asset.currency)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) addSector(sector Sector) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO sectors (name, id_holding, percentage)
 		VALUES (?, ?, ?)
 	`, sector.Name, sector.IdHolding, sector.Percentage)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) addRegion(region Region) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO regions (name, id_holding, percentage)
 		VALUES (?, ?, ?)
 	`, region.Name, region.IdHolding, region.Percentage)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) addNews(news News) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
-		INSERT INTO news (id_news, title, link, published_at, summary, text, author, sentiment, ticker, id_asset, id_holding)
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		INSERT OR IGNORE INTO news (id_news, title, link, published_at, summary, text, author, sentiment, ticker, id_asset, id_holding)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, news.IdNews, news.Title, news.Link, news.PublishedAt, news.Summary, news.Text, news.Author, news.Sentiment, news.Ticker, news.idAsset, news.idHolding)
-	return err
+
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) deleteETFDataForHolding(holdingID string) error {
@@ -1307,27 +1423,49 @@ func (database *DB) getAllETFHoldings() ([]Holding, error) {
 func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO daily_sentiment (id_sentiment, ticker, date, summary, sentiment)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(ticker, date) DO UPDATE SET
 			summary = excluded.summary,
 			sentiment = excluded.sentiment
 	`, sentiment.IdSentiment, sentiment.Ticker, sentiment.Date, sentiment.Summary, sentiment.Sentiment)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentiment) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
-	_, err := database.Exec(`
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO portfolio_daily_sentiment (id_sentiment, user_id, date, summary, sentiment)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, date) DO UPDATE SET
 			summary = excluded.summary,
 			sentiment = excluded.sentiment
 	`, sentiment.IdSentiment, sentiment.UserID, sentiment.Date, sentiment.Summary, sentiment.Sentiment)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]News, error) {
@@ -1452,26 +1590,6 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 		holdings = append(holdings, h)
 	}
 	return holdings, nil
-}
-
-func (database *DB) addPrice(price Price) error {
-
-	// Validate timestamp
-	timestamp, err := strconv.ParseInt(price.Date, 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid timestamp format: %v", err)
-	}
-
-	now := time.Now().UTC().Unix()
-	if timestamp <= 0 || timestamp > now {
-		return fmt.Errorf("invalid timestamp: %d (now: %d)", timestamp, now)
-	}
-
-	_, err = database.Exec(`
-		INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
-	return err
 }
 
 func (database *DB) addPrices(prices []Price) error {
@@ -3806,9 +3924,7 @@ func fetchAssetDetails(ticker string) error {
 	}
 
 	if latestDetail == nil || latestDetail.Hash != newDetail.Hash {
-		dbMutex.Lock()
 		err = db.addAssetDetails(newDetail)
-		dbMutex.Unlock()
 		if err != nil {
 			log.Printf("Error saving asset details for %s: %v", ticker, err)
 			return err
