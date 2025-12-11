@@ -111,6 +111,7 @@ type Asset struct {
 
 type AssetDetails struct {
 	Ticker        string `json:"ticker"`
+	ISIN          string `json:"isin"`
 	MarketCap     string `json:"market_cap"`
 	MarketCapEur  string `json:"market_cap_eur"`
 	Country       string `json:"country"`
@@ -179,7 +180,7 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO asset_details (id_asset, ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, generateID(), detail.Ticker, detail.MarketCap, detail.MarketCapEur, detail.Country, detail.Sector, detail.Eps, detail.PbRatio, detail.PeRatio, detail.DividendYield, detail.Revenue, detail.NetIncome, detail.ProfitMargin, detail.Hash, detail.Date)
+	_, err = tx.Exec(`INSERT INTO asset_details (id_asset, ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, generateID(), detail.Ticker, detail.ISIN, detail.MarketCap, detail.MarketCapEur, detail.Country, detail.Sector, detail.Eps, detail.PbRatio, detail.PeRatio, detail.DividendYield, detail.Revenue, detail.NetIncome, detail.ProfitMargin, detail.Hash, detail.Date)
 	if err != nil {
 		return err
 	}
@@ -189,7 +190,7 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 
 func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
 	var detail AssetDetails
-	err := database.QueryRow(`SELECT ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? ORDER BY CAST(date AS INTEGER) DESC LIMIT 1`, ticker).Scan(&detail.Ticker, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
+	err := database.QueryRow(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC LIMIT 1`, ticker, ticker).Scan(&detail.Ticker, &detail.ISIN, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -197,7 +198,7 @@ func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) 
 }
 
 func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error) {
-	rows, err := database.Query(`SELECT ticker, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? ORDER BY CAST(date AS INTEGER) DESC`, ticker)
+	rows, err := database.Query(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC`, ticker, ticker)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +206,7 @@ func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error
 	var details []AssetDetails
 	for rows.Next() {
 		var detail AssetDetails
-		err := rows.Scan(&detail.Ticker, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
+		err := rows.Scan(&detail.Ticker, &detail.ISIN, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
 		if err != nil {
 			return nil, err
 		}
@@ -780,6 +781,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		CREATE TABLE IF NOT EXISTS asset_details (
 			id_asset TEXT PRIMARY KEY,
 			ticker TEXT NOT NULL,
+			isin TEXT,
 			market_cap TEXT,
 			market_cap_eur TEXT,
 			country TEXT,
@@ -2493,7 +2495,7 @@ func GetPortfolioValueHistory(c echo.Context) error {
 	case "1d":
 		intervalSeconds = 86400
 	default:
-		intervalSeconds = 3600 // Default to 1 hour
+		intervalSeconds = 300 // Default to 5 minutes
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
@@ -3162,6 +3164,54 @@ func getPortfolioAllocation(c echo.Context) error {
 		}
 	}
 
+	// Calculate company allocation
+	companyTotals := make(map[string]float64)
+
+	for _, h := range holdings {
+		holdingWeight := 0.0
+		if totalPortfolioValue > 0 {
+			holdingWeight = holdingValues[h.IdHolding] / totalPortfolioValue
+		}
+
+		if h.Etf {
+			assetRows, err := db.Query(`SELECT name FROM assets WHERE id_holding = ? ORDER BY id_asset LIMIT 10`, h.IdHolding)
+			if err == nil {
+				assets := make([]string, 0)
+				for assetRows.Next() {
+					var name string
+					if err := assetRows.Scan(&name); err == nil {
+						assets = append(assets, name)
+					}
+				}
+				assetRows.Close()
+
+				top10Count := len(assets)
+				if top10Count > 0 {
+					decay := 0.9
+					totalWeight := 0.0
+					for i := range top10Count {
+						totalWeight += math.Pow(decay, float64(i))
+					}
+
+					top10Allocation := 0.0
+					for i, assetName := range assets {
+						weight := math.Pow(decay, float64(i))
+						assetPercentage := (weight / totalWeight) * 100
+						companyTotals[assetName] += assetPercentage * holdingWeight
+						top10Allocation += assetPercentage
+					}
+
+					if top10Allocation < 100 {
+						otherPercentage := 100 - top10Allocation
+						companyTotals["Other"] += otherPercentage * holdingWeight
+					}
+				}
+			}
+		} else {
+			companyTotals[h.Name] += holdingWeight * 100
+		}
+	}
+
 	// Convert to response format
 	type AllocationItem struct {
 		Name       string  `json:"name"`
@@ -3178,10 +3228,16 @@ func getPortfolioAllocation(c echo.Context) error {
 		regions = append(regions, AllocationItem{Name: name, Percentage: percentage})
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	companies := make([]AllocationItem, 0)
+	for name, percentage := range companyTotals {
+		companies = append(companies, AllocationItem{Name: name, Percentage: percentage})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
 		"total_value": totalPortfolioValue,
 		"sectors":     sectors,
 		"regions":     regions,
+		"companies":   companies,
 	})
 }
 
@@ -3252,7 +3308,7 @@ func GetAssetPriceHistory(c echo.Context) error {
 	case "1d":
 		intervalSeconds = 86400
 	default:
-		intervalSeconds = 3600 // Default to 1 hour
+		intervalSeconds = 300 // Default to 5 minutes
 	}
 
 	startTimestamp := startTime.Unix()
@@ -3802,13 +3858,16 @@ func getAllPortfolioDaySentiments(c echo.Context) error {
 
 func getAssetDailySentimentSummary(c echo.Context) error {
 	ticker := c.QueryParam("ticker")
-	date := c.QueryParam("date") // expected format: YYYY-MM-DD
+	date := c.QueryParam("date")
 	if ticker == "" || date == "" {
 		return c.String(http.StatusBadRequest, "ticker and date parameters are required")
 	}
 
 	sentimentSummary, err := db.getHoldingDailySummary(ticker, date)
 	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return c.JSON(http.StatusOK, nil)
+		}
 		return c.String(http.StatusInternalServerError, "Error retrieving asset sentiment summary")
 	}
 
@@ -3901,6 +3960,7 @@ func fetchAssetDetails(ticker string) error {
 
 	newDetail := AssetDetails{
 		Ticker:        ticker,
+		ISIN:          response.ISIN,
 		MarketCap:     response.Metrics.MarketCap,
 		MarketCapEur:  response.Metrics.MarketCapEur,
 		Country:       response.Metrics.Country,

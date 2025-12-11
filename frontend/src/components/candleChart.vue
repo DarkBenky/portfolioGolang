@@ -180,8 +180,8 @@ export default {
         rightPriceScale: {
           borderColor: colors.borderColor,
           scaleMargins: {
-            top: 0.1,
-            bottom: props.showVolume ? 0.2 : 0.1
+            top: 0.05,
+            bottom: props.showVolume ? 0.15 : 0.05
           }
         },
         timeScale: {
@@ -221,7 +221,7 @@ export default {
           },
           priceScaleId: 'volume',
           scaleMargins: {
-            top: 0.85,
+            top: 0.93,
             bottom: 0
           }
         })

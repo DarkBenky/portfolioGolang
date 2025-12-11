@@ -346,6 +346,144 @@
               </div>
             </v-card-text>
           </v-card>
+
+          <!-- Portfolio Allocation -->
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-card>
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-domain</v-icon>
+                  Sector Allocation
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path
+                          v-for="(slice, index) in sectorPieSlices"
+                          :key="'sector-' + index"
+                          :d="slice.path"
+                          :fill="slice.color"
+                          class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
+                          @mouseleave="hoveredSlice = null"
+                        >
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div 
+                        v-for="(sector, index) in sortedSectors" 
+                        :key="sector.name" 
+                        class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                        :data-type="'sector'"
+                        :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
+                        @mouseleave="hoveredSlice = null"
+                      >
+                        <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                        <span class="legend-text">{{ sector.name }}</span>
+                        <span class="legend-value">{{ sector.percentage.toFixed(1) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="4">
+              <v-card>
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-earth</v-icon>
+                  Region Allocation
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path
+                          v-for="(slice, index) in regionPieSlices"
+                          :key="'region-' + index"
+                          :d="slice.path"
+                          :fill="slice.color"
+                          class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
+                          @mouseleave="hoveredSlice = null"
+                        >
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div 
+                        v-for="(region, index) in sortedRegions" 
+                        :key="region.name" 
+                        class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                        :data-type="'region'"
+                        :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
+                        @mouseleave="hoveredSlice = null"
+                      >
+                        <span class="legend-color" :style="{ backgroundColor: pieColors2[index % pieColors2.length] }"></span>
+                        <span class="legend-text">{{ region.name }}</span>
+                        <span class="legend-value">{{ region.percentage.toFixed(1) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="4">
+              <v-card>
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-chart-pie</v-icon>
+                  Top Companies
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path
+                          v-for="(slice, index) in companyPieSlices"
+                          :key="'company-' + index"
+                          :d="slice.path"
+                          :fill="slice.color"
+                          class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'company' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'company', index }; scrollLegendIntoView('company', index)"
+                          @mouseleave="hoveredSlice = null"
+                        >
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div 
+                        v-for="(company, index) in sortedCompanies" 
+                        :key="company.name" 
+                        class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'company' && hoveredSlice?.index === index }"
+                        :data-type="'company'"
+                        :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'company', index }; scrollLegendIntoView('company', index)"
+                        @mouseleave="hoveredSlice = null"
+                      >
+                        <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                        <span class="legend-text">{{ company.name }}</span>
+                        <span class="legend-value">{{ company.percentage.toFixed(1) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </v-container>
 
         <v-container v-else-if="activeView === 'news'" fluid>
@@ -415,6 +553,10 @@ export default {
       addHoldingLoading: false,
       addHoldingError: '',
       addHoldingSuccess: false,
+      portfolioAllocations: {},
+      hoveredSlice: null,
+      pieColors: ['#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0', '#00BCD4', '#795548', '#607D8B', '#FF5722', '#3F51B5'],
+      pieColors2: ['#3F51B5', '#8BC34A', '#FFC107', '#F44336', '#673AB7', '#009688', '#FF5722', '#03A9F4', '#CDDC39', '#E91E63'],
       newHolding: {
         name: '',
         ticker: '',
@@ -440,6 +582,33 @@ export default {
              this.newHolding.quantity > 0 && 
              this.newHolding.purchasePrice > 0 &&
              this.newHolding.ticker
+    },
+
+    sortedSectors() {
+      if (!this.portfolioAllocations.sectors) return []
+      return [...this.portfolioAllocations.sectors].sort((a, b) => b.percentage - a.percentage)
+    },
+
+    sortedRegions() {
+      if (!this.portfolioAllocations.regions) return []
+      return [...this.portfolioAllocations.regions].sort((a, b) => b.percentage - a.percentage)
+    },
+
+    sortedCompanies() {
+      if (!this.portfolioAllocations.companies) return []
+      return [...this.portfolioAllocations.companies].sort((a, b) => b.percentage - a.percentage)
+    },
+
+    sectorPieSlices() {
+      return this.generatePieSlices(this.sortedSectors, this.pieColors)
+    },
+
+    regionPieSlices() {
+      return this.generatePieSlices(this.sortedRegions, this.pieColors2)
+    },
+
+    companyPieSlices() {
+      return this.generatePieSlices(this.sortedCompanies, this.pieColors)
     },
 
     filteredHoldings() {
@@ -500,6 +669,7 @@ export default {
         this.updateChartWidth()
         this.fetchPortfolioHistory()
         this.fetchPortfolioHoldings()
+        this.getPortfolioAllocation()
       }, 100)
     }
 
@@ -511,6 +681,26 @@ export default {
   },
 
   methods: {
+    async getPortfolioAllocation() {
+      try {
+        const token = this.getCookie('auth_token')
+        if (!token) return []
+
+        const response = await fetch('http://localhost:8085/api/portfolio/allocation', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio allocation')
+        }
+        this.portfolioAllocations = await response.json()
+        console.log('Portfolio Allocations:', this.portfolioAllocations)
+      } catch (error) {
+        console.error('Error fetching portfolio allocation:', error)
+      }
+    },
+
     // Cookie utilities
     getCookie(name) {
       const nameEQ = name + '='
@@ -766,7 +956,54 @@ export default {
 
     openHoldingDetail(holding) {
       console.log('Opening holding detail:', holding)
-      // TODO: Implement holding detail view/modal
+    },
+
+    scrollLegendIntoView(type, index) {
+      this.$nextTick(() => {
+        const legendItem = document.querySelector(`.legend-item[data-type="${type}"][data-index="${index}"]`)
+        if (legendItem) {
+          legendItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+      })
+    },
+
+    generatePieSlices(items, colors) {
+      if (!items || items.length === 0) return []
+      
+      const total = items.reduce((sum, item) => sum + item.percentage, 0)
+      const slices = []
+      let currentAngle = -90
+
+      items.forEach((item, index) => {
+        const percentage = (item.percentage / total) * 100
+        const angle = (percentage / 100) * 360
+        const startAngle = currentAngle
+        const endAngle = currentAngle + angle
+
+        const startRad = (startAngle * Math.PI) / 180
+        const endRad = (endAngle * Math.PI) / 180
+
+        const radius = 80
+        const x1 = Math.cos(startRad) * radius
+        const y1 = Math.sin(startRad) * radius
+        const x2 = Math.cos(endRad) * radius
+        const y2 = Math.sin(endRad) * radius
+
+        const largeArc = angle > 180 ? 1 : 0
+
+        const path = `M 0 0 L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
+
+        slices.push({
+          path,
+          color: colors[index % colors.length],
+          percentage: item.percentage,
+          name: item.name
+        })
+
+        currentAngle = endAngle
+      })
+
+      return slices
     }
   }
 }
@@ -831,5 +1068,86 @@ export default {
 .holdings-table :deep(table) {
   table-layout: fixed;
   width: 100%;
+}
+
+.pie-chart-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  height: 380px;
+}
+
+.pie-chart {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+.pie-slice {
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease;
+  transform-origin: center;
+  filter: brightness(1);
+}
+
+.pie-slice:hover,
+.pie-slice-active {
+  opacity: 0.9;
+  transform: scale(1.05);
+  filter: brightness(1.1);
+}
+
+.pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.legend-item:hover {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+  border-color: rgba(var(--v-theme-primary), 0.3);
+  transform: translateX(2px);
+}
+
+.legend-item-active {
+  background-color: rgba(var(--v-theme-primary), 0.15);
+  border-color: rgba(var(--v-theme-primary), 0.4);
+  transform: translateX(2px);
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  flex: 1;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.7);
 }
 </style>

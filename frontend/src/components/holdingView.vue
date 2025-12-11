@@ -117,7 +117,8 @@
                 <div v-else-if="fullPriceHistory.length > 0" style="width: 100%;">
                   <CandleChart
                   :data="fullPriceHistory"
-                  :height="350"
+                  :height="500"
+                  :show-volume="false"
                   theme="dark"/>
                 </div>
                 <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
@@ -310,17 +311,24 @@
                         :d="slice.path"
                         :fill="slice.color"
                         class="pie-slice"
-                        @mouseenter="hoveredSlice = { type: 'sector', index }"
+                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                        @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
                         @mouseleave="hoveredSlice = null"
-                      />
+                      >
+                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                      </path>
                     </g>
                   </svg>
                   <div class="pie-legend">
                     <div 
-                      v-for="(sector, index) in holding.sectors.slice(0, 6)" 
+                      v-for="(sector, index) in sortedSectors" 
                       :key="sector.name" 
                       class="legend-item"
                       :class="{ 'legend-item-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                      :data-type="'sector'"
+                      :data-index="index"
+                      @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
+                      @mouseleave="hoveredSlice = null"
                     >
                       <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
                       <span class="legend-text">{{ sector.name }}</span>
@@ -348,17 +356,24 @@
                         :d="slice.path"
                         :fill="slice.color"
                         class="pie-slice"
-                        @mouseenter="hoveredSlice = { type: 'region', index }"
+                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                        @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
                         @mouseleave="hoveredSlice = null"
-                      />
+                      >
+                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                      </path>
                     </g>
                   </svg>
                   <div class="pie-legend">
                     <div 
-                      v-for="(region, index) in holding.regions.slice(0, 6)" 
+                      v-for="(region, index) in sortedRegions" 
                       :key="region.name" 
                       class="legend-item"
                       :class="{ 'legend-item-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                      :data-type="'region'"
+                      :data-index="index"
+                      @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
+                      @mouseleave="hoveredSlice = null"
                     >
                       <span class="legend-color" :style="{ backgroundColor: pieColors2[index % pieColors2.length] }"></span>
                       <span class="legend-text">{{ region.name }}</span>
@@ -386,9 +401,12 @@
                         :d="slice.path"
                         :fill="slice.color"
                         class="pie-slice"
-                        @mouseenter="hoveredSlice = { type: 'holding', index }"
+                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
+                        @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
                         @mouseleave="hoveredSlice = null"
-                      />
+                      >
+                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                      </path>
                     </g>
                   </svg>
                   <div class="pie-legend">
@@ -397,6 +415,10 @@
                       :key="asset.id_asset" 
                       class="legend-item"
                       :class="{ 'legend-item-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
+                      :data-type="'holding'"
+                      :data-index="index"
+                      @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
+                      @mouseleave="hoveredSlice = null"
                     >
                       <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
                       <span class="legend-text">{{ asset.name }}</span>
@@ -795,18 +817,33 @@ export default {
       return points.join(' ')
     },
 
+    sortedSectors() {
+      if (!this.holding.sectors) return []
+      return [...this.holding.sectors].sort((a, b) => b.percentage - a.percentage)
+    },
+
+    sortedRegions() {
+      if (!this.holding.regions) return []
+      return [...this.holding.regions].sort((a, b) => b.percentage - a.percentage)
+    },
+
+    sortedAssets() {
+      if (!this.holding.assets) return []
+      return this.holding.assets.slice(0, 10)
+    },
+
     // Pie chart slices for sectors
     sectorPieSlices() {
-      return this.generatePieSlices(this.holding.sectors?.slice(0, 6) || [], this.pieColors)
+      return this.generatePieSlices(this.sortedSectors, this.pieColors)
     },
 
     // Pie chart slices for regions
     regionPieSlices() {
-      return this.generatePieSlices(this.holding.regions?.slice(0, 6) || [], this.pieColors2)
+      return this.generatePieSlices(this.sortedRegions, this.pieColors2)
     },
 
     topHoldingsForPie() {
-      return this.holding.assets?.slice(0, 10) || []
+      return this.sortedAssets
     },
 
     topHoldingsPieSlices() {
@@ -861,7 +898,7 @@ export default {
     async fetchPriceHistory() {
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.holding.ticker)}&period=1d&interval=5m`,
+          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.holding.ticker)}&period=1d&interval=15m`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -888,9 +925,9 @@ export default {
       try {
         const intervalMap = {
           '1d': '5m',
-          '1w': '1h',
-          '1m': '1d',
-          '3m': '1d',
+          '1w': '15m',
+          '1m': '1h',
+          '3m': '1h',
           '1y': '1d'
         }
         const interval = intervalMap[this.chartPeriod] || '1h'
@@ -1189,7 +1226,7 @@ export default {
       for (const asset of this.holding.assets.slice(0, 10)) {
         if (!asset.name || !asset.isin) continue
         
-        this.$set(this.assetDetailsLoading, asset.name, true)
+        this.assetDetailsLoading[asset.name] = true
         
         try {
           const response = await fetch(
@@ -1204,13 +1241,13 @@ export default {
           if (response.ok) {
             const data = await response.json()
             if (data && data.length > 0) {
-              this.$set(this.assetDetails, asset.name, data[0])
+              this.assetDetails[asset.name] = data[0]
             }
           }
         } catch (error) {
           console.error(`Error fetching details for ${asset.name}:`, error)
         } finally {
-          this.$set(this.assetDetailsLoading, asset.name, false)
+          this.assetDetailsLoading[asset.name] = false
         }
       }
     },
@@ -1233,7 +1270,7 @@ export default {
 
           if (response.ok) {
             const data = await response.json()
-            this.$set(this.assetCharts, asset.name, data || [])
+            this.assetCharts[asset.name] = data || []
           }
         } catch (error) {
           console.error(`Error fetching chart for ${asset.name}:`, error)
@@ -1274,6 +1311,15 @@ export default {
       const percentage = (weight / totalWeight) * 100
       
       return returnNumber ? percentage : percentage.toFixed(1)
+    },
+
+    scrollLegendIntoView(type, index) {
+      this.$nextTick(() => {
+        const legendItem = this.$el.querySelector(`.legend-item[data-type="${type}"][data-index="${index}"]`)
+        if (legendItem) {
+          legendItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+      })
     },
 
     getAssetChartPoints(ticker, width, height) {
@@ -1441,13 +1487,16 @@ export default {
 
 .pie-slice {
   cursor: pointer;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease;
   transform-origin: center;
+  filter: brightness(1);
 }
 
-.pie-slice:hover {
-  opacity: 0.8;
-  transform: scale(1.02);
+.pie-slice:hover,
+.pie-slice-active {
+  opacity: 0.9;
+  transform: scale(1.05);
+  filter: brightness(1.1);
 }
 
 .pie-legend {
@@ -1461,13 +1510,23 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.2s ease;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.legend-item:hover {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+  border-color: rgba(var(--v-theme-primary), 0.3);
+  transform: translateX(2px);
 }
 
 .legend-item-active {
-  background-color: rgba(var(--v-theme-primary), 0.1);
+  background-color: rgba(var(--v-theme-primary), 0.15);
+  border-color: rgba(var(--v-theme-primary), 0.4);
+  transform: translateX(2px);
 }
 
 .legend-color {
