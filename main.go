@@ -189,6 +189,9 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 }
 
 func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var detail AssetDetails
 	err := database.QueryRow(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC LIMIT 1`, ticker, ticker).Scan(&detail.Ticker, &detail.ISIN, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
 	if err == sql.ErrNoRows {
@@ -198,6 +201,9 @@ func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) 
 }
 
 func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC`, ticker, ticker)
 	if err != nil {
 		return nil, err
@@ -383,8 +389,10 @@ func fetchNewsPeriodic(interval time.Duration) {
 }
 
 func (database *DB) newsExists(title string, summary string, text string) (bool, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var count int
-	// Check by title, summary, or text (if provided)
 	if text != "" {
 		err := database.QueryRow(`
 			SELECT COUNT(1) FROM news WHERE title = ? OR summary = ? OR text = ?
@@ -596,16 +604,17 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 }
 
 func initDB(fakeData bool) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&cache=shared&_cache_size=-64000&_mmap_size=268435456&_temp_store=MEMORY")
 	if err != nil {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-
 	_, err = db.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA busy_timeout=30000;")
 	if err != nil {
 		return nil, err
 	}
@@ -616,6 +625,16 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec("PRAGMA cache_size=-64000;")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA temp_store=MEMORY;")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec("PRAGMA mmap_size=268435456;")
 	if err != nil {
 		return nil, err
 	}
@@ -802,6 +821,91 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_holdings_user_id ON holdings(user_id)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_assets_id_holding ON assets(id_holding)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_assets_ticker ON assets(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_news_id_asset ON news(id_asset)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_news_id_holding ON news(id_holding)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_news_ticker ON news(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_regions_id_holding ON regions(id_holding)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sectors_id_holding ON sectors(id_holding)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(ticker, date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_daily_sentiment_ticker ON daily_sentiment(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_daily_sentiment_date ON daily_sentiment(date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_daily_sentiment_ticker_date ON daily_sentiment(ticker, date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_portfolio_daily_sentiment_user_id ON portfolio_daily_sentiment(user_id)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_portfolio_daily_sentiment_date ON portfolio_daily_sentiment(date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_asset_details_ticker ON asset_details(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
 	if fakeData {
 		log.Println("Populating database with fake data...")
 		err = populateFakeData(db)
@@ -816,6 +920,9 @@ func initDB(fakeData bool) (*sql.DB, error) {
 }
 
 func populateFakeData(database *sql.DB) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	testUserID := uuid.New().String()
 	password := "test123"
 	// Hash password with salt using SHA-256 first to stay within bcrypt's 72-byte limit
@@ -1087,6 +1194,9 @@ func (database *DB) addUser(user User) error {
 }
 
 func (database *DB) getUserByEmail(email string) (*User, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var user User
 	err := database.QueryRow(`
 		SELECT id, user_name, email, password FROM users WHERE email = ?
@@ -1098,6 +1208,9 @@ func (database *DB) getUserByEmail(email string) (*User, error) {
 }
 
 func (database *DB) verifyUser(email string, password string) (bool, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var hashedPassword string
 	err := database.QueryRow(`
 		SELECT password FROM users WHERE email = ?
@@ -1109,7 +1222,6 @@ func (database *DB) verifyUser(email string, password string) (bool, error) {
 		return false, err
 	}
 
-	// Hash password with salt using SHA-256 first to match registration
 	passwordHash := hashPasswordWithSalt(password)
 	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(passwordHash))
 	if err != nil {
@@ -1234,6 +1346,9 @@ func (database *DB) modifyHolding(holding Holding) error {
 }
 
 func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
 		FROM holdings
@@ -1259,6 +1374,9 @@ func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
 }
 
 func (database *DB) getPortfolioDailySummary(userID string, date string) (*PortfolioDailySentiment, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var summary PortfolioDailySentiment
 	err := database.QueryRow(`
 		SELECT id_sentiment, user_id, date, summary, sentiment
@@ -1272,6 +1390,9 @@ func (database *DB) getPortfolioDailySummary(userID string, date string) (*Portf
 }
 
 func (database *DB) getHoldingDailySummary(holdingID string, date string) (*DailySentiment, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var summary DailySentiment
 	err := database.QueryRow(`
 		SELECT id_sentiment, ticker, date, summary, sentiment
@@ -1398,6 +1519,9 @@ func (database *DB) deleteETFDataForHolding(holdingID string) error {
 }
 
 func (database *DB) getAllETFHoldings() ([]Holding, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
 		FROM holdings
@@ -1471,6 +1595,9 @@ func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentim
 }
 
 func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]News, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
 		FROM news
@@ -1502,6 +1629,9 @@ func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]Ne
 }
 
 func (database *DB) getAllUsers() ([]User, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`SELECT id, user_name, email FROM users`)
 	if err != nil {
 		return nil, err
@@ -1521,6 +1651,9 @@ func (database *DB) getAllUsers() ([]User, error) {
 }
 
 func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency
 		FROM assets
@@ -1544,7 +1677,9 @@ func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
 }
 
 func (database *DB) getUniqueTickers() ([]string, error) {
-	// Get unique tickers from both holdings and assets
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT DISTINCT ticker FROM (
 			SELECT ticker FROM holdings
@@ -1572,6 +1707,9 @@ func (database *DB) getUniqueTickers() ([]string, error) {
 }
 
 func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
 		FROM holdings
@@ -1643,6 +1781,9 @@ func addPriceIndexes(database *sql.DB) error {
 }
 
 func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var lastTimestamp sql.NullInt64
 	now := time.Now().UTC().Unix()
 
@@ -1667,6 +1808,28 @@ func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
 
 func generateID() string {
 	return uuid.New().String()
+}
+
+func buildPlaceholders(count int) string {
+	if count == 0 {
+		return ""
+	}
+	placeholders := make([]byte, 0, count*2-1)
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+	}
+	return string(placeholders)
+}
+
+func toInterfaceSlice(slice []string) []interface{} {
+	result := make([]interface{}, len(slice))
+	for i, v := range slice {
+		result[i] = v
+	}
+	return result
 }
 
 func generateJWT(userID, email string) (string, error) {
@@ -1814,12 +1977,14 @@ func fillInBetweenPricesPeriodic(interval time.Duration) {
 }
 
 func FillInBetweenPrices(Ticker string) error {
+	dbMutex.Lock()
 	rows, err := db.Query(`
 		SELECT date, open, close, high, low, volume
 		FROM prices
 		WHERE ticker = ?
 		ORDER BY CAST(date AS INTEGER) ASC
 	`, Ticker)
+	dbMutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -2304,7 +2469,6 @@ func ModifyHolding(c echo.Context) error {
 }
 
 func GetHoldings(c echo.Context) error {
-	// Get user ID from JWT token
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
 	userID := claims.UserID
@@ -2314,7 +2478,6 @@ func GetHoldings(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
 
-	// Build response with sectors and regions for each holding
 	type SectorData struct {
 		Name       string  `json:"name"`
 		Percentage float64 `json:"percentage"`
@@ -2351,55 +2514,66 @@ func GetHoldings(c echo.Context) error {
 
 	result := make([]HoldingWithDetails, 0, len(holdings))
 
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, result)
+	}
+
+	holdingIDs := make([]string, len(holdings))
+	for i, h := range holdings {
+		holdingIDs[i] = h.IdHolding
+	}
+
+	sectorsMap := make(map[string][]SectorData)
+	regionsMap := make(map[string][]RegionData)
+	assetsMap := make(map[string][]AssetData)
+
+	dbMutex.Lock()
+	sectorRows, err := db.Query(`SELECT id_holding, name, percentage FROM sectors WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
+	dbMutex.Unlock()
+	if err == nil {
+		defer sectorRows.Close()
+		for sectorRows.Next() {
+			var idHolding, name string
+			var percentage float64
+			if err := sectorRows.Scan(&idHolding, &name, &percentage); err == nil {
+				sectorsMap[idHolding] = append(sectorsMap[idHolding], SectorData{Name: name, Percentage: percentage})
+			}
+		}
+	}
+
+	dbMutex.Lock()
+	regionRows, err := db.Query(`SELECT id_holding, name, percentage FROM regions WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
+	dbMutex.Unlock()
+	if err == nil {
+		defer regionRows.Close()
+		for regionRows.Next() {
+			var idHolding, name string
+			var percentage float64
+			if err := regionRows.Scan(&idHolding, &name, &percentage); err == nil {
+				regionsMap[idHolding] = append(regionsMap[idHolding], RegionData{Name: name, Percentage: percentage})
+			}
+		}
+	}
+
+	dbMutex.Lock()
+	assetRows, err := db.Query(`
+		SELECT id_holding, id_asset, name, ticker, isin, exchange, sector, region 
+		FROM assets 
+		WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)
+	`, toInterfaceSlice(holdingIDs)...)
+	dbMutex.Unlock()
+	if err == nil {
+		defer assetRows.Close()
+		for assetRows.Next() {
+			var idHolding string
+			var a AssetData
+			if err := assetRows.Scan(&idHolding, &a.IdAsset, &a.Name, &a.Ticker, &a.ISIN, &a.Exchange, &a.Sector, &a.Region); err == nil {
+				assetsMap[idHolding] = append(assetsMap[idHolding], a)
+			}
+		}
+	}
+
 	for _, h := range holdings {
-		// Get sectors for this holding with percentages
-		sectorRows, err := db.Query(`SELECT name, percentage FROM sectors WHERE id_holding = ?`, h.IdHolding)
-		var sectors []SectorData
-		if err == nil {
-			for sectorRows.Next() {
-				var name string
-				var percentage float64
-				if err := sectorRows.Scan(&name, &percentage); err == nil {
-					sectors = append(sectors, SectorData{Name: name, Percentage: percentage})
-				}
-			}
-			sectorRows.Close()
-		}
-
-		// Get regions for this holding with percentages
-		regionRows, err := db.Query(`SELECT name, percentage FROM regions WHERE id_holding = ?`, h.IdHolding)
-		var regions []RegionData
-		if err == nil {
-			for regionRows.Next() {
-				var name string
-				var percentage float64
-				if err := regionRows.Scan(&name, &percentage); err == nil {
-					regions = append(regions, RegionData{Name: name, Percentage: percentage})
-				}
-			}
-			regionRows.Close()
-		}
-
-		// Get assets for ETF holdings
-		var assets []AssetData
-		if h.Etf {
-			assetRows, err := db.Query(`
-				SELECT id_asset, name, ticker, isin, exchange, sector, region 
-				FROM assets 
-				WHERE id_holding = ?
-				LIMIT 10
-			`, h.IdHolding)
-			if err == nil {
-				for assetRows.Next() {
-					var a AssetData
-					if err := assetRows.Scan(&a.IdAsset, &a.Name, &a.Ticker, &a.ISIN, &a.Exchange, &a.Sector, &a.Region); err == nil {
-						assets = append(assets, a)
-					}
-				}
-				assetRows.Close()
-			}
-		}
-
 		result = append(result, HoldingWithDetails{
 			IdHolding:     h.IdHolding,
 			Name:          h.Name,
@@ -2412,9 +2586,9 @@ func GetHoldings(c echo.Context) error {
 			PurchasePrice: h.PurchasePrice,
 			TER:           h.TER,
 			Etf:           h.Etf,
-			Sectors:       sectors,
-			Regions:       regions,
-			Assets:        assets,
+			Sectors:       sectorsMap[h.IdHolding],
+			Regions:       regionsMap[h.IdHolding],
+			Assets:        assetsMap[h.IdHolding],
 		})
 	}
 
@@ -2422,7 +2596,6 @@ func GetHoldings(c echo.Context) error {
 }
 
 func GetPortfolioValue(c echo.Context) error {
-	// Get user ID from JWT token
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
 	userID := claims.UserID
@@ -2431,23 +2604,59 @@ func GetPortfolioValue(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
-	totalValue := 0.0
-	for _, holding := range holdings {
-		// Fetch latest price for each holding
-		var latestPrice float64
-		err := db.QueryRow(`
-			SELECT close FROM prices 
-			WHERE ticker = ? 
-			ORDER BY CAST(date AS INTEGER) DESC 
-			LIMIT 1
-		`, holding.Ticker).Scan(&latestPrice)
-		if err != nil {
-			log.Printf("Error fetching latest price for %s: %v", holding.Ticker, err)
-			totalValue += holding.PurchasePrice * holding.Quantity
-			continue
-		}
-		totalValue += latestPrice * holding.Quantity
+
+	if len(holdings) == 0 {
+		return c.JSON(http.StatusOK, map[string]float64{"total_value": 0.0})
 	}
+
+	tickers := make([]string, len(holdings))
+	tickerQuantities := make(map[string]float64)
+	tickerPurchasePrice := make(map[string]float64)
+
+	for i, holding := range holdings {
+		tickers[i] = holding.Ticker
+		tickerQuantities[holding.Ticker] += holding.Quantity
+		tickerPurchasePrice[holding.Ticker] = holding.PurchasePrice
+	}
+
+	query := `
+		SELECT ticker, close 
+		FROM prices 
+		WHERE ticker IN (` + buildPlaceholders(len(tickers)) + `) 
+		AND CAST(date AS INTEGER) = (
+			SELECT MAX(CAST(date AS INTEGER)) 
+			FROM prices p2 
+			WHERE p2.ticker = prices.ticker
+		)
+	`
+
+	dbMutex.Lock()
+	rows, err := db.Query(query, toInterfaceSlice(tickers)...)
+	dbMutex.Unlock()
+	if err != nil {
+		log.Printf("Error fetching latest prices: %v", err)
+		return c.String(http.StatusInternalServerError, "Error fetching prices")
+	}
+	defer rows.Close()
+
+	latestPrices := make(map[string]float64)
+	for rows.Next() {
+		var ticker string
+		var price float64
+		if err := rows.Scan(&ticker, &price); err == nil {
+			latestPrices[ticker] = price
+		}
+	}
+
+	totalValue := 0.0
+	for ticker, quantity := range tickerQuantities {
+		if price, exists := latestPrices[ticker]; exists {
+			totalValue += price * quantity
+		} else {
+			totalValue += tickerPurchasePrice[ticker] * quantity
+		}
+	}
+
 	return c.JSON(http.StatusOK, map[string]float64{
 		"total_value": totalValue,
 	})
@@ -2544,7 +2753,9 @@ func GetPortfolioValueHistory(c echo.Context) error {
 		ORDER BY CAST(date AS INTEGER) ASC
 	`, placeholders)
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, args...)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying prices: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
@@ -2707,23 +2918,23 @@ func getPortfolioValueChange(c echo.Context) error {
 	for _, holding := range holdings {
 		totalInvested += holding.PurchasePrice * holding.Quantity
 
-		// Get current (latest) price
 		var latestPrice float64
+		dbMutex.Lock()
 		err := db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
 			ORDER BY CAST(date AS INTEGER) DESC 
 			LIMIT 1
 		`, holding.Ticker).Scan(&latestPrice)
+		dbMutex.Unlock()
 
 		if err != nil {
-			// Use purchase price as fallback
 			latestPrice = holding.PurchasePrice
 		}
 		currentValue += latestPrice * holding.Quantity
 
-		// Get price from ~24 hours ago (closest available)
 		var previousPrice float64
+		dbMutex.Lock()
 		err = db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
@@ -2731,9 +2942,9 @@ func getPortfolioValueChange(c echo.Context) error {
 			ORDER BY CAST(date AS INTEGER) DESC 
 			LIMIT 1
 		`, holding.Ticker, oneDayAgo).Scan(&previousPrice)
+		dbMutex.Unlock()
 
 		if err != nil {
-			// Use current price as fallback (no change)
 			previousPrice = latestPrice
 		}
 		previousDayValue += previousPrice * holding.Quantity
@@ -2785,21 +2996,22 @@ func getAssetValueChange(c echo.Context) error {
 		return c.String(http.StatusNotFound, "No holdings found for the specified asset")
 	}
 
-	// Get latest price
 	var latestPrice float64
+	dbMutex.Lock()
 	err = db.QueryRow(`
 		SELECT close FROM prices 
 		WHERE ticker = ? 
 		ORDER BY CAST(date AS INTEGER) DESC 
 		LIMIT 1
 	`, assetTicker).Scan(&latestPrice)
+	dbMutex.Unlock()
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
 	}
 
-	// Get price 24 hours ago
 	oneDayAgo := time.Now().UTC().Add(-24 * time.Hour).Unix()
 	var previousPrice float64
+	dbMutex.Lock()
 	err = db.QueryRow(`
 		SELECT close FROM prices 
 		WHERE ticker = ?
@@ -2807,6 +3019,7 @@ func getAssetValueChange(c echo.Context) error {
 		ORDER BY CAST(date AS INTEGER) DESC 
 		LIMIT 1
 	`, assetTicker, oneDayAgo).Scan(&previousPrice)
+	dbMutex.Unlock()
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving previous price")
 	}
@@ -2877,7 +3090,9 @@ func getLatestNewsForPortfolio(c echo.Context) error {
 		LIMIT ? OFFSET ?
 	`, placeholders)
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, args...)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving news")
@@ -2926,7 +3141,9 @@ func getLatestNewsForAsset(c echo.Context) error {
 		LIMIT ? OFFSET ?
 	`
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, ticker, limit, offset)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving news")
@@ -3002,7 +3219,9 @@ func getPortfolioDaySentiment(c echo.Context) error {
 		AND sentiment IS NOT NULL
 	`, placeholders)
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, args...)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news sentiment: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving sentiment")
@@ -3050,7 +3269,9 @@ func getAssetDaySentiment(c echo.Context) error {
 		AND sentiment IS NOT NULL
 	`
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, ticker, startOfDay, endOfDay)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news sentiment: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving sentiment")
@@ -3105,12 +3326,14 @@ func getPortfolioAllocation(c echo.Context) error {
 
 	for _, h := range holdings {
 		var latestPrice float64
+		dbMutex.Lock()
 		err := db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
 			ORDER BY CAST(date AS INTEGER) DESC 
 			LIMIT 1
 		`, h.Ticker).Scan(&latestPrice)
+		dbMutex.Unlock()
 		if err != nil {
 			latestPrice = h.PurchasePrice
 		}
@@ -3129,22 +3352,23 @@ func getPortfolioAllocation(c echo.Context) error {
 			holdingWeight = holdingValues[h.IdHolding] / totalPortfolioValue
 		}
 
-		// Get sectors for this holding
+		dbMutex.Lock()
 		sectorRows, err := db.Query(`SELECT name, percentage FROM sectors WHERE id_holding = ?`, h.IdHolding)
+		dbMutex.Unlock()
 		if err == nil {
 			for sectorRows.Next() {
 				var name string
 				var percentage float64
 				if err := sectorRows.Scan(&name, &percentage); err == nil {
-					// Weight the sector percentage by the holding's weight in portfolio
 					sectorTotals[name] += percentage * holdingWeight
 				}
 			}
 			sectorRows.Close()
 		}
 
-		// Get regions for this holding
+		dbMutex.Lock()
 		regionRows, err := db.Query(`SELECT name, percentage FROM regions WHERE id_holding = ?`, h.IdHolding)
+		dbMutex.Unlock()
 		if err == nil {
 			for regionRows.Next() {
 				var name string
@@ -3174,7 +3398,9 @@ func getPortfolioAllocation(c echo.Context) error {
 		}
 
 		if h.Etf {
+			dbMutex.Lock()
 			assetRows, err := db.Query(`SELECT name FROM assets WHERE id_holding = ? ORDER BY id_asset LIMIT 10`, h.IdHolding)
+			dbMutex.Unlock()
 			if err == nil {
 				assets := make([]string, 0)
 				for assetRows.Next() {
@@ -3247,14 +3473,15 @@ func GetTickerValue(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "Ticker is required")
 	}
 
-	// Fetch latest price for the ticker
 	var latestPrice float64
+	dbMutex.Lock()
 	err := db.QueryRow(`
 		SELECT close FROM prices
 		WHERE ticker = ?
 		ORDER BY CAST(date AS INTEGER) DESC
 		LIMIT 1
 	`, ticker).Scan(&latestPrice)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error fetching latest price for %s: %v", ticker, err)
 		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
@@ -3323,7 +3550,9 @@ func GetAssetPriceHistory(c echo.Context) error {
 		ORDER BY CAST(date AS INTEGER) ASC
 	`
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, ticker, startTimestamp, endTimestamp)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying prices for %s: %v", ticker, err)
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
@@ -3608,7 +3837,9 @@ func getPortfolioStats(c echo.Context) error {
 		ORDER BY CAST(date AS INTEGER) ASC
 	`, placeholders)
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, args...)
+	dbMutex.Unlock()
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
 	}
@@ -3774,7 +4005,9 @@ func getAssetStats(c echo.Context) error {
 		ORDER BY CAST(date AS INTEGER) ASC
 	`
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, ticker, startTime.Unix(), now.Unix())
+	dbMutex.Unlock()
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
 	}
@@ -3889,7 +4122,9 @@ func GetAssetSentiments(c echo.Context) error {
 		LIMIT 100
 	`
 
+	dbMutex.Lock()
 	rows, err := db.Query(query, ticker)
+	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying asset sentiments: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving sentiments")
