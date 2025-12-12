@@ -879,9 +879,9 @@ export default {
         // Determine interval based on period
         let interval = '1h'
         if (this.selectedPeriod === '1d') interval = '5m'
-        else if (this.selectedPeriod === '1w') interval = '15m'
-        else if (this.selectedPeriod === '1m') interval = '1h'
-        else if (this.selectedPeriod === '3m') interval = '1d'
+        else if (this.selectedPeriod === '1w') interval = '5m'
+        else if (this.selectedPeriod === '1m') interval = '15m'
+        else if (this.selectedPeriod === '3m') interval = '1h'
         else if (this.selectedPeriod === '1y') interval = '1d'
 
         const response = await fetch(
