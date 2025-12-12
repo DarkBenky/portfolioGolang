@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	inmem "main/inMem"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,6 +35,7 @@ var (
 	BASE_URL   string
 	db         *DB
 	dbMutex    sync.Mutex
+	memDB      *inmem.InMemDB
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -185,7 +187,13 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddAssetDetails(convertAssetDetailsToInmem(detail))
+	return nil
 }
 
 func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
@@ -1172,6 +1180,124 @@ type DB struct {
 	*sql.DB
 }
 
+func convertUserToInmem(u User) inmem.User {
+	return inmem.User{
+		Id:       u.Id,
+		Email:    u.Email,
+		Password: u.Password,
+	}
+}
+
+func convertHoldingToInmem(h Holding) inmem.Holding {
+	return inmem.Holding{
+		IdHolding:     h.IdHolding,
+		Name:          h.Name,
+		Ticker:        h.Ticker,
+		ISIN:          h.ISIN,
+		Exchange:      h.Exchange,
+		Policy:        h.Policy,
+		Quantity:      h.Quantity,
+		PurchasePrice: h.PurchasePrice,
+		TER:           h.TER,
+		Etf:           h.Etf,
+	}
+}
+
+func convertAssetToInmem(a Asset) inmem.Asset {
+	return inmem.Asset{
+		IdAsset:  a.IdAsset,
+		Name:     a.Name,
+		Ticker:   a.Ticker,
+		ISIN:     a.ISIN,
+		Exchange: a.Exchange,
+		Sector:   a.Sector,
+		Region:   a.Region,
+	}
+}
+
+func convertSectorToInmem(s Sector) inmem.Sector {
+	return inmem.Sector{
+		Name:       s.Name,
+		Percentage: s.Percentage,
+		IdHolding:  s.IdHolding,
+	}
+}
+
+func convertRegionToInmem(r Region) inmem.Region {
+	return inmem.Region{
+		Name:       r.Name,
+		Percentage: r.Percentage,
+		IdHolding:  r.IdHolding,
+	}
+}
+
+func convertNewsToInmem(n News) inmem.News {
+	return inmem.News{
+		IdNews:      n.IdNews,
+		Title:       n.Title,
+		Link:        n.Link,
+		PublishedAt: n.PublishedAt,
+		Summary:     n.Summary,
+		Text:        n.Text,
+		Author:      n.Author,
+		Ticker:      n.Ticker,
+		Sentiment:   n.Sentiment,
+	}
+}
+
+func convertPriceToInmem(p Price) inmem.Prices {
+	return inmem.Prices{
+		IdPrice: p.IdPrice,
+		Ticker:  p.Ticker,
+		Date:    p.Date,
+		Open:    p.Open,
+		Close:   p.Close,
+		High:    p.High,
+		Low:     p.Low,
+		Volume:  p.Volume,
+	}
+}
+
+func convertDailySentimentToInmem(d DailySentiment) inmem.DailySentiment {
+	return inmem.DailySentiment{
+		IdSentiment: d.IdSentiment,
+		Ticker:      d.Ticker,
+		Date:        d.Date,
+		Summary:     d.Summary,
+		Sentiment:   d.Sentiment,
+	}
+}
+
+func convertPortfolioDailySentimentToInmem(p PortfolioDailySentiment) inmem.PortfolioDailySentiment {
+	return inmem.PortfolioDailySentiment{
+		IdSentiment: p.IdSentiment,
+		UserID:      p.UserID,
+		Date:        p.Date,
+		Summary:     p.Summary,
+		Sentiment:   p.Sentiment,
+	}
+}
+
+func convertAssetDetailsToInmem(a AssetDetails) inmem.AssetDetails {
+	return inmem.AssetDetails{
+		Ticker:        a.Ticker,
+		ISIN:          a.ISIN,
+		MarketCap:     a.MarketCap,
+		MarketCapEur:  a.MarketCapEur,
+		Country:       a.Country,
+		Sector:        a.Sector,
+		Eps:           a.Eps,
+		PbRatio:       a.PbRatio,
+		PeRatio:       a.PeRatio,
+		DividendYield: a.DividendYield,
+		Revenue:       a.Revenue,
+		NetIncome:     a.NetIncome,
+		ProfitMargin:  a.ProfitMargin,
+		Hash:          a.Hash,
+		Date:          a.Date,
+	}
+}
+
 func (database *DB) addUser(user User) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -1190,7 +1316,13 @@ func (database *DB) addUser(user User) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddUser(convertUserToInmem(user))
+	return nil
 }
 
 func (database *DB) getUserByEmail(email string) (*User, error) {
@@ -1260,7 +1392,12 @@ func (database *DB) addHolding(holding Holding) error {
 		if err != nil {
 			return err
 		}
-		return tx.Commit()
+		err = tx.Commit()
+		if err != nil {
+			return err
+		}
+		memDB.AddHolding(convertHoldingToInmem(holding))
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -1279,7 +1416,17 @@ func (database *DB) addHolding(holding Holding) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	updatedHolding := holding
+	updatedHolding.IdHolding = existingHolding.IdHolding
+	updatedHolding.Quantity = newQuantity
+	updatedHolding.PurchasePrice = newAvgPrice
+	memDB.UpdateHolding(convertHoldingToInmem(updatedHolding))
+	return nil
 }
 
 func (database *DB) removeHolding(holdingID string, userID string) error {
@@ -1310,7 +1457,13 @@ func (database *DB) removeHolding(holdingID string, userID string) error {
 		return tx.Rollback()
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.DeleteHolding(holdingID)
+	return nil
 }
 
 func (database *DB) modifyHolding(holding Holding) error {
@@ -1342,7 +1495,13 @@ func (database *DB) modifyHolding(holding Holding) error {
 		return sql.ErrNoRows
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.UpdateHolding(convertHoldingToInmem(holding))
+	return nil
 }
 
 func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
@@ -1423,7 +1582,13 @@ func (database *DB) addAsset(asset Asset) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddAsset(convertAssetToInmem(asset))
+	return nil
 }
 
 func (database *DB) addSector(sector Sector) error {
@@ -1444,7 +1609,13 @@ func (database *DB) addSector(sector Sector) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddSector(convertSectorToInmem(sector))
+	return nil
 }
 
 func (database *DB) addRegion(region Region) error {
@@ -1465,7 +1636,13 @@ func (database *DB) addRegion(region Region) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddRegion(convertRegionToInmem(region))
+	return nil
 }
 
 func (database *DB) addNews(news News) error {
@@ -1487,7 +1664,13 @@ func (database *DB) addNews(news News) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddNews(convertNewsToInmem(news))
+	return nil
 }
 
 func (database *DB) deleteETFDataForHolding(holdingID string) error {
@@ -1515,7 +1698,15 @@ func (database *DB) deleteETFDataForHolding(holdingID string) error {
 		return fmt.Errorf("error deleting regions: %v", err)
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.DeleteAssetsByHolding(holdingID)
+	memDB.DeleteSectorsByHolding(holdingID)
+	memDB.DeleteRegionsByHolding(holdingID)
+	return nil
 }
 
 func (database *DB) getAllETFHoldings() ([]Holding, error) {
@@ -1567,7 +1758,13 @@ func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddDailySentiment(convertDailySentimentToInmem(sentiment))
+	return nil
 }
 
 func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentiment) error {
@@ -1591,7 +1788,13 @@ func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentim
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	memDB.AddPortfolioDailySentiment(convertPortfolioDailySentimentToInmem(sentiment))
+	return nil
 }
 
 func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]News, error) {
@@ -1759,7 +1962,15 @@ func (database *DB) addPrices(prices []Price) error {
 		}
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	for _, price := range prices {
+		memDB.AddPrice(convertPriceToInmem(price))
+	}
+	return nil
 }
 
 func addPriceIndexes(database *sql.DB) error {
@@ -4342,7 +4553,10 @@ func main() {
 
 	db = &DB{DB: sqlDB}
 
+	memDB = inmem.NewInMemDB(5*time.Minute, "./snapshot.gob", false)
+
 	log.Println("Database initialized successfully")
+	log.Println("In-memory database initialized successfully")
 
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
