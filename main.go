@@ -2529,7 +2529,6 @@ func GetHoldings(c echo.Context) error {
 
 	dbMutex.Lock()
 	sectorRows, err := db.Query(`SELECT id_holding, name, percentage FROM sectors WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
-	dbMutex.Unlock()
 	if err == nil {
 		defer sectorRows.Close()
 		for sectorRows.Next() {
@@ -2540,10 +2539,10 @@ func GetHoldings(c echo.Context) error {
 			}
 		}
 	}
+	dbMutex.Unlock()
 
 	dbMutex.Lock()
 	regionRows, err := db.Query(`SELECT id_holding, name, percentage FROM regions WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
-	dbMutex.Unlock()
 	if err == nil {
 		defer regionRows.Close()
 		for regionRows.Next() {
@@ -2554,6 +2553,7 @@ func GetHoldings(c echo.Context) error {
 			}
 		}
 	}
+	dbMutex.Unlock()
 
 	dbMutex.Lock()
 	assetRows, err := db.Query(`
@@ -2561,7 +2561,6 @@ func GetHoldings(c echo.Context) error {
 		FROM assets 
 		WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)
 	`, toInterfaceSlice(holdingIDs)...)
-	dbMutex.Unlock()
 	if err == nil {
 		defer assetRows.Close()
 		for assetRows.Next() {
@@ -2572,6 +2571,7 @@ func GetHoldings(c echo.Context) error {
 			}
 		}
 	}
+	dbMutex.Unlock()
 
 	for _, h := range holdings {
 		result = append(result, HoldingWithDetails{
@@ -3354,7 +3354,6 @@ func getPortfolioAllocation(c echo.Context) error {
 
 		dbMutex.Lock()
 		sectorRows, err := db.Query(`SELECT name, percentage FROM sectors WHERE id_holding = ?`, h.IdHolding)
-		dbMutex.Unlock()
 		if err == nil {
 			for sectorRows.Next() {
 				var name string
@@ -3365,21 +3364,21 @@ func getPortfolioAllocation(c echo.Context) error {
 			}
 			sectorRows.Close()
 		}
+		dbMutex.Unlock()
 
 		dbMutex.Lock()
 		regionRows, err := db.Query(`SELECT name, percentage FROM regions WHERE id_holding = ?`, h.IdHolding)
-		dbMutex.Unlock()
 		if err == nil {
 			for regionRows.Next() {
 				var name string
 				var percentage float64
 				if err := regionRows.Scan(&name, &percentage); err == nil {
-					// Weight the region percentage by the holding's weight in portfolio
 					regionTotals[name] += percentage * holdingWeight
 				}
 			}
 			regionRows.Close()
 		}
+		dbMutex.Unlock()
 
 		// For non-ETF holdings (stocks), count them as 100% of their own sector/region if known
 		if !h.Etf {
@@ -3400,9 +3399,8 @@ func getPortfolioAllocation(c echo.Context) error {
 		if h.Etf {
 			dbMutex.Lock()
 			assetRows, err := db.Query(`SELECT name FROM assets WHERE id_holding = ? ORDER BY id_asset LIMIT 10`, h.IdHolding)
-			dbMutex.Unlock()
+			assets := make([]string, 0)
 			if err == nil {
-				assets := make([]string, 0)
 				for assetRows.Next() {
 					var name string
 					if err := assetRows.Scan(&name); err == nil {
@@ -3410,27 +3408,28 @@ func getPortfolioAllocation(c echo.Context) error {
 					}
 				}
 				assetRows.Close()
+			}
+			dbMutex.Unlock()
 
-				top10Count := len(assets)
-				if top10Count > 0 {
-					decay := 0.9
-					totalWeight := 0.0
-					for i := range top10Count {
-						totalWeight += math.Pow(decay, float64(i))
-					}
+			top10Count := len(assets)
+			if top10Count > 0 {
+				decay := 0.9
+				totalWeight := 0.0
+				for i := range top10Count {
+					totalWeight += math.Pow(decay, float64(i))
+				}
 
-					top10Allocation := 0.0
-					for i, assetName := range assets {
-						weight := math.Pow(decay, float64(i))
-						assetPercentage := (weight / totalWeight) * 100
-						companyTotals[assetName] += assetPercentage * holdingWeight
-						top10Allocation += assetPercentage
-					}
+				top10Allocation := 0.0
+				for i, assetName := range assets {
+					weight := math.Pow(decay, float64(i))
+					assetPercentage := (weight / totalWeight) * 100
+					companyTotals[assetName] += assetPercentage * holdingWeight
+					top10Allocation += assetPercentage
+				}
 
-					if top10Allocation < 100 {
-						otherPercentage := 100 - top10Allocation
-						companyTotals["Other"] += otherPercentage * holdingWeight
-					}
+				if top10Allocation < 100 {
+					otherPercentage := 100 - top10Allocation
+					companyTotals["Other"] += otherPercentage * holdingWeight
 				}
 			}
 		} else {
