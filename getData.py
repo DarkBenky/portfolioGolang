@@ -344,6 +344,7 @@ async def api_summarize_portfolio():
     )
     return flask.jsonify(result)
 
+# curl "http://localhost:5123/api/stock/US0378331005"
 @app.route('/api/stock/<isin>', methods=['GET'])
 async def api_stock_data(isin):
     loop = asyncio.get_event_loop()

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	inmem "main/inMem"
 	"math"
@@ -302,6 +303,22 @@ func fetchPrices(ticker string) error {
 		return err
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading response body for %s: %v", ticker, err)
+		return err
+	}
+
+	if len(bodyBytes) == 0 {
+		log.Printf("Empty response body for %s, skipping", ticker)
+		return nil
+	}
+
+	if bodyBytes[0] == 'N' || bodyBytes[0] == 'n' {
+		log.Printf("API returned non-JSON response for %s: %s", ticker, string(bodyBytes[:min(100, len(bodyBytes))]))
+		return nil
+	}
+
 	var candles []struct {
 		Timestamp int64   `json:"timestamp"`
 		Open      float64 `json:"open"`
@@ -311,10 +328,10 @@ func fetchPrices(ticker string) error {
 		Volume    float64 `json:"volume"`
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&candles)
+	err = json.Unmarshal(bodyBytes, &candles)
 	if err != nil {
-		log.Printf("Error decoding price data for %s: %v", ticker, err)
-		return err
+		log.Printf("Error decoding price data for %s: %v, body: %s", ticker, err, string(bodyBytes[:min(200, len(bodyBytes))]))
+		return nil
 	}
 
 	log.Printf("Fetched %d price candles for %s", len(candles), ticker)
@@ -4453,7 +4470,6 @@ func fetchAssetDetails(ticker string) error {
 }
 
 func fetchAssetDetailsPeriodic(interval time.Duration) {
-	log.Println("Starting periodic asset details fetching...")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -4563,7 +4579,11 @@ func main() {
 
 	db = &DB{DB: sqlDB}
 
-	memDB = inmem.NewInMemDB(5*time.Minute, "./snapshot.gob", false)
+	// memDB = inmem.NewInMemDB(5*time.Minute, "./snapshot.gob", false)
+	memDB, err = inmem.NewInMemDBFromSQL(5*time.Minute, "./snapshot.gob", "./portfolio.db")
+	if err != nil {
+		log.Fatal("Failed to initialize in-memory database:", err)
+	}
 
 	log.Println("Database initialized successfully")
 	log.Println("In-memory database initialized successfully")
@@ -4572,8 +4592,8 @@ func main() {
 	go fetchPricesPeriodic(5 * time.Minute)
 	go fillInBetweenPricesPeriodic(60 * time.Minute)
 	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(12 * time.Hour)
-	go fetchAssetDetailsPeriodic(12 * time.Hour)
+	go updateETFDataPeriodic(3 * time.Minute)
+	go fetchAssetDetailsPeriodic(5 * time.Minute)
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{

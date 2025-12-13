@@ -1,6 +1,7 @@
 package inmem
 
 import (
+	"database/sql"
 	"encoding/gob"
 	"encoding/json"
 	"log"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type UserTable struct {
@@ -241,6 +244,18 @@ func NewInMemDB(snapshotPeriod time.Duration, snapShotPath string, new bool) *In
 	return db
 }
 
+func NewInMemDBFromSQL(snapshotPeriod time.Duration, snapShotPath string, sqlDBPath string) (*InMemDB, error) {
+	db := createInMemDB(snapshotPeriod, snapShotPath)
+
+	err := db.LoadFromSQL(sqlDBPath)
+	if err != nil {
+		return nil, err
+	}
+
+	db.StartSnapshotRoutine()
+	return db, nil
+}
+
 func (db *InMemDB) StartSnapshotRoutine() {
 	ticker := time.NewTicker(db.snapshotPeriod)
 	go func() {
@@ -434,6 +449,247 @@ func (db *InMemDB) LoadSnapshot() error {
 	db.userTable.mutex.Unlock()
 
 	log.Printf("Snapshot loaded successfully from %s (timestamp: %s)", db.snapShotPath, snapshot.Timestamp)
+	return nil
+}
+
+func (db *InMemDB) LoadFromSQL(sqlDBPath string) error {
+	sqlDB, err := sql.Open("sqlite3", sqlDBPath)
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+
+	log.Printf("Loading data from SQL database: %s", sqlDBPath)
+
+	if err := db.loadHoldings(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadRegions(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadSectors(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadAssets(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadPrices(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadNews(sqlDB); err != nil {
+		return err
+	}
+	if err := db.loadAssetDetails(sqlDB); err != nil {
+		return err
+	}
+
+	log.Printf("Data loaded successfully from SQL database")
+	return nil
+}
+
+func (db *InMemDB) loadHoldings(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT id_holding, name, ticker, isin, exchange, policy, currency, quantity, purchase_price, ter, etf
+		FROM holdings
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var h Holding
+		err := rows.Scan(&h.IdHolding, &h.Name, &h.Ticker, &h.ISIN, &h.Exchange, &h.Policy, &h.Currency, &h.Quantity, &h.PurchasePrice, &h.TER, &h.Etf)
+		if err != nil {
+			log.Printf("Error scanning holding: %v", err)
+			continue
+		}
+		db.holdingsTable.Holdings[h.IdHolding] = h
+		count++
+	}
+	db.holdingsTable.counter = count
+	log.Printf("Loaded %d holdings", count)
+	return nil
+}
+
+func (db *InMemDB) loadRegions(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT r.name, r.percentage, r.id_holding, h.ticker
+		FROM regions r
+		JOIN holdings h ON r.id_holding = h.id_holding
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var name string
+		var percentage float64
+		var idHolding, ticker string
+		err := rows.Scan(&name, &percentage, &idHolding, &ticker)
+		if err != nil {
+			log.Printf("Error scanning region: %v", err)
+			continue
+		}
+		region := Region{
+			Name:       name,
+			Percentage: percentage,
+			Ticker:     ticker,
+		}
+		key := ticker + "_" + name
+		db.regionsTable.Regions[key] = region
+		count++
+	}
+	db.regionsTable.counter = count
+	log.Printf("Loaded %d regions", count)
+	return nil
+}
+
+func (db *InMemDB) loadSectors(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT s.name, s.percentage, s.id_holding, h.ticker
+		FROM sectors s
+		JOIN holdings h ON s.id_holding = h.id_holding
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var name string
+		var percentage float64
+		var idHolding, ticker string
+		err := rows.Scan(&name, &percentage, &idHolding, &ticker)
+		if err != nil {
+			log.Printf("Error scanning sector: %v", err)
+			continue
+		}
+		sector := Sector{
+			Name:       name,
+			Percentage: percentage,
+			Ticker:     ticker,
+		}
+		key := ticker + "_" + name
+		db.sectorsTable.Sectors[key] = sector
+		count++
+	}
+	db.sectorsTable.counter = count
+	log.Printf("Loaded %d sectors", count)
+	return nil
+}
+
+func (db *InMemDB) loadAssets(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT a.id_asset, a.name, a.ticker, a.isin, a.exchange, a.sector, a.region, a.id_holding, a.currency, h.ticker
+		FROM assets a
+		JOIN holdings h ON a.id_holding = h.id_holding
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var a Asset
+		var idHolding, tickerParent string
+		err := rows.Scan(&a.IdAsset, &a.Name, &a.Ticker, &a.ISIN, &a.Exchange, &a.Sector, &a.Region, &idHolding, &a.Currency, &tickerParent)
+		if err != nil {
+			log.Printf("Error scanning asset: %v", err)
+			continue
+		}
+		a.TickerParent = tickerParent
+		db.assetsTable.Assets[a.IdAsset] = a
+		count++
+	}
+	db.assetsTable.counter = count
+	log.Printf("Loaded %d assets", count)
+	return nil
+}
+
+func (db *InMemDB) loadPrices(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT ticker, date, open, close, high, low, volume
+		FROM prices
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var p Prices
+		err := rows.Scan(&p.Ticker, &p.Date, &p.Open, &p.Close, &p.High, &p.Low, &p.Volume)
+		if err != nil {
+			log.Printf("Error scanning price: %v", err)
+			continue
+		}
+		p.IdPrice = p.Ticker + "_" + p.Date
+		key := p.Ticker + "_" + p.Date
+		db.pricesTable.Prices[key] = p
+		count++
+	}
+	db.pricesTable.counter = count
+	log.Printf("Loaded %d prices", count)
+	return nil
+}
+
+func (db *InMemDB) loadNews(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT id_news, title, link, published_at, summary, text, author, ticker, sentiment
+		FROM news
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var n News
+		err := rows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary, &n.Text, &n.Author, &n.Ticker, &n.Sentiment)
+		if err != nil {
+			log.Printf("Error scanning news: %v", err)
+			continue
+		}
+		db.newsTable.News[n.IdNews] = n
+		count++
+	}
+	db.newsTable.counter = count
+	log.Printf("Loaded %d news articles", count)
+	return nil
+}
+
+func (db *InMemDB) loadAssetDetails(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`
+		SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date
+		FROM asset_details
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var ad AssetDetails
+		err := rows.Scan(&ad.Ticker, &ad.ISIN, &ad.MarketCap, &ad.MarketCapEur, &ad.Country, &ad.Sector, &ad.Eps, &ad.PbRatio, &ad.PeRatio, &ad.DividendYield, &ad.Revenue, &ad.NetIncome, &ad.ProfitMargin, &ad.Hash, &ad.Date)
+		if err != nil {
+			log.Printf("Error scanning asset details: %v", err)
+			continue
+		}
+		key := ad.Ticker + "_" + ad.Date
+		db.assetsDetailsTable.AssetsDetails[key] = ad
+		count++
+	}
+	db.assetsDetailsTable.counter = count
+	log.Printf("Loaded %d asset details", count)
 	return nil
 }
 
