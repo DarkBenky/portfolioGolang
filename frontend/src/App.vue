@@ -971,6 +971,8 @@ export default {
       if (!items || items.length === 0) return []
       
       const total = items.reduce((sum, item) => sum + item.percentage, 0)
+      if (total === 0) return []
+      
       const slices = []
       let currentAngle = -90
 

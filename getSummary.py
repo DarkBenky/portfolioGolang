@@ -52,28 +52,25 @@ def summarize_daily_news(news_list, sentiment_list, max_tokens=2048, ticker: str
 
     news_block = "\n\n".join(combined_items)
 
-    prompt = f"""You are a financial analyst. Create a detailed daily market summary for {ticker} on {date}.
+    prompt = f"""Analyze these {len(news_list)} news articles about {ticker} from {date} and create a clear, factual summary.
 
-ARTICLES ({len(news_list)} total):
+Articles:
 {news_block}
 
-Overall Sentiment: {sentiment_label} (avg score: {average_sentiment:.2f})
+Overall market sentiment: {sentiment_label} ({average_sentiment:.2f})
 
-Write a comprehensive summary (8-12 sentences) in markdown format covering:
+Write a concise summary in markdown with these sections:
 
-## TL;DR
-[2-3 sentences: What happened today and why it matters]
+## Summary
+Write 3-4 sentences summarizing the most important developments with specific facts, numbers, and dates from the articles.
 
-## Key Developments
-[3-5 bullet points of most important news with specific details, numbers, dates]
+## Key Points
+- List 3-5 bullet points with concrete details (earnings numbers, percentage changes, product launches, analyst ratings, etc.)
 
-## Market Impact
-[2-3 sentences: How this affects stock price, investor sentiment, fundamentals]
+## Outlook
+Write 1-2 sentences about potential impact on stock price or what investors should monitor.
 
-## What to Watch
-[1-2 sentences: Risks, opportunities, or upcoming events]
-
-Be factual and specific. Include company names, numbers, percentages, dates, analyst targets, earnings figures, and other concrete details from the articles. Use markdown formatting (headers, bold, lists)."""
+Focus only on facts from the articles. Include specific numbers, percentages, dates, and company names. Do not add speculation or make up information."""
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
@@ -181,32 +178,24 @@ def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_
     news_block = "\n".join(news_sections[:10])  # Max 10 tickers to avoid overflow
     unique_tickers = list(set(tickers_list))
 
-    prompt = f"""You are a portfolio analyst. Create a comprehensive daily portfolio update for {date}.
+    prompt = f"""Analyze news for this portfolio from {date}. Holdings: {', '.join(unique_tickers[:15])}
 
-PORTFOLIO HOLDINGS: {', '.join(unique_tickers[:15])}
-Overall Sentiment: {sentiment_label} (score: {average_sentiment:.2f})
+Overall sentiment: {sentiment_label} ({average_sentiment:.2f})
 
-NEWS BY HOLDING:
 {news_block}
 
-Write a detailed portfolio summary (10-15 sentences) in markdown format:
+Write a clear portfolio summary in markdown:
 
-## TL;DR
-[3-4 sentences: Overall market day, biggest movers, key themes]
+## Daily Summary
+Write 3-4 sentences covering the most important news across all holdings. Include specific facts and numbers.
 
-## Top Movers
-[3-5 bullet points: Which holdings had significant news, what happened, specific numbers/percentages]
+## Holdings with Significant News
+- List each ticker with major news and what happened (earnings, upgrades, product news, etc.) with specific numbers
 
-## Earnings & Fundamentals
-[2-3 sentences: Any earnings reports, revenue/EPS beats/misses, guidance changes]
+## Market Impact
+Write 2-3 sentences about how this news may affect your portfolio value and what to watch next.
 
-## Catalysts & Events
-[2-3 sentences: Product launches, upgrades/downgrades, regulatory news, partnerships]
-
-## Risk & Opportunity
-[2-3 sentences: What to watch, upcoming events, potential concerns]
-
-Be specific with numbers, dates, company names, analyst targets, and financial metrics. Use markdown formatting."""
+Only include facts from the articles. Use specific numbers, percentages, dates, and company names. Do not speculate or invent information."""
 
     response = ollama.generate(
         model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",

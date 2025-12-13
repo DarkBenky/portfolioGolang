@@ -2,8 +2,10 @@ package inmem
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -34,8 +36,8 @@ type Holding struct {
 	ISIN          string
 	Exchange      string
 	Policy        string
-	userID        string
-	currency      string
+	UserID        string
+	Currency      string
 	Quantity      float64
 	PurchasePrice float64
 	TER           float64
@@ -51,7 +53,7 @@ type RegionsTable struct {
 type Region struct {
 	Name       string
 	Percentage float64
-	IdHolding  string
+	Ticker     string
 }
 
 type SectorsTable struct {
@@ -63,7 +65,7 @@ type SectorsTable struct {
 type Sector struct {
 	Name       string
 	Percentage float64
-	IdHolding  string
+	Ticker     string
 }
 
 type DailySentimentsTable struct {
@@ -101,15 +103,15 @@ type AssetsTable struct {
 }
 
 type Asset struct {
-	IdAsset   string
-	Name      string
-	Ticker    string
-	ISIN      string
-	Exchange  string
-	Sector    string
-	Region    string
-	idHolding string
-	currency  string
+	IdAsset      string
+	Name         string
+	Ticker       string
+	ISIN         string
+	Exchange     string
+	Sector       string
+	Region       string
+	TickerParent string
+	Currency     string
 }
 
 type AssetsDetailsTable struct {
@@ -265,6 +267,8 @@ type Snapshot struct {
 	Timestamp                time.Time
 }
 
+const DEBUG = true
+
 func (db *InMemDB) SaveSnapshot() error {
 	db.snapshotMutex.Lock()
 	defer db.snapshotMutex.Unlock()
@@ -346,6 +350,21 @@ func (db *InMemDB) SaveSnapshot() error {
 	err = encoder.Encode(snapshot)
 	if err != nil {
 		return err
+	}
+
+	if DEBUG {
+		jsonFile, err := os.Create(db.snapShotPath + ".json")
+		if err != nil {
+			return err
+		}
+		defer jsonFile.Close()
+
+		jsonEncoder := json.NewEncoder(jsonFile)
+		jsonEncoder.SetIndent("", "  ")
+		err = jsonEncoder.Encode(snapshot)
+		if err != nil {
+			return err
+		}
 	}
 
 	db.lastSnapShotTime = snapshot.Timestamp
@@ -480,6 +499,16 @@ func (db *InMemDB) DeleteUser(id string) {
 	db.userTable.counter--
 }
 
+func (db *InMemDB) UpdateUser(user User) {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.userTable.mutex.Lock()
+	defer db.userTable.mutex.Unlock()
+
+	db.userTable.Users[user.Id] = user
+}
+
 func (db *InMemDB) AddHolding(holding Holding) {
 	db.snapshotMutex.RLock()
 	defer db.snapshotMutex.RUnlock()
@@ -511,7 +540,7 @@ func (db *InMemDB) GetHoldingsByUser(userID string) []Holding {
 
 	holdings := make([]Holding, 0, db.holdingsTable.counter)
 	for _, holding := range db.holdingsTable.Holdings {
-		if holding.userID == userID {
+		if holding.UserID == userID {
 			holdings = append(holdings, holding)
 		}
 	}
@@ -560,7 +589,7 @@ func (db *InMemDB) AddRegion(region Region) {
 	db.regionsTable.mutex.Lock()
 	defer db.regionsTable.mutex.Unlock()
 
-	key := region.IdHolding + "_" + region.Name
+	key := region.Ticker + "_" + region.Name
 	db.regionsTable.Regions[key] = region
 	db.regionsTable.counter++
 }
@@ -574,7 +603,23 @@ func (db *InMemDB) GetRegionsByHolding(holdingID string) []Region {
 
 	regions := make([]Region, 0, db.regionsTable.counter)
 	for _, region := range db.regionsTable.Regions {
-		if region.IdHolding == holdingID {
+		if region.Ticker == holdingID {
+			regions = append(regions, region)
+		}
+	}
+	return regions
+}
+
+func (db *InMemDB) GetRegionsByTicker(ticker string) []Region {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.regionsTable.mutex.RLock()
+	defer db.regionsTable.mutex.RUnlock()
+
+	regions := make([]Region, 0, db.regionsTable.counter)
+	for _, region := range db.regionsTable.Regions {
+		if region.Ticker == ticker {
 			regions = append(regions, region)
 		}
 	}
@@ -603,7 +648,7 @@ func (db *InMemDB) DeleteRegionsByHolding(holdingID string) {
 	defer db.regionsTable.mutex.Unlock()
 
 	for key, region := range db.regionsTable.Regions {
-		if region.IdHolding == holdingID {
+		if region.Ticker == holdingID {
 			delete(db.regionsTable.Regions, key)
 			db.regionsTable.counter--
 		}
@@ -617,7 +662,7 @@ func (db *InMemDB) AddSector(sector Sector) {
 	db.sectorsTable.mutex.Lock()
 	defer db.sectorsTable.mutex.Unlock()
 
-	key := sector.IdHolding + "_" + sector.Name
+	key := sector.Ticker + "_" + sector.Name
 	db.sectorsTable.Sectors[key] = sector
 	db.sectorsTable.counter++
 }
@@ -631,7 +676,23 @@ func (db *InMemDB) GetSectorsByHolding(holdingID string) []Sector {
 
 	sectors := make([]Sector, 0, db.sectorsTable.counter)
 	for _, sector := range db.sectorsTable.Sectors {
-		if sector.IdHolding == holdingID {
+		if sector.Ticker == holdingID {
+			sectors = append(sectors, sector)
+		}
+	}
+	return sectors
+}
+
+func (db *InMemDB) GetSectorsByTicker(ticker string) []Sector {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.sectorsTable.mutex.RLock()
+	defer db.sectorsTable.mutex.RUnlock()
+
+	sectors := make([]Sector, 0, db.sectorsTable.counter)
+	for _, sector := range db.sectorsTable.Sectors {
+		if sector.Ticker == ticker {
 			sectors = append(sectors, sector)
 		}
 	}
@@ -660,7 +721,7 @@ func (db *InMemDB) DeleteSectorsByHolding(holdingID string) {
 	defer db.sectorsTable.mutex.Unlock()
 
 	for key, sector := range db.sectorsTable.Sectors {
-		if sector.IdHolding == holdingID {
+		if sector.Ticker == holdingID {
 			delete(db.sectorsTable.Sectors, key)
 			db.sectorsTable.counter--
 		}
@@ -696,9 +757,9 @@ func (db *InMemDB) GetAssetsByHolding(holdingID string) []Asset {
 	db.assetsTable.mutex.RLock()
 	defer db.assetsTable.mutex.RUnlock()
 
-	assets := make([]Asset, 0, db.assetsTable.counter)
+	assets := make([]Asset, 0)
 	for _, asset := range db.assetsTable.Assets {
-		if asset.idHolding == holdingID {
+		if asset.TickerParent == holdingID {
 			assets = append(assets, asset)
 		}
 	}
@@ -712,9 +773,25 @@ func (db *InMemDB) GetAssetsByTicker(ticker string) []Asset {
 	db.assetsTable.mutex.RLock()
 	defer db.assetsTable.mutex.RUnlock()
 
+	assets := make([]Asset, 0)
+	for _, asset := range db.assetsTable.Assets {
+		if asset.TickerParent == ticker {
+			assets = append(assets, asset)
+		}
+	}
+	return assets
+}
+
+func (db *InMemDB) GetAssetsByTickerOrIsin(ticker string) []Asset {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.assetsTable.mutex.RLock()
+	defer db.assetsTable.mutex.RUnlock()
+
 	assets := make([]Asset, 0, db.assetsTable.counter)
 	for _, asset := range db.assetsTable.Assets {
-		if asset.Ticker == ticker {
+		if asset.Ticker == ticker || asset.ISIN == ticker {
 			assets = append(assets, asset)
 		}
 	}
@@ -743,7 +820,7 @@ func (db *InMemDB) DeleteAssetsByHolding(holdingID string) {
 	defer db.assetsTable.mutex.Unlock()
 
 	for key, asset := range db.assetsTable.Assets {
-		if asset.idHolding == holdingID {
+		if asset.TickerParent == holdingID {
 			delete(db.assetsTable.Assets, key)
 			db.assetsTable.counter--
 		}
@@ -873,6 +950,43 @@ func (db *InMemDB) GetPrice(ticker, date string) (Prices, bool) {
 	return price, exists
 }
 
+func (db *InMemDB) GetLatestPrice(ticker string) (Prices, bool) {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.pricesTable.mutex.RLock()
+	defer db.pricesTable.mutex.RUnlock()
+
+	var latest Prices
+	var found bool
+	var latestDate string
+
+	for _, price := range db.pricesTable.Prices {
+		if price.Ticker == ticker && price.Date > latestDate {
+			latest = price
+			latestDate = price.Date
+			found = true
+		}
+	}
+	return latest, found
+}
+
+func (db *InMemDB) GetPricesByTickerRange(ticker string, start time.Time, end time.Time) []Prices {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	db.pricesTable.mutex.RLock()
+	defer db.pricesTable.mutex.RUnlock()
+
+	prices := make([]Prices, 0, db.pricesTable.counter)
+	for _, price := range db.pricesTable.Prices {
+		if price.Ticker == ticker && price.Date >= start.Format("2006-01-02") && price.Date <= end.Format("2006-01-02") {
+			prices = append(prices, price)
+		}
+	}
+	return prices
+}
+
 func (db *InMemDB) GetPricesByTicker(ticker string) []Prices {
 	db.snapshotMutex.RLock()
 	defer db.snapshotMutex.RUnlock()
@@ -977,4 +1091,773 @@ func (db *InMemDB) GetAllPortfolioDailySentiments() []PortfolioDailySentiment {
 		sentiments = append(sentiments, sentiment)
 	}
 	return sentiments
+}
+
+type PortfolioAllocation struct {
+	TotalValue float64
+	BySector   map[string]float64
+	ByRegion   map[string]float64
+	ByCompany  map[string]float64
+}
+
+func (db *InMemDB) GetPortfolioAllocation(userID string) PortfolioAllocation {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userID)
+
+	allocation := PortfolioAllocation{
+		BySector:  make(map[string]float64),
+		ByRegion:  make(map[string]float64),
+		ByCompany: make(map[string]float64),
+	}
+
+	if len(holdings) == 0 {
+		return allocation
+	}
+
+	holdingValues := make(map[string]float64)
+
+	for _, holding := range holdings {
+		currentPrice, exists := db.GetLatestPrice(holding.Ticker)
+		if !exists {
+			currentPrice.Close = holding.PurchasePrice
+		}
+
+		holdingValue := currentPrice.Close * holding.Quantity
+		holdingValues[holding.IdHolding] = holdingValue
+		allocation.TotalValue += holdingValue
+	}
+
+	for _, holding := range holdings {
+		holdingWeight := 0.0
+		if allocation.TotalValue > 0 {
+			holdingWeight = holdingValues[holding.IdHolding] / allocation.TotalValue
+		}
+
+		sectors := db.GetSectorsByTicker(holding.Ticker)
+		for _, sector := range sectors {
+			allocation.BySector[sector.Name] += sector.Percentage * holdingWeight
+		}
+
+		regions := db.GetRegionsByTicker(holding.Ticker)
+		for _, region := range regions {
+			allocation.ByRegion[region.Name] += region.Percentage * holdingWeight
+		}
+
+		if !holding.Etf {
+			assetDetails, exists := db.GetLatestAssetDetails(holding.Ticker)
+			if exists && assetDetails.Sector != "" {
+				allocation.BySector[assetDetails.Sector] += holdingWeight * 100
+			} else {
+				allocation.BySector["Unknown"] += holdingWeight * 100
+			}
+		}
+
+		if holding.Etf {
+			assets := db.GetAssetsByTicker(holding.Ticker)
+			top10Count := len(assets)
+			if top10Count > 10 {
+				top10Count = 10
+			}
+
+			if top10Count > 0 {
+				decay := 0.9
+				totalWeight := 0.0
+				for i := 0; i < top10Count; i++ {
+					totalWeight += 1.0
+					if i > 0 {
+						totalWeight *= decay
+					}
+				}
+
+				top10Allocation := 0.0
+				for i := 0; i < top10Count; i++ {
+					weight := 1.0
+					if i > 0 {
+						for j := 0; j < i; j++ {
+							weight *= decay
+						}
+					}
+					assetPercentage := (weight / totalWeight) * 100
+					allocation.ByCompany[assets[i].Name] += assetPercentage * holdingWeight
+					top10Allocation += assetPercentage
+				}
+
+				if top10Allocation < 100 {
+					otherPercentage := 100 - top10Allocation
+					allocation.ByCompany["Other"] += otherPercentage * holdingWeight
+				}
+			}
+		} else {
+			allocation.ByCompany[holding.Name] += holdingWeight * 100
+		}
+	}
+
+	return allocation
+}
+
+type SectorData struct {
+	Name       string  `json:"name"`
+	Percentage float64 `json:"percentage"`
+}
+type RegionData struct {
+	Name       string  `json:"name"`
+	Percentage float64 `json:"percentage"`
+}
+
+type AssetData struct {
+	IdAsset  string `json:"id_asset"`
+	Name     string `json:"name"`
+	Ticker   string `json:"ticker"`
+	ISIN     string `json:"isin"`
+	Exchange string `json:"exchange"`
+	Sector   string `json:"sector"`
+	Region   string `json:"region"`
+}
+
+type HoldingWithDetails struct {
+	IdHolding     string       `json:"id_holding"`
+	Name          string       `json:"name"`
+	Ticker        string       `json:"ticker"`
+	ISIN          string       `json:"isin"`
+	Exchange      string       `json:"exchange"`
+	Policy        string       `json:"policy"`
+	Currency      string       `json:"currency"`
+	Quantity      float64      `json:"quantity"`
+	PurchasePrice float64      `json:"purchase_price"`
+	TER           float64      `json:"ter"`
+	Etf           bool         `json:"etf"`
+	Sectors       []SectorData `json:"sectors"`
+	Regions       []RegionData `json:"regions"`
+	Assets        []AssetData  `json:"assets,omitempty"`
+}
+
+func (db *InMemDB) GetHoldingsWithDetails(userID string) []HoldingWithDetails {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userID)
+
+	result := make([]HoldingWithDetails, 0, len(holdings))
+
+	if len(holdings) == 0 {
+		return result
+	}
+
+	for _, holding := range holdings {
+		sectors := db.GetSectorsByTicker(holding.Ticker)
+		sectorData := make([]SectorData, 0, len(sectors))
+		for _, sector := range sectors {
+			sectorData = append(sectorData, SectorData{
+				Name:       sector.Name,
+				Percentage: sector.Percentage,
+			})
+		}
+
+		regions := db.GetRegionsByTicker(holding.Ticker)
+		regionData := make([]RegionData, 0, len(regions))
+		for _, region := range regions {
+			regionData = append(regionData, RegionData{
+				Name:       region.Name,
+				Percentage: region.Percentage,
+			})
+		}
+
+		assets := db.GetAssetsByTicker(holding.Ticker)
+		assetData := make([]AssetData, 0, len(assets))
+		for _, asset := range assets {
+			assetData = append(assetData, AssetData{
+				IdAsset:  asset.IdAsset,
+				Name:     asset.Name,
+				Ticker:   asset.Ticker,
+				ISIN:     asset.ISIN,
+				Exchange: asset.Exchange,
+				Sector:   asset.Sector,
+				Region:   asset.Region,
+			})
+		}
+
+		result = append(result, HoldingWithDetails{
+			IdHolding:     holding.IdHolding,
+			Name:          holding.Name,
+			Ticker:        holding.Ticker,
+			ISIN:          holding.ISIN,
+			Exchange:      holding.Exchange,
+			Policy:        holding.Policy,
+			Currency:      holding.Currency,
+			Quantity:      holding.Quantity,
+			PurchasePrice: holding.PurchasePrice,
+			TER:           holding.TER,
+			Etf:           holding.Etf,
+			Sectors:       sectorData,
+			Regions:       regionData,
+			Assets:        assetData,
+		})
+	}
+
+	return result
+}
+
+func (db *InMemDB) GetPortfolioValue(userId string) float64 {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userId)
+	totalValue := 0.0
+
+	for _, holding := range holdings {
+		currentPrice, exists := db.GetLatestPrice(holding.Ticker)
+		if !exists {
+			currentPrice.Close = holding.PurchasePrice
+		}
+		holdingValue := currentPrice.Close * holding.Quantity
+		totalValue += holdingValue
+	}
+	return totalValue
+}
+
+type PortfolioCandle struct {
+	Timestamp int64   `json:"timestamp"`
+	Open      float64 `json:"open"`
+	High      float64 `json:"high"`
+	Low       float64 `json:"low"`
+	Close     float64 `json:"close"`
+	Volume    int64   `json:"volume"`
+}
+
+func (db *InMemDB) GetPortfolioValueHistory(userId string, start time.Time, end time.Time, intervalSeconds int64) []PortfolioCandle {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userId)
+
+	if len(holdings) == 0 {
+		return []PortfolioCandle{}
+	}
+
+	tickerQuantities := make(map[string]float64)
+	for _, holding := range holdings {
+		tickerQuantities[holding.Ticker] += holding.Quantity
+	}
+
+	type PriceData struct {
+		Open   float64
+		High   float64
+		Low    float64
+		Close  float64
+		Volume int64
+	}
+
+	bucketData := make(map[int64]map[string]*PriceData)
+	startTimestamp := start.Unix()
+	endTimestamp := end.Unix()
+
+	for ticker := range tickerQuantities {
+		prices := db.GetPricesByTickerRange(ticker, start, end)
+
+		for _, price := range prices {
+			timestamp, err := strconv.ParseInt(price.Date, 10, 64)
+			if err != nil || timestamp < startTimestamp || timestamp > endTimestamp {
+				continue
+			}
+
+			bucket := (timestamp / intervalSeconds) * intervalSeconds
+
+			if bucketData[bucket] == nil {
+				bucketData[bucket] = make(map[string]*PriceData)
+			}
+
+			if bucketData[bucket][ticker] == nil {
+				bucketData[bucket][ticker] = &PriceData{
+					Open:   price.Open,
+					High:   price.High,
+					Low:    price.Low,
+					Close:  price.Close,
+					Volume: price.Volume,
+				}
+			} else {
+				pd := bucketData[bucket][ticker]
+				if price.High > pd.High {
+					pd.High = price.High
+				}
+				if price.Low < pd.Low {
+					pd.Low = price.Low
+				}
+				pd.Close = price.Close
+				pd.Volume += price.Volume
+			}
+		}
+	}
+
+	bucketTimestamps := make([]int64, 0, len(bucketData))
+	for ts := range bucketData {
+		bucketTimestamps = append(bucketTimestamps, ts)
+	}
+
+	for i := 0; i < len(bucketTimestamps)-1; i++ {
+		for j := i + 1; j < len(bucketTimestamps); j++ {
+			if bucketTimestamps[i] > bucketTimestamps[j] {
+				bucketTimestamps[i], bucketTimestamps[j] = bucketTimestamps[j], bucketTimestamps[i]
+			}
+		}
+	}
+
+	lastKnownPrices := make(map[string]*PriceData)
+	result := make([]PortfolioCandle, 0, len(bucketTimestamps))
+
+	for _, bucket := range bucketTimestamps {
+		tickerPrices := bucketData[bucket]
+
+		var portfolioOpen, portfolioHigh, portfolioLow, portfolioClose float64
+		var portfolioVolume int64
+
+		for ticker, quantity := range tickerQuantities {
+			var pd *PriceData
+
+			if tickerPrices[ticker] != nil {
+				pd = tickerPrices[ticker]
+				lastKnownPrices[ticker] = pd
+			} else if lastKnownPrices[ticker] != nil {
+				pd = lastKnownPrices[ticker]
+			} else {
+				continue
+			}
+
+			portfolioOpen += pd.Open * quantity
+			portfolioHigh += pd.High * quantity
+			portfolioLow += pd.Low * quantity
+			portfolioClose += pd.Close * quantity
+			portfolioVolume += pd.Volume
+		}
+
+		if portfolioClose > 0 {
+			result = append(result, PortfolioCandle{
+				Timestamp: bucket,
+				Open:      portfolioOpen,
+				High:      portfolioHigh,
+				Low:       portfolioLow,
+				Close:     portfolioClose,
+				Volume:    portfolioVolume,
+			})
+		}
+	}
+
+	return result
+}
+
+type PortfolioChange struct {
+	CurrentValue   float64 `json:"current_value"`
+	DayChange      float64 `json:"day_change"`
+	DayChangePct   float64 `json:"day_change_pct"`
+	TotalChange    float64 `json:"total_change"`
+	TotalChangePct float64 `json:"total_change_pct"`
+	TotalInvested  float64 `json:"total_invested"`
+}
+
+func (db *InMemDB) GetPortfolioChange(userId string) PortfolioChange {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userId)
+
+	result := PortfolioChange{
+		CurrentValue:   0,
+		DayChange:      0,
+		DayChangePct:   0,
+		TotalChange:    0,
+		TotalChangePct: 0,
+		TotalInvested:  0,
+	}
+
+	if len(holdings) == 0 {
+		return result
+	}
+
+	now := time.Now().UTC()
+	oneDayAgo := now.Add(-24 * time.Hour)
+
+	var currentValue float64
+	var previousDayValue float64
+	var totalInvested float64
+
+	for _, holding := range holdings {
+		totalInvested += holding.PurchasePrice * holding.Quantity
+
+		latestPrice, exists := db.GetLatestPrice(holding.Ticker)
+		if !exists {
+			latestPrice.Close = holding.PurchasePrice
+		}
+		currentValue += latestPrice.Close * holding.Quantity
+
+		previousPrice := latestPrice.Close
+		prices := db.GetPricesByTickerRange(holding.Ticker, oneDayAgo.Add(-7*24*time.Hour), oneDayAgo)
+
+		oneDayAgoTimestamp := oneDayAgo.Unix()
+		var closestPrice Prices
+		var closestDiff int64 = -1
+
+		for _, price := range prices {
+			timestamp, err := strconv.ParseInt(price.Date, 10, 64)
+			if err != nil {
+				continue
+			}
+
+			if timestamp <= oneDayAgoTimestamp {
+				diff := oneDayAgoTimestamp - timestamp
+				if closestDiff == -1 || diff < closestDiff {
+					closestDiff = diff
+					closestPrice = price
+				}
+			}
+		}
+
+		if closestDiff != -1 {
+			previousPrice = closestPrice.Close
+		}
+
+		previousDayValue += previousPrice * holding.Quantity
+	}
+
+	dayChange := currentValue - previousDayValue
+	dayChangePercent := 0.0
+	if previousDayValue > 0 {
+		dayChangePercent = (dayChange / previousDayValue) * 100
+	}
+
+	totalChange := currentValue - totalInvested
+	totalChangePercent := 0.0
+	if totalInvested > 0 {
+		totalChangePercent = (totalChange / totalInvested) * 100
+	}
+
+	result.CurrentValue = currentValue
+	result.DayChange = dayChange
+	result.DayChangePct = dayChangePercent
+	result.TotalChange = totalChange
+	result.TotalChangePct = totalChangePercent
+	result.TotalInvested = totalInvested
+
+	return result
+}
+
+func (db *InMemDB) getLatestNewsForPortfolio(userId string) []News {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	news := make([]News, 0)
+	holdings := db.GetHoldingsByUser(userId)
+
+	if len(holdings) == 0 {
+		return news
+	}
+
+	for _, holding := range holdings {
+		holdingNews := db.GetNewsByTicker(holding.Ticker)
+		if holding.Etf {
+			assets := db.GetAssetsByTicker(holding.Ticker)
+			for _, asset := range assets {
+				assetNews := db.GetNewsByTicker(asset.Ticker)
+				holdingNews = append(holdingNews, assetNews...)
+			}
+		}
+		news = append(news, holdingNews...)
+	}
+	return news
+}
+
+func (db *InMemDB) getPortfolioSentiment(userId string, date time.Time) (averageSentiment float64, articleCount int) {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	news := db.getLatestNewsForPortfolio(userId)
+
+	if len(news) == 0 {
+		return 0, 0
+	}
+
+	totalSentiment := 0.0
+	articleCount = 0
+
+	dateStr := date.Format("2006-01-02")
+	for _, n := range news {
+		if n.PublishedAt >= dateStr && n.PublishedAt < dateStr+" 23:59:59" {
+			totalSentiment += n.Sentiment
+			articleCount++
+		}
+	}
+
+	if articleCount > 0 {
+		averageSentiment = totalSentiment / float64(articleCount)
+	} else {
+		averageSentiment = 0
+	}
+
+	return averageSentiment, articleCount
+}
+
+func (db *InMemDB) getPortfolioDailySummary(userId string, date time.Time) (PortfolioDailySentiment, bool) {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	key := userId + "_" + date.Format("2006-01-02")
+
+	db.portfolioDailySentimentsTable.mutex.RLock()
+	defer db.portfolioDailySentimentsTable.mutex.RUnlock()
+
+	sentiment, exists := db.portfolioDailySentimentsTable.PortfolioDailySentiments[key]
+	return sentiment, exists
+}
+
+type PortfolioStats struct {
+	YoYReturn        float64 `json:"yoy_return"`
+	MaxDrawdown      float64 `json:"max_drawdown"`
+	AvgDrawdown      float64 `json:"avg_drawdown"`
+	SortinoRatio     float64 `json:"sortino_ratio"`
+	AggregatedTER    float64 `json:"aggregated_ter"`
+	TotalValue       float64 `json:"total_value"`
+	TotalCost        float64 `json:"total_cost"`
+	TotalGainLoss    float64 `json:"total_gain_loss"`
+	TotalGainLossPct float64 `json:"total_gain_loss_pct"`
+}
+
+func (db *InMemDB) GetPortfolioStats(userId string) PortfolioStats {
+	db.snapshotMutex.RLock()
+	defer db.snapshotMutex.RUnlock()
+
+	holdings := db.GetHoldingsByUser(userId)
+
+	stats := PortfolioStats{}
+
+	if len(holdings) == 0 {
+		return stats
+	}
+
+	tickerQuantities := make(map[string]float64)
+	tickerHoldings := make(map[string]Holding)
+	for _, holding := range holdings {
+		tickerQuantities[holding.Ticker] += holding.Quantity
+		tickerHoldings[holding.Ticker] = holding
+	}
+
+	now := time.Now().UTC()
+	startTime := now.Add(-365 * 24 * time.Hour)
+
+	type DayPrice struct {
+		Ticker string
+		Close  float64
+	}
+	dayPrices := make(map[int64][]DayPrice)
+
+	for ticker := range tickerQuantities {
+		prices := db.GetPricesByTickerRange(ticker, startTime, now)
+
+		for _, price := range prices {
+			timestamp, err := strconv.ParseInt(price.Date, 10, 64)
+			if err != nil {
+				continue
+			}
+			dayBucket := (timestamp / 86400) * 86400
+			dayPrices[dayBucket] = append(dayPrices[dayBucket], DayPrice{ticker, price.Close})
+		}
+	}
+
+	days := make([]int64, 0, len(dayPrices))
+	for day := range dayPrices {
+		days = append(days, day)
+	}
+	for i := 0; i < len(days)-1; i++ {
+		for j := i + 1; j < len(days); j++ {
+			if days[i] > days[j] {
+				days[i], days[j] = days[j], days[i]
+			}
+		}
+	}
+
+	var portfolioValues []float64
+	var timestamps []int64
+	lastPrices := make(map[string]float64)
+
+	for _, day := range days {
+		for _, dp := range dayPrices[day] {
+			lastPrices[dp.Ticker] = dp.Close
+		}
+
+		dayValue := 0.0
+		allTickersHavePrice := true
+		for ticker, qty := range tickerQuantities {
+			if price, ok := lastPrices[ticker]; ok {
+				dayValue += price * qty
+			} else {
+				allTickersHavePrice = false
+			}
+		}
+
+		if allTickersHavePrice && dayValue > 0 {
+			portfolioValues = append(portfolioValues, dayValue)
+			timestamps = append(timestamps, day)
+		}
+	}
+
+	var dailyReturns []float64
+	for i := 1; i < len(portfolioValues); i++ {
+		if portfolioValues[i-1] > 0 {
+			ret := (portfolioValues[i] - portfolioValues[i-1]) / portfolioValues[i-1]
+			dailyReturns = append(dailyReturns, ret)
+		}
+	}
+
+	yoyReturn := calculateYoYReturn(portfolioValues, timestamps)
+	maxDD, avgDD := calculateDrawdowns(portfolioValues)
+	sortinoRatio := calculateSortinoRatio(dailyReturns, 0.0)
+
+	totalValue := 0.0
+	totalCost := 0.0
+	weightedTER := 0.0
+
+	for ticker, qty := range tickerQuantities {
+		holding := tickerHoldings[ticker]
+		currentPrice := lastPrices[ticker]
+		value := currentPrice * qty
+		totalValue += value
+		totalCost += holding.PurchasePrice * qty
+		weightedTER += holding.TER * value
+	}
+
+	aggregatedTER := 0.0
+	if totalValue > 0 {
+		aggregatedTER = weightedTER / totalValue
+	}
+
+	totalGainLoss := totalValue - totalCost
+	totalGainLossPct := 0.0
+	if totalCost > 0 {
+		totalGainLossPct = totalGainLoss / totalCost * 100
+	}
+
+	stats.YoYReturn = roundFloat(yoyReturn, 2)
+	stats.MaxDrawdown = roundFloat(maxDD, 2)
+	stats.AvgDrawdown = roundFloat(avgDD, 2)
+	stats.SortinoRatio = roundFloat(sortinoRatio, 2)
+	stats.AggregatedTER = roundFloat(aggregatedTER, 4)
+	stats.TotalValue = roundFloat(totalValue, 2)
+	stats.TotalCost = roundFloat(totalCost, 2)
+	stats.TotalGainLoss = roundFloat(totalGainLoss, 2)
+	stats.TotalGainLossPct = roundFloat(totalGainLossPct, 2)
+
+	return stats
+}
+
+func calculateYoYReturn(prices []float64, timestamps []int64) float64 {
+	if len(prices) < 2 {
+		return 0
+	}
+
+	now := time.Now().UTC().Unix()
+	oneYearAgo := now - 365*24*3600
+
+	var startPrice, endPrice float64
+	startFound := false
+
+	for i, ts := range timestamps {
+		if !startFound && ts >= oneYearAgo {
+			startPrice = prices[i]
+			startFound = true
+		}
+		endPrice = prices[i]
+	}
+
+	if !startFound || startPrice == 0 {
+		startPrice = prices[0]
+	}
+
+	return (endPrice - startPrice) / startPrice * 100
+}
+
+func calculateDrawdowns(values []float64) (maxDD float64, avgDD float64) {
+	if len(values) < 2 {
+		return 0, 0
+	}
+
+	peak := values[0]
+	var drawdowns []float64
+
+	for _, value := range values {
+		if value > peak {
+			peak = value
+		}
+		if peak > 0 {
+			drawdown := (peak - value) / peak * 100
+			if drawdown > 0 {
+				drawdowns = append(drawdowns, drawdown)
+			}
+			if drawdown > maxDD {
+				maxDD = drawdown
+			}
+		}
+	}
+
+	if len(drawdowns) > 0 {
+		sum := 0.0
+		for _, dd := range drawdowns {
+			sum += dd
+		}
+		avgDD = sum / float64(len(drawdowns))
+	}
+
+	return maxDD, avgDD
+}
+
+func calculateSortinoRatio(dailyReturns []float64, riskFreeRate float64) float64 {
+	if len(dailyReturns) < 2 {
+		return 0
+	}
+
+	sum := 0.0
+	for _, r := range dailyReturns {
+		sum += r
+	}
+	avgReturn := sum / float64(len(dailyReturns))
+
+	var downsideSquares []float64
+	for _, r := range dailyReturns {
+		if r < riskFreeRate {
+			diff := r - riskFreeRate
+			downsideSquares = append(downsideSquares, diff*diff)
+		}
+	}
+
+	if len(downsideSquares) == 0 {
+		return 0
+	}
+
+	downsideSum := 0.0
+	for _, sq := range downsideSquares {
+		downsideSum += sq
+	}
+	downsideDeviation := 0.0
+	if len(downsideSquares) > 0 {
+		downsideDeviation = 1.0
+		temp := downsideSum / float64(len(downsideSquares))
+		for i := 0; i < 10; i++ {
+			downsideDeviation = (downsideDeviation + temp/downsideDeviation) / 2
+		}
+	}
+
+	if downsideDeviation == 0 {
+		return 0
+	}
+
+	annualizedReturn := avgReturn * 252
+	annualizedDownside := downsideDeviation * 15.8745
+
+	return (annualizedReturn - riskFreeRate) / annualizedDownside
+}
+
+func roundFloat(val float64, precision int) float64 {
+	multiplier := 1.0
+	for i := 0; i < precision; i++ {
+		multiplier *= 10
+	}
+	return float64(int(val*multiplier+0.5)) / multiplier
 }

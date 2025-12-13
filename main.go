@@ -1205,21 +1205,31 @@ func convertHoldingToInmem(h Holding) inmem.Holding {
 
 func convertAssetToInmem(a Asset) inmem.Asset {
 	return inmem.Asset{
-		IdAsset:  a.IdAsset,
-		Name:     a.Name,
-		Ticker:   a.Ticker,
-		ISIN:     a.ISIN,
-		Exchange: a.Exchange,
-		Sector:   a.Sector,
-		Region:   a.Region,
+		IdAsset:      a.IdAsset,
+		Name:         a.Name,
+		Ticker:       a.Ticker,
+		ISIN:         a.ISIN,
+		Exchange:     a.Exchange,
+		Sector:       a.Sector,
+		Region:       a.Region,
+		TickerParent: getTickerFromHoldingID(a.idHolding),
+		Currency:     a.currency,
 	}
+}
+
+func getTickerFromHoldingID(holdingID string) string {
+	holding, exists := memDB.GetHolding(holdingID)
+	if !exists {
+		return holdingID
+	}
+	return holding.Ticker
 }
 
 func convertSectorToInmem(s Sector) inmem.Sector {
 	return inmem.Sector{
 		Name:       s.Name,
 		Percentage: s.Percentage,
-		IdHolding:  s.IdHolding,
+		Ticker:     getTickerFromHoldingID(s.IdHolding),
 	}
 }
 
@@ -1227,7 +1237,7 @@ func convertRegionToInmem(r Region) inmem.Region {
 	return inmem.Region{
 		Name:       r.Name,
 		Percentage: r.Percentage,
-		IdHolding:  r.IdHolding,
+		Ticker:     getTickerFromHoldingID(r.IdHolding),
 	}
 }
 
