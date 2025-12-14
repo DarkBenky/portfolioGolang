@@ -39,6 +39,8 @@ var (
 	memDB      *inmem.InMemDB
 )
 
+const USE_IN_MEMDB = false
+
 func hashPasswordWithSalt(password string) string {
 	hash := sha256.Sum256([]byte(password + SALT))
 	return hex.EncodeToString(hash[:])
@@ -193,7 +195,9 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 		return err
 	}
 
-	memDB.AddAssetDetails(convertAssetDetailsToInmem(detail))
+	if USE_IN_MEMDB {
+		memDB.AddAssetDetails(convertAssetDetailsToInmem(detail))
+	}
 	return nil
 }
 
@@ -1348,7 +1352,9 @@ func (database *DB) addUser(user User) error {
 		return err
 	}
 
-	memDB.AddUser(convertUserToInmem(user))
+	if USE_IN_MEMDB {
+		memDB.AddUser(convertUserToInmem(user))
+	}
 	return nil
 }
 
@@ -1423,7 +1429,9 @@ func (database *DB) addHolding(holding Holding) error {
 		if err != nil {
 			return err
 		}
-		memDB.AddHolding(convertHoldingToInmem(holding))
+		if USE_IN_MEMDB {
+			memDB.AddHolding(convertHoldingToInmem(holding))
+		}
 		return nil
 	} else if err != nil {
 		return err
@@ -1452,7 +1460,9 @@ func (database *DB) addHolding(holding Holding) error {
 	updatedHolding.IdHolding = existingHolding.IdHolding
 	updatedHolding.Quantity = newQuantity
 	updatedHolding.PurchasePrice = newAvgPrice
-	memDB.UpdateHolding(convertHoldingToInmem(updatedHolding))
+	if USE_IN_MEMDB {
+		memDB.UpdateHolding(convertHoldingToInmem(updatedHolding))
+	}
 	return nil
 }
 
@@ -1489,7 +1499,9 @@ func (database *DB) removeHolding(holdingID string, userID string) error {
 		return err
 	}
 
-	memDB.DeleteHolding(holdingID)
+	if USE_IN_MEMDB {
+		memDB.DeleteHolding(holdingID)
+	}
 	return nil
 }
 
@@ -1527,7 +1539,9 @@ func (database *DB) modifyHolding(holding Holding) error {
 		return err
 	}
 
-	memDB.UpdateHolding(convertHoldingToInmem(holding))
+	if USE_IN_MEMDB {
+		memDB.UpdateHolding(convertHoldingToInmem(holding))
+	}
 	return nil
 }
 
@@ -1614,7 +1628,9 @@ func (database *DB) addAsset(asset Asset) error {
 		return err
 	}
 
-	memDB.AddAsset(convertAssetToInmem(asset))
+	if USE_IN_MEMDB {
+		memDB.AddAsset(convertAssetToInmem(asset))
+	}
 	return nil
 }
 
@@ -1641,7 +1657,9 @@ func (database *DB) addSector(sector Sector) error {
 		return err
 	}
 
-	memDB.AddSector(convertSectorToInmem(sector))
+	if USE_IN_MEMDB {
+		memDB.AddSector(convertSectorToInmem(sector))
+	}
 	return nil
 }
 
@@ -1668,7 +1686,9 @@ func (database *DB) addRegion(region Region) error {
 		return err
 	}
 
-	memDB.AddRegion(convertRegionToInmem(region))
+	if USE_IN_MEMDB {
+		memDB.AddRegion(convertRegionToInmem(region))
+	}
 	return nil
 }
 
@@ -1696,7 +1716,9 @@ func (database *DB) addNews(news News) error {
 		return err
 	}
 
-	memDB.AddNews(convertNewsToInmem(news))
+	if USE_IN_MEMDB {
+		memDB.AddNews(convertNewsToInmem(news))
+	}
 	return nil
 }
 
@@ -1730,9 +1752,11 @@ func (database *DB) deleteETFDataForHolding(holdingID string) error {
 		return err
 	}
 
-	memDB.DeleteAssetsByHolding(holdingID)
-	memDB.DeleteSectorsByHolding(holdingID)
-	memDB.DeleteRegionsByHolding(holdingID)
+	if USE_IN_MEMDB {
+		memDB.DeleteAssetsByHolding(holdingID)
+		memDB.DeleteSectorsByHolding(holdingID)
+		memDB.DeleteRegionsByHolding(holdingID)
+	}
 	return nil
 }
 
@@ -1790,7 +1814,9 @@ func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
 		return err
 	}
 
-	memDB.AddDailySentiment(convertDailySentimentToInmem(sentiment))
+	if USE_IN_MEMDB {
+		memDB.AddDailySentiment(convertDailySentimentToInmem(sentiment))
+	}
 	return nil
 }
 
@@ -1820,7 +1846,9 @@ func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentim
 		return err
 	}
 
-	memDB.AddPortfolioDailySentiment(convertPortfolioDailySentimentToInmem(sentiment))
+	if USE_IN_MEMDB {
+		memDB.AddPortfolioDailySentiment(convertPortfolioDailySentimentToInmem(sentiment))
+	}
 	return nil
 }
 
@@ -4579,14 +4607,15 @@ func main() {
 
 	db = &DB{DB: sqlDB}
 
-	// memDB = inmem.NewInMemDB(5*time.Minute, "./snapshot.gob", false)
-	memDB, err = inmem.NewInMemDBFromSQL(5*time.Minute, "./snapshot.gob", "./portfolio.db")
-	if err != nil {
-		log.Fatal("Failed to initialize in-memory database:", err)
+	if USE_IN_MEMDB {
+		memDB, err = inmem.NewInMemDBFromSQL(5*time.Minute, "./snapshot.gob", "./portfolio.db")
+		if err != nil {
+			log.Fatal("Failed to initialize in-memory database:", err)
+		}
+		log.Println("In-memory database initialized successfully")
 	}
 
 	log.Println("Database initialized successfully")
-	log.Println("In-memory database initialized successfully")
 
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
