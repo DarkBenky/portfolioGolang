@@ -4392,7 +4392,7 @@ func GetAssetSentiments(c echo.Context) error {
 }
 
 func fetchAssetDetails(ticker string) error {
-	url := fmt.Sprintf("%s/api/stock/%s", BASE_URL, ticker)
+	url := fmt.Sprintf("%s/stock/%s", BASE_URL, ticker)
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Printf("Error fetching asset details for %s: %v", ticker, err)
@@ -4482,7 +4482,7 @@ func fetchAssetDetailsPeriodic(interval time.Duration) {
 		}
 
 		for _, holding := range holdings {
-			if holding.ISIN != "" && holding.ISIN != "N/A" {
+			if holding.ISIN != "" && holding.ISIN != "N/A" && !holding.Etf {
 				err := fetchAssetDetails(holding.ISIN)
 				if err != nil {
 					log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", holding.Ticker, holding.ISIN, err)
@@ -4592,8 +4592,8 @@ func main() {
 	go fetchPricesPeriodic(5 * time.Minute)
 	go fillInBetweenPricesPeriodic(60 * time.Minute)
 	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(3 * time.Minute)
-	go fetchAssetDetailsPeriodic(5 * time.Minute)
+	go updateETFDataPeriodic(12 * time.Hour)
+	go fetchAssetDetailsPeriodic(8 * time.Hour)
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
