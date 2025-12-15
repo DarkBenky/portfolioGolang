@@ -127,34 +127,64 @@ def get_ticker_details(ticker: str) -> Dict[str, str]:
             'region': 'Unknown'
         }
 
+@ttl_cache(maxsize=2048, ttl_hours=24)
+def get_ticker_from_isin(isin: str) -> Optional[str]:
+    """Fetch ticker from ISIN using OpenFIGI API"""
+    if not isin or isin == 'N/A':
+        return None
+    
+    try:
+        url = 'https://api.openfigi.com/v3/mapping'
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        payload = [{"idType": "ID_ISIN", "idValue": isin}]
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0 and 'data' in data[0]:
+                results = data[0]['data']
+                if results and len(results) > 0:
+                    ticker = results[0].get('ticker')
+                    if ticker:
+                        return ticker
+    except Exception as e:
+        print(f"  OpenFIGI lookup failed for {isin}: {e}")
+    
+    return None
+
 def enrich_holdings_with_details(holdings: List[Tuple[str, str, float]]) -> List[HoldingInfo]:
-    """Enrich holdings with yfinance data - holdings format: (name, isin, percentage)"""
+    """Enrich holdings with ticker and details - holdings format: (name, isin, percentage)"""
     enriched = []
     
     for name, isin, percentage in holdings:
-        # Try to get ticker from yfinance using ISIN
         ticker = 'N/A'
         exchange = 'Unknown'
         sector = 'Unknown'
         region = 'Unknown'
         
-        # If we have ISIN, try to fetch additional details
         if isin and isin != 'N/A':
-            try:
-                # Try to find ticker using ISIN search (this is limited)
-                # For now, we'll use the name and ISIN as-is
-                pass
-            except:
-                pass
+            ticker = get_ticker_from_isin(isin)
+            
+            if ticker and ticker != 'N/A':
+                try:
+                    details = get_ticker_details(ticker)
+                    exchange = details.get('exchange', 'Unknown')
+                    sector = details.get('sector', 'Unknown')
+                    region = details.get('region', 'Unknown')
+                except Exception as e:
+                    print(f"  Failed to get details for {ticker}: {e}")
         
         enriched.append((
             name,
-            ticker,
+            ticker if ticker else 'N/A',
             isin,
             exchange,
             sector,
             region,
-            percentage  # Add percentage to the tuple
+            percentage
         ))
     
     return enriched
@@ -498,11 +528,11 @@ def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file:
     
     if justetf_holdings and len(justetf_holdings) > 0:
         result.holdings = enrich_holdings_with_details(justetf_holdings)
-        print(f"  ✓ Total: {len(result.holdings)} holdings")
+        print(f"  Total: {len(result.holdings)} holdings")
     
     result.sectors = sectors
     result.regions = regions
-    print(f"  ✓ Total: {len(sectors)} sectors and {len(regions)} regions")
+    print(f"  Total: {len(sectors)} sectors and {len(regions)} regions")
     
     return result
 
@@ -517,7 +547,7 @@ if __name__ == "__main__":
     print(f"\nTime taken: {time.time() - start:.2f} seconds")
     print(f"\nAll Holdings ({len(etf_data.holdings)} total):")
     for i, h in enumerate(etf_data.holdings, 1):
-        print(f"  {i}. {h[0]} ({h[2]}) - {h[6]:.2f}%")
+        print(f"  {i}, {h}")
     print(f"\nAll Sectors ({len(etf_data.sectors)} total):")
     for sector, pct in sorted(etf_data.sectors.items(), key=lambda x: x[1], reverse=True):
         print(f"  {sector}: {pct}%")

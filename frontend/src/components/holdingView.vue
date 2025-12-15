@@ -767,6 +767,10 @@ export default {
   },
 
   computed: {
+    identifier() {
+      return this.holding.isin && this.holding.isin !== 'N/A' ? this.holding.isin : this.holding.ticker
+    },
+
     // Calculate total change since purchase
     currentValue() {
       return this.currentPrice * this.holding.quantity
@@ -898,7 +902,7 @@ export default {
     async fetchPriceHistory() {
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.holding.ticker)}&period=1d&interval=15m`,
+          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=1d&interval=15m`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -933,7 +937,7 @@ export default {
         const interval = intervalMap[this.chartPeriod] || '1h'
         
         const response = await fetch(
-          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.holding.ticker)}&period=${this.chartPeriod}&interval=${interval}`,
+          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=${this.chartPeriod}&interval=${interval}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -955,7 +959,7 @@ export default {
     async fetchAssetChange() {
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/change?ticker=${encodeURIComponent(this.holding.ticker)}`,
+          `http://localhost:8085/api/asset/change?ticker=${encodeURIComponent(this.identifier)}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -982,7 +986,7 @@ export default {
       this.newsLoading = true
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/news?ticker=${encodeURIComponent(this.holding.ticker)}&limit=5&offset=${this.newsOffset}`,
+          `http://localhost:8085/api/asset/news?ticker=${encodeURIComponent(this.identifier)}&limit=5&offset=${this.newsOffset}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -1018,7 +1022,7 @@ export default {
       try {
         const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD format
         const response = await fetch(
-          `http://localhost:8085/api/asset/daily_sentiment?ticker=${encodeURIComponent(this.holding.ticker)}&date=${today}`,
+          `http://localhost:8085/api/asset/daily_sentiment?ticker=${encodeURIComponent(this.identifier)}&date=${today}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -1277,7 +1281,28 @@ export default {
         }
       }
     },
+    TODO
+    async fetchAssetStats(ticker, isin) {
+      try {
+        console.log(`Fetching stats for ${ticker} / ${isin}`)
+        const response = await fetch(
+          `http://localhost:8085/api/asset/stats?ticker=${encodeURIComponent(ticker)}&isin=${encodeURIComponent(isin)}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
 
+        if (response.ok) {
+          const data = await response.json()
+          return data || {}
+        }
+      } catch (error) {
+        console.error(`Error fetching stats for ${ticker} / ${isin}:`, error)
+      }
+      return {}
+    },
     toggleAssetDetails(asset) {
       if (this.expandedAsset?.name === asset.name) {
         this.expandedAsset = null
@@ -1285,6 +1310,7 @@ export default {
         this.expandedAsset = asset
         if (!this.assetDetails[asset.name]) {
           this.fetchAssetDetailsForHoldings()
+          this.fetchAssetStats('N/A', asset.isin)
         }
       }
     },

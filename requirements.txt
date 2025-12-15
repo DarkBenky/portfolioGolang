@@ -17,3 +17,5 @@ numpy==2.2.6
 pillow==12.0.0
 asyncio==4.0.0
 beautifulsoup4
+lxml_html_clean
+playwright

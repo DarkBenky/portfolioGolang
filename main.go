@@ -9,7 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	inmem "main/inMem"
+
+	// inmem "main/inMem"
 	"math"
 	"net/http"
 	"net/url"
@@ -36,10 +37,7 @@ var (
 	BASE_URL   string
 	db         *DB
 	dbMutex    sync.Mutex
-	memDB      *inmem.InMemDB
 )
-
-const USE_IN_MEMDB = false
 
 func hashPasswordWithSalt(password string) string {
 	hash := sha256.Sum256([]byte(password + SALT))
@@ -195,9 +193,6 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddAssetDetails(convertAssetDetailsToInmem(detail))
-	}
 	return nil
 }
 
@@ -1201,134 +1196,6 @@ type DB struct {
 	*sql.DB
 }
 
-func convertUserToInmem(u User) inmem.User {
-	return inmem.User{
-		Id:       u.Id,
-		Email:    u.Email,
-		Password: u.Password,
-	}
-}
-
-func convertHoldingToInmem(h Holding) inmem.Holding {
-	return inmem.Holding{
-		IdHolding:     h.IdHolding,
-		Name:          h.Name,
-		Ticker:        h.Ticker,
-		ISIN:          h.ISIN,
-		Exchange:      h.Exchange,
-		Policy:        h.Policy,
-		Quantity:      h.Quantity,
-		PurchasePrice: h.PurchasePrice,
-		TER:           h.TER,
-		Etf:           h.Etf,
-	}
-}
-
-func convertAssetToInmem(a Asset) inmem.Asset {
-	return inmem.Asset{
-		IdAsset:      a.IdAsset,
-		Name:         a.Name,
-		Ticker:       a.Ticker,
-		ISIN:         a.ISIN,
-		Exchange:     a.Exchange,
-		Sector:       a.Sector,
-		Region:       a.Region,
-		TickerParent: getTickerFromHoldingID(a.idHolding),
-		Currency:     a.currency,
-	}
-}
-
-func getTickerFromHoldingID(holdingID string) string {
-	holding, exists := memDB.GetHolding(holdingID)
-	if !exists {
-		return holdingID
-	}
-	return holding.Ticker
-}
-
-func convertSectorToInmem(s Sector) inmem.Sector {
-	return inmem.Sector{
-		Name:       s.Name,
-		Percentage: s.Percentage,
-		Ticker:     getTickerFromHoldingID(s.IdHolding),
-	}
-}
-
-func convertRegionToInmem(r Region) inmem.Region {
-	return inmem.Region{
-		Name:       r.Name,
-		Percentage: r.Percentage,
-		Ticker:     getTickerFromHoldingID(r.IdHolding),
-	}
-}
-
-func convertNewsToInmem(n News) inmem.News {
-	return inmem.News{
-		IdNews:      n.IdNews,
-		Title:       n.Title,
-		Link:        n.Link,
-		PublishedAt: n.PublishedAt,
-		Summary:     n.Summary,
-		Text:        n.Text,
-		Author:      n.Author,
-		Ticker:      n.Ticker,
-		Sentiment:   n.Sentiment,
-	}
-}
-
-func convertPriceToInmem(p Price) inmem.Prices {
-	return inmem.Prices{
-		IdPrice: p.IdPrice,
-		Ticker:  p.Ticker,
-		Date:    p.Date,
-		Open:    p.Open,
-		Close:   p.Close,
-		High:    p.High,
-		Low:     p.Low,
-		Volume:  p.Volume,
-	}
-}
-
-func convertDailySentimentToInmem(d DailySentiment) inmem.DailySentiment {
-	return inmem.DailySentiment{
-		IdSentiment: d.IdSentiment,
-		Ticker:      d.Ticker,
-		Date:        d.Date,
-		Summary:     d.Summary,
-		Sentiment:   d.Sentiment,
-	}
-}
-
-func convertPortfolioDailySentimentToInmem(p PortfolioDailySentiment) inmem.PortfolioDailySentiment {
-	return inmem.PortfolioDailySentiment{
-		IdSentiment: p.IdSentiment,
-		UserID:      p.UserID,
-		Date:        p.Date,
-		Summary:     p.Summary,
-		Sentiment:   p.Sentiment,
-	}
-}
-
-func convertAssetDetailsToInmem(a AssetDetails) inmem.AssetDetails {
-	return inmem.AssetDetails{
-		Ticker:        a.Ticker,
-		ISIN:          a.ISIN,
-		MarketCap:     a.MarketCap,
-		MarketCapEur:  a.MarketCapEur,
-		Country:       a.Country,
-		Sector:        a.Sector,
-		Eps:           a.Eps,
-		PbRatio:       a.PbRatio,
-		PeRatio:       a.PeRatio,
-		DividendYield: a.DividendYield,
-		Revenue:       a.Revenue,
-		NetIncome:     a.NetIncome,
-		ProfitMargin:  a.ProfitMargin,
-		Hash:          a.Hash,
-		Date:          a.Date,
-	}
-}
-
 func (database *DB) addUser(user User) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -1352,9 +1219,6 @@ func (database *DB) addUser(user User) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddUser(convertUserToInmem(user))
-	}
 	return nil
 }
 
@@ -1429,9 +1293,6 @@ func (database *DB) addHolding(holding Holding) error {
 		if err != nil {
 			return err
 		}
-		if USE_IN_MEMDB {
-			memDB.AddHolding(convertHoldingToInmem(holding))
-		}
 		return nil
 	} else if err != nil {
 		return err
@@ -1460,9 +1321,6 @@ func (database *DB) addHolding(holding Holding) error {
 	updatedHolding.IdHolding = existingHolding.IdHolding
 	updatedHolding.Quantity = newQuantity
 	updatedHolding.PurchasePrice = newAvgPrice
-	if USE_IN_MEMDB {
-		memDB.UpdateHolding(convertHoldingToInmem(updatedHolding))
-	}
 	return nil
 }
 
@@ -1499,9 +1357,6 @@ func (database *DB) removeHolding(holdingID string, userID string) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.DeleteHolding(holdingID)
-	}
 	return nil
 }
 
@@ -1539,9 +1394,6 @@ func (database *DB) modifyHolding(holding Holding) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.UpdateHolding(convertHoldingToInmem(holding))
-	}
 	return nil
 }
 
@@ -1628,9 +1480,6 @@ func (database *DB) addAsset(asset Asset) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddAsset(convertAssetToInmem(asset))
-	}
 	return nil
 }
 
@@ -1657,9 +1506,6 @@ func (database *DB) addSector(sector Sector) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddSector(convertSectorToInmem(sector))
-	}
 	return nil
 }
 
@@ -1686,9 +1532,6 @@ func (database *DB) addRegion(region Region) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddRegion(convertRegionToInmem(region))
-	}
 	return nil
 }
 
@@ -1716,9 +1559,6 @@ func (database *DB) addNews(news News) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddNews(convertNewsToInmem(news))
-	}
 	return nil
 }
 
@@ -1752,11 +1592,6 @@ func (database *DB) deleteETFDataForHolding(holdingID string) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.DeleteAssetsByHolding(holdingID)
-		memDB.DeleteSectorsByHolding(holdingID)
-		memDB.DeleteRegionsByHolding(holdingID)
-	}
 	return nil
 }
 
@@ -1814,9 +1649,6 @@ func (database *DB) upsertDailySentiment(sentiment DailySentiment) error {
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddDailySentiment(convertDailySentimentToInmem(sentiment))
-	}
 	return nil
 }
 
@@ -1846,9 +1678,6 @@ func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentim
 		return err
 	}
 
-	if USE_IN_MEMDB {
-		memDB.AddPortfolioDailySentiment(convertPortfolioDailySentimentToInmem(sentiment))
-	}
 	return nil
 }
 
@@ -1964,6 +1793,36 @@ func (database *DB) getUniqueTickers() ([]string, error) {
 	return tickers, nil
 }
 
+func (database *DB) getUniqueISINs() ([]string, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	rows, err := database.Query(`
+		SELECT DISTINCT isin FROM (
+			SELECT isin FROM holdings WHERE isin != ''
+			UNION
+			SELECT isin FROM assets WHERE isin != ''
+		) AS combined_isins
+		ORDER BY isin
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var isins []string
+	for rows.Next() {
+		var isin string
+		err := rows.Scan(&isin)
+		if err != nil {
+			return nil, err
+		}
+		isins = append(isins, isin)
+	}
+
+	return isins, nil
+}
+
 func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -2022,9 +1881,6 @@ func (database *DB) addPrices(prices []Price) error {
 		return err
 	}
 
-	for _, price := range prices {
-		memDB.AddPrice(convertPriceToInmem(price))
-	}
 	return nil
 }
 
@@ -2723,12 +2579,50 @@ func ModifyHolding(c echo.Context) error {
 		currency:      Currency,
 	}
 
-	err := db.modifyHolding(holding)
+	var oldHolding Holding
+	dbMutex.Lock()
+	err := db.QueryRow(`SELECT etf FROM holdings WHERE id_holding = ? AND user_id = ?`, holdingID, userID).Scan(&oldHolding.Etf)
+	dbMutex.Unlock()
+
+	wasETF := (err == nil && oldHolding.Etf)
+	isNowETF := holding.Etf
+
+	err = db.modifyHolding(holding)
 	if err == sql.ErrNoRows {
 		return c.String(http.StatusNotFound, "Holding not found")
 	}
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error modifying holding in database")
+	}
+
+	if wasETF && !isNowETF {
+		go func(hID string) {
+			err := db.deleteETFDataForHolding(hID)
+			if err != nil {
+				log.Printf("Error deleting ETF data for modified holding %s: %v", hID, err)
+			}
+		}(holdingID)
+	} else if !wasETF && isNowETF {
+		go func(hID, ticker, isin, name string) {
+			log.Printf("Fetching ETF data for newly converted ETF holding %s...", ticker)
+			err := fetchAndStoreETFData(hID, ticker, isin, name)
+			if err != nil {
+				log.Printf("Error fetching ETF data for modified holding %s: %v", ticker, err)
+			}
+		}(holdingID, Ticker, ISIN, Name)
+	} else if wasETF && isNowETF {
+		go func(hID, ticker, isin, name string) {
+			log.Printf("Updating ETF data for modified ETF holding %s...", ticker)
+			err := db.deleteETFDataForHolding(hID)
+			if err != nil {
+				log.Printf("Error deleting old ETF data for %s: %v", ticker, err)
+				return
+			}
+			err = fetchAndStoreETFData(hID, ticker, isin, name)
+			if err != nil {
+				log.Printf("Error fetching new ETF data for %s: %v", ticker, err)
+			}
+		}(holdingID, Ticker, ISIN, Name)
 	}
 
 	return c.String(http.StatusOK, "Holding modified successfully")
@@ -4194,7 +4088,7 @@ func getPortfolioStats(c echo.Context) error {
 		value := currentPrice * qty
 		totalValue += value
 		totalCost += holding.PurchasePrice * qty
-		weightedTER += holding.TER * value
+		weightedTER += (holding.TER / 100) * value
 	}
 
 	aggregatedTER := 0.0
@@ -4228,36 +4122,17 @@ func getAssetStats(c echo.Context) error {
 	claims := user.Claims.(*JWTClaims)
 	userID := claims.UserID
 	ticker := c.QueryParam("ticker")
+	isin := c.QueryParam("isin")
 
-	if ticker == "" {
-		return c.String(http.StatusBadRequest, "ticker parameter is required")
+	if ticker == "" && isin == "" {
+		return c.String(http.StatusBadRequest, "ticker or isin parameter is required")
 	}
 
-	// Get user's holding for this ticker
-	holdings, err := db.getHoldingsByUser(userID)
-	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
+	identifier := ticker
+	if identifier == "" {
+		identifier = isin
 	}
 
-	var holding Holding
-	var totalQuantity float64
-	var totalCost float64
-	found := false
-
-	for _, h := range holdings {
-		if h.Ticker == ticker {
-			holding = h
-			totalQuantity += h.Quantity
-			totalCost += h.PurchasePrice * h.Quantity
-			found = true
-		}
-	}
-
-	if !found {
-		return c.String(http.StatusNotFound, "Holding not found")
-	}
-
-	// Get 1 year of historical data
 	now := time.Now().UTC()
 	startTime := now.Add(-365 * 24 * time.Hour)
 
@@ -4271,7 +4146,7 @@ func getAssetStats(c echo.Context) error {
 	`
 
 	dbMutex.Lock()
-	rows, err := db.Query(query, ticker, startTime.Unix(), now.Unix())
+	rows, err := db.Query(query, identifier, startTime.Unix(), now.Unix())
 	dbMutex.Unlock()
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
@@ -4296,7 +4171,6 @@ func getAssetStats(c echo.Context) error {
 		return c.String(http.StatusNotFound, "No price history found")
 	}
 
-	// Calculate daily returns
 	var dailyReturns []float64
 	for i := 1; i < len(prices); i++ {
 		if prices[i-1] > 0 {
@@ -4305,12 +4179,29 @@ func getAssetStats(c echo.Context) error {
 		}
 	}
 
-	// Calculate statistics
 	yoyReturn := calculateYoYReturn(prices, timestamps)
 	maxDD, avgDD := calculateDrawdowns(prices)
 	sortinoRatio := calculateSortinoRatio(dailyReturns, 0.0)
 
 	currentPrice := prices[len(prices)-1]
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		holdings = []Holding{}
+	}
+
+	var totalQuantity float64
+	var totalCost float64
+	var ter float64
+
+	for _, h := range holdings {
+		if h.Ticker == identifier || h.ISIN == identifier {
+			totalQuantity += h.Quantity
+			totalCost += h.PurchasePrice * h.Quantity
+			ter = h.TER
+		}
+	}
+
 	currentValue := currentPrice * totalQuantity
 	gainLoss := currentValue - totalCost
 	gainLossPct := 0.0
@@ -4319,12 +4210,12 @@ func getAssetStats(c echo.Context) error {
 	}
 
 	stats := AssetStats{
-		Ticker:       ticker,
+		Ticker:       identifier,
 		YoYReturn:    math.Round(yoyReturn*100) / 100,
 		MaxDrawdown:  math.Round(maxDD*100) / 100,
 		AvgDrawdown:  math.Round(avgDD*100) / 100,
 		SortinoRatio: math.Round(sortinoRatio*100) / 100,
-		TER:          holding.TER,
+		TER:          ter,
 		CurrentPrice: math.Round(currentPrice*100) / 100,
 		Quantity:     totalQuantity,
 		CurrentValue: math.Round(currentValue*100) / 100,
@@ -4419,17 +4310,17 @@ func GetAssetSentiments(c echo.Context) error {
 	return c.JSON(http.StatusOK, sentiments)
 }
 
-func fetchAssetDetails(ticker string) error {
-	url := fmt.Sprintf("%s/stock/%s", BASE_URL, ticker)
+func fetchAssetDetails(isin string) error {
+	url := fmt.Sprintf("%s/stock/%s", BASE_URL, isin)
 	resp, err := http.Get(url)
 	if err != nil {
-		log.Printf("Error fetching asset details for %s: %v", ticker, err)
+		log.Printf("Error fetching asset details for %s: %v", isin, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error fetching asset details for %s: status %d", ticker, resp.StatusCode)
+		log.Printf("Error fetching asset details for %s: status %d", isin, resp.StatusCode)
 		return fmt.Errorf("status code %d", resp.StatusCode)
 	}
 
@@ -4454,12 +4345,12 @@ func fetchAssetDetails(ticker string) error {
 
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	if err != nil {
-		log.Printf("Error decoding asset details for %s: %v", ticker, err)
+		log.Printf("Error decoding asset details for %s: %v", isin, err)
 		return err
 	}
 
 	newDetail := AssetDetails{
-		Ticker:        ticker,
+		Ticker:        isin,
 		ISIN:          response.ISIN,
 		MarketCap:     response.Metrics.MarketCap,
 		MarketCapEur:  response.Metrics.MarketCapEur,
@@ -4477,21 +4368,21 @@ func fetchAssetDetails(ticker string) error {
 
 	newDetail.Hash = newDetail.hashDetails()
 
-	latestDetail, err := db.getLatestAssetDetails(ticker)
+	latestDetail, err := db.getLatestAssetDetails(isin)
 	if err != nil {
-		log.Printf("Error getting latest asset details for %s: %v", ticker, err)
+		log.Printf("Error getting latest asset details for %s: %v", isin, err)
 		return err
 	}
 
 	if latestDetail == nil || latestDetail.Hash != newDetail.Hash {
 		err = db.addAssetDetails(newDetail)
 		if err != nil {
-			log.Printf("Error saving asset details for %s: %v", ticker, err)
+			log.Printf("Error saving asset details for %s: %v", isin, err)
 			return err
 		}
-		log.Printf("Added new asset details for %s", ticker)
+		log.Printf("Added new asset details for %s", isin)
 	} else {
-		log.Printf("No changes in asset details for %s, keeping existing record", ticker)
+		log.Printf("No changes in asset details for %s, keeping existing record", isin)
 	}
 
 	return nil
@@ -4502,47 +4393,70 @@ func fetchAssetDetailsPeriodic(interval time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		log.Println("Fetching asset details for all holdings...")
-		holdings, err := db.getAllETFHoldings()
+		log.Println("Fetching asset details for all stock holdings and ETF components...")
+
+		processedISINs := make(map[string]bool)
+
+		allHoldings, err := db.Query(`SELECT isin, ticker, etf FROM holdings`)
 		if err != nil {
-			log.Printf("Error getting ETF holdings: %v", err)
+			log.Printf("Error getting all holdings: %v", err)
 			continue
 		}
 
-		for _, holding := range holdings {
-			if holding.ISIN != "" && holding.ISIN != "N/A" && !holding.Etf {
+		var stockHoldings []struct {
+			ISIN   string
+			Ticker string
+			IsETF  bool
+		}
+
+		for allHoldings.Next() {
+			var h struct {
+				ISIN   string
+				Ticker string
+				IsETF  bool
+			}
+			if err := allHoldings.Scan(&h.ISIN, &h.Ticker, &h.IsETF); err == nil {
+				if !h.IsETF && h.ISIN != "" && h.ISIN != "N/A" {
+					stockHoldings = append(stockHoldings, h)
+				}
+			}
+		}
+		allHoldings.Close()
+
+		for _, holding := range stockHoldings {
+			if !processedISINs[holding.ISIN] {
 				err := fetchAssetDetails(holding.ISIN)
 				if err != nil {
 					log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", holding.Ticker, holding.ISIN, err)
+				} else {
+					processedISINs[holding.ISIN] = true
 				}
 				time.Sleep(2 * time.Second)
 			}
 		}
 
-		tickers, err := db.getUniqueTickers()
+		assetRows, err := db.Query(`SELECT DISTINCT isin, ticker FROM assets WHERE isin != '' AND isin != 'N/A'`)
 		if err != nil {
-			log.Printf("Error getting unique tickers: %v", err)
-			continue
-		}
-
-		for _, tickerStr := range tickers {
-			assets, err := db.getAssetsByTicker(tickerStr)
-			if err != nil {
-				continue
-			}
-
-			for _, asset := range assets {
-				if asset.ISIN != "" && asset.ISIN != "N/A" {
-					err := fetchAssetDetails(asset.ISIN)
-					if err != nil {
-						log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", asset.Ticker, asset.ISIN, err)
+			log.Printf("Error getting assets: %v", err)
+		} else {
+			for assetRows.Next() {
+				var assetISIN, assetTicker string
+				if err := assetRows.Scan(&assetISIN, &assetTicker); err == nil {
+					if !processedISINs[assetISIN] {
+						err := fetchAssetDetails(assetISIN)
+						if err != nil {
+							log.Printf("Failed to fetch asset details for %s (ISIN: %s): %v", assetTicker, assetISIN, err)
+						} else {
+							processedISINs[assetISIN] = true
+						}
+						time.Sleep(2 * time.Second)
 					}
-					time.Sleep(2 * time.Second)
-					break
 				}
 			}
+			assetRows.Close()
 		}
-		log.Println("Finished fetching asset details")
+
+		log.Printf("Finished fetching asset details for %d unique ISINs", len(processedISINs))
 	}
 }
 
@@ -4594,7 +4508,7 @@ func main() {
 		log.Fatal("Required environment variables (SALT, JWT_SECRET, BASE_URL) not set")
 	}
 
-	sqlDB, err := initDB(true)
+	sqlDB, err := initDB(false)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
@@ -4607,22 +4521,14 @@ func main() {
 
 	db = &DB{DB: sqlDB}
 
-	if USE_IN_MEMDB {
-		memDB, err = inmem.NewInMemDBFromSQL(5*time.Minute, "./snapshot.gob", "./portfolio.db")
-		if err != nil {
-			log.Fatal("Failed to initialize in-memory database:", err)
-		}
-		log.Println("In-memory database initialized successfully")
-	}
-
 	log.Println("Database initialized successfully")
 
 	go fetchNewsPeriodic(15 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
-	go fillInBetweenPricesPeriodic(60 * time.Minute)
+	go fillInBetweenPricesPeriodic(30 * time.Minute)
 	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(12 * time.Hour)
-	go fetchAssetDetailsPeriodic(8 * time.Hour)
+	go updateETFDataPeriodic(4 * time.Hour)
+	go fetchAssetDetailsPeriodic(4 * time.Hour)
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{

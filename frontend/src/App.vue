@@ -311,6 +311,63 @@
         </v-container>
 
         <v-container v-else-if="activeView === 'dashboard'" fluid>
+          <!-- Portfolio Statistics - Compact -->
+          <v-card class="mb-3">
+            <v-card-text class="pa-3">
+              <v-row dense>
+                <v-col cols="12" sm="6" md="3">
+                  <div class="stat-item">
+                    <div class="text-caption text-grey">TOTAL VALUE</div>
+                    <div class="text-h6 font-weight-bold" :class="statsData.total_gain_loss >= 0 ? 'text-success' : 'text-error'">
+                      {{ formatCurrency(statsData.total_value) }}
+                    </div>
+                    <div class="text-caption" :class="statsData.total_gain_loss >= 0 ? 'text-success' : 'text-error'">
+                      {{ statsData.total_gain_loss >= 0 ? '+' : '' }}{{ formatCurrency(statsData.total_gain_loss) }} ({{ statsData.total_gain_loss_pct >= 0 ? '+' : '' }}{{ statsData.total_gain_loss_pct?.toFixed(2) }}%)
+                    </div>
+                  </div>
+                </v-col>
+                <v-col cols="12" sm="6" md="3">
+                  <div class="stat-item">
+                    <div class="text-caption text-grey">YOY RETURN</div>
+                    <div class="text-h6 font-weight-bold" :class="statsData.yoy_return >= 0 ? 'text-success' : 'text-error'">
+                      {{ statsData.yoy_return >= 0 ? '+' : '' }}{{ statsData.yoy_return?.toFixed(2) }}%
+                    </div>
+                    <div class="text-caption text-grey">Annual performance</div>
+                  </div>
+                </v-col>
+                <v-col cols="12" sm="6" md="3">
+                  <div class="stat-item">
+                    <div class="text-caption text-grey">SORTINO RATIO</div>
+                    <div class="text-h6 font-weight-bold">{{ statsData.sortino_ratio?.toFixed(2) || '0.00' }}</div>
+                    <div class="text-caption text-grey">Risk-adjusted return</div>
+                  </div>
+                </v-col>
+                <v-col cols="12" sm="6" md="3">
+                  <div class="stat-item">
+                    <div class="text-caption text-grey">MAX DRAWDOWN</div>
+                    <div class="text-h6 font-weight-bold text-error">{{ statsData.max_drawdown?.toFixed(2) || '0.00' }}%</div>
+                    <div class="text-caption text-grey">Avg: {{ statsData.avg_drawdown?.toFixed(2) || '0.00' }}%</div>
+                  </div>
+                </v-col>
+              </v-row>
+              <v-divider class="my-2"></v-divider>
+              <v-row dense>
+                <v-col cols="12" sm="6">
+                  <div class="stat-item-inline">
+                    <span class="text-caption text-grey mr-2">Cost Basis:</span>
+                    <span class="font-weight-bold">{{ formatCurrency(statsData.total_cost) }}</span>
+                  </div>
+                </v-col>
+                <v-col cols="12" sm="6">
+                  <div class="stat-item-inline">
+                    <span class="text-caption text-grey mr-2">Aggregated TER:</span>
+                    <span class="font-weight-bold">{{ (statsData.aggregated_ter * 100)?.toFixed(3) || '0.000' }}%</span>
+                  </div>
+                </v-col>
+              </v-row>
+            </v-card-text>
+          </v-card>
+
           <!-- Portfolio Value Chart -->
           <v-card class="mb-4">
             <v-card-title class="d-flex align-center">
@@ -538,6 +595,7 @@ export default {
       portfolioError: '',
       selectedPeriod: '1m',
       chartWidth: 800,
+      statsData: {},
 
       // Sidebar state
       drawer: true,
@@ -670,6 +728,7 @@ export default {
         this.fetchPortfolioHistory()
         this.fetchPortfolioHoldings()
         this.getPortfolioAllocation()
+        this.fetchPortfolioStatistics()
       }, 100)
     }
 
@@ -917,6 +976,28 @@ export default {
       }
     },
 
+    async fetchPortfolioStatistics() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      try {
+        const url = `http://localhost:8085/api/portfolio/stats`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio statistics')
+        }
+        const data = await response.json()
+        this.statsData = data
+        console.log('Portfolio Statistics:', data)
+      } catch (error) {
+        console.error('Error fetching portfolio statistics:', error)
+      }
+    },
+
     async fetchPortfolioHoldings() {
       const token = this.getCookie('auth_token')
       if (!token) return
@@ -1006,6 +1087,16 @@ export default {
       })
 
       return slices
+    },
+
+    formatCurrency(value) {
+      if (value === null || value === undefined) return '€0.00'
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'EUR',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(value)
     }
   }
 }
@@ -1151,5 +1242,15 @@ export default {
   font-size: 0.8rem;
   font-weight: 600;
   color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.stat-item {
+  padding: 4px 0;
+}
+
+.stat-item-inline {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
 }
 </style>
