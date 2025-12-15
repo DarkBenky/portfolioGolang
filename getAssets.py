@@ -415,7 +415,13 @@ def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[s
             except:
                 pass
             
-            page.wait_for_selector("table[data-testid='etf-holdings_top-holdings_table']", timeout=10000)
+            try:
+                page.wait_for_selector("table[data-testid='etf-holdings_top-holdings_table']", timeout=10000)
+            except Exception as e:
+                print(f"  ETF data not available on JustETF for this ISIN")
+                browser.close()
+                return (None, {}, {})
+            
             time.sleep(1)
             
             try:
@@ -517,6 +523,7 @@ def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file:
     print(f"Fetching ETF data for {ticker} (ISIN: {isin})...")
     
     if not isin or isin == 'N/A':
+        print(f"  No ISIN provided, skipping ETF data fetch")
         return result
     
     if html_file and os.path.exists(html_file):
@@ -529,6 +536,8 @@ def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file:
     if justetf_holdings and len(justetf_holdings) > 0:
         result.holdings = enrich_holdings_with_details(justetf_holdings)
         print(f"  Total: {len(result.holdings)} holdings")
+    else:
+        print(f"  No holdings data found (ETF may not be available on JustETF)")
     
     result.sectors = sectors
     result.regions = regions

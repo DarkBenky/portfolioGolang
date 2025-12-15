@@ -1281,7 +1281,7 @@ export default {
         }
       }
     },
-    TODO
+    // TODO
     async fetchAssetStats(ticker, isin) {
       try {
         console.log(`Fetching stats for ${ticker} / ${isin}`)
