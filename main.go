@@ -4545,12 +4545,10 @@ func main() {
 
 	e := echo.New()
 
-	devMode := os.Getenv("DEV_MODE")
 	var allowOrigins []string
 	if devMode == "true" {
 		allowOrigins = []string{"http://localhost:5173"}
 	} else {
-		serverHost := os.Getenv("SERVER_HOST")
 		allowOrigins = []string{"http://" + serverHost + ":5173"}
 	}
 
