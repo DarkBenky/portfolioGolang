@@ -4525,11 +4525,11 @@ func main() {
 	log.Println("Database initialized successfully")
 
 	go fetchNewsPeriodic(15 * time.Minute)
-	go fetchPricesPeriodic(3 * time.Minute)
-	go fillInBetweenPricesPeriodic(30 * time.Minute)
-	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(4 * time.Minute)
-	go fetchAssetDetailsPeriodic(3 * time.Minute)
+	go fetchPricesPeriodic(5 * time.Minute)
+	go fillInBetweenPricesPeriodic(45 * time.Minute)
+	go updateSentimentsPeriodic(4 * time.Hour)
+	go updateETFDataPeriodic(6 * time.Hour)
+	go fetchAssetDetailsPeriodic(4 * time.Hour)
 
 	e := echo.New()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
