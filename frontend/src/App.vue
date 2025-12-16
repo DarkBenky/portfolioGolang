@@ -570,6 +570,7 @@
 
 <script>
 import LoginRegister from './components/loginRegister.vue'
+import { API_BASE_URL } from './config'
 import CandleChart from './components/candleChart.vue'
 import HoldingView from './components/holdingView.vue'
 
@@ -745,7 +746,7 @@ export default {
         const token = this.getCookie('auth_token')
         if (!token) return []
 
-        const response = await fetch('http://localhost:8085/api/portfolio/allocation', {
+        const response = await fetch(`${API_BASE_URL}/api/portfolio/allocation`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -895,7 +896,7 @@ export default {
         formData.append('Policy', this.newHolding.policy)
         formData.append('ETF', this.newHolding.etf ? 'true' : 'false')
 
-        const response = await fetch('http://localhost:8085/api/asset/holdings', {
+        const response = await fetch(`${API_BASE_URL}/api/asset/holdings`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -944,7 +945,7 @@ export default {
         else if (this.selectedPeriod === '1y') interval = '1d'
 
         const response = await fetch(
-          `http://localhost:8085/api/portfolio/history?period=${this.selectedPeriod}&interval=${interval}`,
+          `${API_BASE_URL}/api/portfolio/history?period=${this.selectedPeriod}&interval=${interval}`,
           {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -981,7 +982,7 @@ export default {
       if (!token) return
 
       try {
-        const url = `http://localhost:8085/api/portfolio/stats`
+        const url = `${API_BASE_URL}/api/portfolio/stats`
         const response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -1003,7 +1004,7 @@ export default {
       if (!token) return
 
       try {
-        const url = `http://localhost:8085/api/portfolio/holdings`
+        const url = `${API_BASE_URL}/api/portfolio/holdings`
         const response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${token}`

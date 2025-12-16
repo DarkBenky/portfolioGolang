@@ -716,6 +716,7 @@
 
 <script>
 import CandleChart from './candleChart.vue'
+import { API_BASE_URL } from '../config'
 
 export default {
   name: 'HoldingView',
@@ -902,7 +903,7 @@ export default {
     async fetchPriceHistory() {
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=1d&interval=15m`,
+          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=1d&interval=15m`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -937,7 +938,7 @@ export default {
         const interval = intervalMap[this.chartPeriod] || '1h'
         
         const response = await fetch(
-          `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=${this.chartPeriod}&interval=${interval}`,
+          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=${this.chartPeriod}&interval=${interval}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -959,7 +960,7 @@ export default {
     async fetchAssetChange() {
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/change?ticker=${encodeURIComponent(this.identifier)}`,
+          `${API_BASE_URL}/api/asset/change?ticker=${encodeURIComponent(this.identifier)}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -986,7 +987,7 @@ export default {
       this.newsLoading = true
       try {
         const response = await fetch(
-          `http://localhost:8085/api/asset/news?ticker=${encodeURIComponent(this.identifier)}&limit=5&offset=${this.newsOffset}`,
+          `${API_BASE_URL}/api/asset/news?ticker=${encodeURIComponent(this.identifier)}&limit=5&offset=${this.newsOffset}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -1022,7 +1023,7 @@ export default {
       try {
         const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD format
         const response = await fetch(
-          `http://localhost:8085/api/asset/daily_sentiment?ticker=${encodeURIComponent(this.identifier)}&date=${today}`,
+          `${API_BASE_URL}/api/asset/daily_sentiment?ticker=${encodeURIComponent(this.identifier)}&date=${today}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -1234,7 +1235,7 @@ export default {
         
         try {
           const response = await fetch(
-            `http://localhost:8085/api/asset/details?ticker=${encodeURIComponent(asset.isin)}`,
+            `${API_BASE_URL}/api/asset/details?ticker=${encodeURIComponent(asset.isin)}`,
             {
               headers: {
                 'Authorization': `Bearer ${this.authToken}`
@@ -1264,7 +1265,7 @@ export default {
         
         try {
           const response = await fetch(
-            `http://localhost:8085/api/asset/history?ticker=${encodeURIComponent(asset.isin)}&period=1m&interval=1d`,
+            `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(asset.isin)}&period=1m&interval=1d`,
             {
               headers: {
                 'Authorization': `Bearer ${this.authToken}`
@@ -1286,7 +1287,7 @@ export default {
       try {
         console.log(`Fetching stats for ${ticker} / ${isin}`)
         const response = await fetch(
-          `http://localhost:8085/api/asset/stats?ticker=${encodeURIComponent(ticker)}&isin=${encodeURIComponent(isin)}`,
+          `${API_BASE_URL}/api/asset/stats?ticker=${encodeURIComponent(ticker)}&isin=${encodeURIComponent(isin)}`
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
