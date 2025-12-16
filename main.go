@@ -2067,6 +2067,7 @@ func healthCheck(c echo.Context) error {
 }
 
 func fillInBetweenPricesPeriodic(interval time.Duration) {
+	// TODO: make the filling better to avoid the big triangles in between missing data
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
