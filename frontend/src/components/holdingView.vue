@@ -1287,7 +1287,7 @@ export default {
       try {
         console.log(`Fetching stats for ${ticker} / ${isin}`)
         const response = await fetch(
-          `${API_BASE_URL}/api/asset/stats?ticker=${encodeURIComponent(ticker)}&isin=${encodeURIComponent(isin)}`
+          `${API_BASE_URL}/api/asset/stats?ticker=${encodeURIComponent(ticker)}&isin=${encodeURIComponent(isin)}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
