@@ -4503,11 +4503,23 @@ func main() {
 
 	SALT = os.Getenv("SALT")
 	JWT_SECRET = os.Getenv("JWT_SECRET")
-	BASE_URL = os.Getenv("BASE_URL")
 
-	if SALT == "" || JWT_SECRET == "" || BASE_URL == "" {
-		log.Fatal("Required environment variables (SALT, JWT_SECRET, BASE_URL) not set")
+	devMode := os.Getenv("DEV_MODE")
+	pythonPort := os.Getenv("BACKEND_PYTHON_PORT")
+	serverHost := os.Getenv("SERVER_HOST")
+
+	if devMode == "true" {
+		BASE_URL = "http://localhost:" + pythonPort + "/api"
+	} else {
+		BASE_URL = "http://" + serverHost + ":" + pythonPort + "/api"
 	}
+
+	if SALT == "" || JWT_SECRET == "" {
+		log.Fatal("Required environment variables (SALT, JWT_SECRET) not set")
+	}
+
+	log.Printf("Running in dev mode: %s", devMode)
+	log.Printf("Python API URL: %s", BASE_URL)
 
 	sqlDB, err := initDB(false)
 	if err != nil {
@@ -4532,10 +4544,22 @@ func main() {
 	go fetchAssetDetailsPeriodic(4 * time.Hour)
 
 	e := echo.New()
+
+	devMode := os.Getenv("DEV_MODE")
+	var allowOrigins []string
+	if devMode == "true" {
+		allowOrigins = []string{"http://localhost:5173"}
+	} else {
+		serverHost := os.Getenv("SERVER_HOST")
+		allowOrigins = []string{"http://" + serverHost + ":5173"}
+	}
+
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+		AllowOrigins:     allowOrigins,
+		AllowMethods:     []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+		AllowCredentials: true,
+		ExposeHeaders:    []string{echo.HeaderContentLength},
 	}))
 
 	e.POST("/register", addUser)
