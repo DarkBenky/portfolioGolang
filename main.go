@@ -2160,18 +2160,15 @@ func FillInBetweenPrices(Ticker string) error {
 			fillsNeeded := (currentDateInt-prevDateInt)/60 - 1
 			for i := int64(1); i <= fillsNeeded; i++ {
 				missingDate := prevDateInt + i*60
-				interpolatedOpen := prevPrice.Close + (price.Open-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
-				interpolatedClose := prevPrice.Close + (price.Close-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
-				interpolatedHigh := prevPrice.Close + (price.High-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
-				interpolatedLow := prevPrice.Close + (price.Low-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
+				interpolatedPrice := prevPrice.Close + (price.Open-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
 				missingPrice := Price{
 					IdPrice: generateID(),
 					Ticker:  Ticker,
 					Date:    strconv.FormatInt(missingDate, 10),
-					Open:    interpolatedOpen,
-					Close:   interpolatedClose,
-					High:    interpolatedHigh,
-					Low:     interpolatedLow,
+					Open:    interpolatedPrice,
+					Close:   interpolatedPrice,
+					High:    interpolatedPrice,
+					Low:     interpolatedPrice,
 					Volume:  0,
 				}
 				missingPrices = append(missingPrices, missingPrice)
@@ -4554,6 +4551,147 @@ func getLatestAssetDetailsEndpoint(c echo.Context) error {
 	return c.JSON(http.StatusOK, detail)
 }
 
+func getOldHistoricPriceData(ticker string) ([]Price, error) {
+	url := fmt.Sprintf("%s/stock/history/%s", BASE_URL, ticker)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Error fetching historic price data for %s: %v", ticker, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("Historic data not found for %s (404), skipping", ticker)
+		return []Price{}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to fetch historic data: %s", resp.Status)
+		log.Printf("Historic data API error for %s: %s", ticker, resp.Status)
+		return nil, err
+	}
+
+	var response struct {
+		History []struct {
+			Timestamp int64   `json:"timestamp"`
+			Open      float64 `json:"open"`
+			High      float64 `json:"high"`
+			Low       float64 `json:"low"`
+			Close     float64 `json:"close"`
+			Volume    float64 `json:"volume"`
+		} `json:"history"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
+		log.Printf("Error decoding historic price data for %s: %v", ticker, err)
+		return nil, err
+	}
+
+	var prices []Price
+	for _, candle := range response.History {
+		price := Price{
+			IdPrice: generateID(),
+			Ticker:  ticker,
+			Date:    strconv.FormatInt(candle.Timestamp, 10),
+			Open:    candle.Open,
+			High:    candle.High,
+			Low:     candle.Low,
+			Close:   candle.Close,
+			Volume:  int64(candle.Volume),
+		}
+		prices = append(prices, price)
+	}
+
+	log.Printf("Retrieved %d historic price candles for %s", len(prices), ticker)
+	return prices, nil
+}
+
+func convertIsinToTicker(isin string) (string, error) {
+	url := fmt.Sprintf("%s/isin_to_ticker?isin=%s", BASE_URL, isin)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Error converting ISIN to ticker for %s: %v", isin, err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("ISIN to ticker conversion not found for %s (404), skipping", isin)
+		return "", nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to convert ISIN to ticker: %s", resp.Status)
+		log.Printf("ISIN to ticker API error for %s: %s", isin, resp.Status)
+		return "", err
+	}
+
+	var response struct {
+		Ticker string `json:"ticker"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
+		log.Printf("Error decoding ISIN to ticker response for %s: %v", isin, err)
+		return "", err
+	}
+
+	return response.Ticker, nil
+}
+
+func fetchOldPriceDataPeriodic(interval time.Duration) {
+	tickerTimer := time.NewTicker(interval)
+	defer tickerTimer.Stop()
+
+	for range tickerTimer.C {
+		log.Println("Fetching old historic price data for all assets...")
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers: %v", err)
+			continue
+		}
+
+		isins, err := db.getUniqueISINs()
+		if err != nil {
+			log.Printf("Error getting unique ISINs: %v", err)
+			continue
+		}
+
+		for _, isin := range isins {
+			ticker, err := convertIsinToTicker(isin)
+			if err != nil {
+				log.Printf("Error converting ISIN %s to ticker: %v", isin, err)
+				continue
+			}
+			if ticker != "" {
+				tickers = append(tickers, ticker)
+			}
+		}
+
+		for _, tickerSymbol := range tickers {
+			prices, err := getOldHistoricPriceData(tickerSymbol)
+			if err != nil {
+				log.Printf("Failed to fetch historic price data for %s: %v", tickerSymbol, err)
+				continue
+			}
+
+			if len(prices) > 0 {
+				err = db.addPrices(prices)
+				if err != nil {
+					log.Printf("Failed to insert historic prices for %s: %v", tickerSymbol, err)
+				} else {
+					log.Printf("Inserted %d historic prices for %s", len(prices), tickerSymbol)
+				}
+			}
+
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		log.Println("Finished fetching old historic price data for all assets")
+	}
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -4595,6 +4733,37 @@ func main() {
 
 	log.Println("Database initialized successfully")
 
+	log.Println("Running initial historic price data fetch...")
+	go func() {
+		tickers, err := db.getUniqueTickers()
+		if err != nil {
+			log.Printf("Error getting unique tickers for initial fetch: %v", err)
+			return
+		}
+
+		for _, tickerSymbol := range tickers {
+			prices, err := getOldHistoricPriceData(tickerSymbol)
+			if err != nil {
+				log.Printf("Failed to fetch historic price data for %s: %v", tickerSymbol, err)
+				continue
+			}
+
+			if len(prices) > 0 {
+				err = db.addPrices(prices)
+				if err != nil {
+					log.Printf("Failed to insert historic prices for %s: %v", tickerSymbol, err)
+				} else {
+					log.Printf("Inserted %d historic prices for %s", len(prices), tickerSymbol)
+				}
+			}
+
+			time.Sleep(2 * time.Second)
+		}
+
+		log.Println("Finished initial historic price data fetch")
+	}()
+
+	go fetchOldPriceDataPeriodic(24 * time.Hour)
 	go fetchNewsPeriodic(60 * time.Minute)
 	go fetchPricesPeriodic(5 * time.Minute)
 	go fillInBetweenPricesPeriodic(60 * time.Minute)

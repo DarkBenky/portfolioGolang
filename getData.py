@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
-from getPrice import getPrice
+from getPrice import getPrice, getPriceDataOld
 from getSummary import summarize_daily_news, summarize_daily_portfolio_news
 from getStock import get_stock_data
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
@@ -174,7 +174,7 @@ def search_ticker_info(identifier, search_type="ticker"):
                     ticker_obj = yf.Ticker(ticker_symbol)
                     info = ticker_obj.info
                     
-                    if info and info.get('symbol'):
+                    if info and info.get('symbol') and info.get('regularMarketPrice') is not None:
                         quote_type = info.get('quoteType', 'Unknown')
                         is_etf = quote_type == 'ETF'
                         isin = info.get('isin', 'N/A')
@@ -196,7 +196,8 @@ def search_ticker_info(identifier, search_type="ticker"):
                             'ter': ter,
                             'distribution_policy': dist_policy
                         })
-                except:
+                except Exception as e:
+                    print(f"Search error for {ticker_symbol}: {e}")
                     continue
             
             return results
@@ -344,6 +345,50 @@ async def api_summarize_portfolio():
     )
     return flask.jsonify(result)
 
+@lru_cache(maxsize=2048)
+def convert_isin_to_ticker(isin):
+    """Convert ISIN to ticker using OpenFIGI API with caching"""
+    if not isin or isin == 'N/A':
+        return None
+    
+    try:
+        import requests
+        url = 'https://api.openfigi.com/v3/mapping'
+        headers = {'Content-Type': 'application/json'}
+        payload = [{"idType": "ID_ISIN", "idValue": isin}]
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0 and 'data' in data[0]:
+                results = data[0]['data']
+                if results and len(results) > 0:
+                    ticker = results[0].get('ticker')
+                    if ticker:
+                        return ticker
+    except Exception as e:
+        print(f"OpenFIGI lookup failed for {isin}: {e}")
+    
+    return None
+
+# curl "http://localhost:5123/api/isin_to_ticker?isin=US0378331005"
+@app.route('/api/isin_to_ticker', methods=['GET'])
+async def api_isin_to_ticker():
+    """Convert ISIN to ticker symbol"""
+    isin = flask.request.args.get('isin', '')
+    
+    if not isin:
+        return flask.jsonify({'error': 'ISIN parameter is required'}), 400
+    
+    loop = asyncio.get_event_loop()
+    ticker = await loop.run_in_executor(executor, convert_isin_to_ticker, isin)
+    
+    if ticker:
+        return flask.jsonify({'isin': isin, 'ticker': ticker})
+    else:
+        return flask.jsonify({'error': 'Could not convert ISIN to ticker'}), 404
+
 # curl "http://localhost:5123/api/stock/US0378331005"
 @app.route('/api/stock/<isin>', methods=['GET'])
 async def api_stock_data(isin):
@@ -357,6 +402,20 @@ async def api_stock_data(isin):
                 'financials': result.financials.__dict__ if hasattr(result.financials, '__dict__') else result.financials
             })
         return flask.jsonify({'error': 'Could not fetch stock data for this ISIN'}), 404
+    except Exception as e:
+        return flask.jsonify({'error': str(e)}), 500
+    
+@app.route('/api/stock/history/<ticker>', methods=['GET'])
+async def api_stock_history(ticker):
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, getPriceDataOld, ticker)
+        if result:
+            return flask.jsonify({
+                'ticker': ticker,
+                'history': result
+            })
+        return flask.jsonify({'error': 'Could not fetch stock history for this ticker'}), 404
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
 

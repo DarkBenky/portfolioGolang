@@ -80,3 +80,9 @@ def getPriceDataOld(Ticker: str):
             'volume': row['Volume'] / 60  # convert to per minute volume
         })
     return candles
+
+if __name__ == "__main__":
+    # Example usage
+    Ticker = "EXSA.DE"
+    print(getPriceDataOld(Ticker))
+    
