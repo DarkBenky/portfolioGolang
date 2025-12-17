@@ -570,7 +570,7 @@
 
 <script>
 import LoginRegister from './components/loginRegister.vue'
-import { API_BASE_URL } from './config'
+import { API_BASE_URL, PYTHON_API_URL } from './config'
 import CandleChart from './components/candleChart.vue'
 import HoldingView from './components/holdingView.vue'
 
@@ -801,7 +801,7 @@ export default {
         const searchType = isIsin ? 'isin' : 'ticker'
         
         const response = await fetch(
-          `http://localhost:5123/api/search?identifier=${encodeURIComponent(this.searchQuery)}&search_type=${searchType}`
+          `${PYTHON_API_URL}/api/search?identifier=${encodeURIComponent(this.searchQuery)}&search_type=${searchType}`
         )
         
         if (response.ok) {
