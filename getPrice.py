@@ -63,3 +63,20 @@ def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
         })
     
     return candles
+
+def getPriceDataOld(Ticker: str):
+    Ticker  = Ticker.strip('$')
+    # load as much data as possible with interval 1h
+    ticker = yf.Ticker(Ticker)
+    data = ticker.history(period="max", interval="1h")
+    candles = []
+    for timestamp, row in data.iterrows():
+        candles.append({
+            'timestamp': int(timestamp.timestamp()),
+            'open': row['Open'],
+            'high': row['High'],
+            'low': row['Low'],
+            'close': row['Close'],
+            'volume': row['Volume'] / 60  # convert to per minute volume
+        })
+    return candles

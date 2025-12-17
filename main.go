@@ -1932,6 +1932,31 @@ func generateID() string {
 	return uuid.New().String()
 }
 
+func resolveTickerOrISIN(identifier string) (string, error) {
+	var ticker string
+	dbMutex.Lock()
+	err := db.QueryRow(`
+		SELECT ticker FROM holdings WHERE ticker = ? OR isin = ? LIMIT 1
+	`, identifier, identifier).Scan(&ticker)
+	dbMutex.Unlock()
+
+	if err == nil {
+		return ticker, nil
+	}
+
+	dbMutex.Lock()
+	err = db.QueryRow(`
+		SELECT ticker FROM assets WHERE ticker = ? OR isin = ? LIMIT 1
+	`, identifier, identifier).Scan(&ticker)
+	dbMutex.Unlock()
+
+	if err == nil {
+		return ticker, nil
+	}
+
+	return identifier, nil
+}
+
 func buildPlaceholders(count int) string {
 	if count == 0 {
 		return ""
@@ -3139,7 +3164,12 @@ func getAssetValueChange(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
 	userID := claims.UserID
-	assetTicker := c.QueryParam("ticker")
+	identifier := c.QueryParam("ticker")
+
+	assetTicker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
+	}
 
 	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
@@ -3148,7 +3178,7 @@ func getAssetValueChange(c echo.Context) error {
 
 	var totalQuantity float64
 	for _, holding := range holdings {
-		if holding.Ticker == assetTicker {
+		if holding.Ticker == assetTicker || holding.ISIN == identifier {
 			totalQuantity += holding.Quantity
 		}
 	}
@@ -3292,7 +3322,11 @@ func getLatestNewsForAsset(c echo.Context) error {
 	if err != nil {
 		offset = 0
 	}
-	ticker := c.QueryParam("ticker")
+	identifier := c.QueryParam("ticker")
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
+	}
 
 	query := `
 		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
@@ -3413,9 +3447,14 @@ func getPortfolioDaySentiment(c echo.Context) error {
 }
 
 func getAssetDaySentiment(c echo.Context) error {
-	ticker := c.QueryParam("ticker")
-	if ticker == "" {
+	identifier := c.QueryParam("ticker")
+	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
 	now := time.Now().UTC()
@@ -3628,14 +3667,19 @@ func getPortfolioAllocation(c echo.Context) error {
 }
 
 func GetTickerValue(c echo.Context) error {
-	ticker := c.QueryParam("ticker")
-	if ticker == "" {
+	identifier := c.QueryParam("ticker")
+	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
 	var latestPrice float64
 	dbMutex.Lock()
-	err := db.QueryRow(`
+	err = db.QueryRow(`
 		SELECT close FROM prices
 		WHERE ticker = ?
 		ORDER BY CAST(date AS INTEGER) DESC
@@ -3653,9 +3697,14 @@ func GetTickerValue(c echo.Context) error {
 }
 
 func GetAssetPriceHistory(c echo.Context) error {
-	ticker := c.QueryParam("ticker")
-	if ticker == "" {
+	identifier := c.QueryParam("ticker")
+	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
 	period := c.QueryParam("period")                  // e.g., "1d", "1w", "1m", "3m", "1y"
@@ -4247,10 +4296,15 @@ func getAllPortfolioDaySentiments(c echo.Context) error {
 }
 
 func getAssetDailySentimentSummary(c echo.Context) error {
-	ticker := c.QueryParam("ticker")
+	identifier := c.QueryParam("ticker")
 	date := c.QueryParam("date")
-	if ticker == "" || date == "" {
+	if identifier == "" || date == "" {
 		return c.String(http.StatusBadRequest, "ticker and date parameters are required")
+	}
+
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
 	sentimentSummary, err := db.getHoldingDailySummary(ticker, date)
@@ -4265,9 +4319,14 @@ func getAssetDailySentimentSummary(c echo.Context) error {
 }
 
 func GetAssetSentiments(c echo.Context) error {
-	ticker := c.QueryParam("ticker")
-	if ticker == "" {
+	identifier := c.QueryParam("ticker")
+	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
+	}
+
+	ticker, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
 	query := `
