@@ -404,12 +404,14 @@
               </div>
               <div v-else-if="portfolioData.length > 0" class="chart-wrapper">
                 <CandleChart
+                  ref="portfolioChart"
                   :data="portfolioData"
                   :height="400"
                   :price-decimals="2"
                   :show-volume="false"
                   bull-color="#26a79a"
                   bear-color="#ef5250"
+                  @chart-ready="onPortfolioChartReady"
                 />
               </div>
               <div v-else class="text-center py-8 text-grey">
@@ -648,7 +650,9 @@ export default {
 
       // Holdings view state
       holdingsSearch: '',
-      holdingsSortBy: 'value'
+      holdingsSortBy: 'value',
+      
+      portfolioCostBasisLine: null
     }
   },
 
@@ -1008,6 +1012,23 @@ export default {
       }
     },
 
+    onPortfolioChartReady({ chart, candleSeries }) {
+      if (this.portfolioCostBasisLine) {
+        candleSeries.removePriceLine(this.portfolioCostBasisLine)
+      }
+      
+      if (this.statsData.total_cost && this.statsData.total_cost > 0) {
+        this.portfolioCostBasisLine = candleSeries.createPriceLine({
+          price: this.statsData.total_cost,
+          color: '#808080',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Cost Basis'
+        })
+      }
+    },
+
     // Fetch portfolio value history
     async fetchPortfolioHistory() {
       const token = this.getCookie('auth_token')
@@ -1040,6 +1061,15 @@ export default {
           close: item.close,
           volume: 0
         }))
+        
+        this.$nextTick(() => {
+          if (this.$refs.portfolioChart) {
+            this.onPortfolioChartReady({
+              chart: this.$refs.portfolioChart.getChart(),
+              candleSeries: this.$refs.portfolioChart.getCandleSeries()
+            })
+          }
+        })
       } catch (error) {
         console.error('Error fetching portfolio history:', error)
         this.portfolioError = error.message || 'Failed to load portfolio data'

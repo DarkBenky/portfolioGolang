@@ -118,10 +118,12 @@
                 </div>
                 <div v-else-if="fullPriceHistory.length > 0" style="width: 100%;">
                   <CandleChart
+                  ref="holdingChart"
                   :data="fullPriceHistory"
                   :height="500"
                   :show-volume="false"
-                  theme="dark"/>
+                  theme="dark"
+                  @chart-ready="onHoldingChartReady"/>
                 </div>
                 <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
                   No chart data available
@@ -1012,7 +1014,8 @@ export default {
       showRemoveDialog: false,
       removeLoading: false,
       removeError: '',
-      conversionRate: 1
+      conversionRate: 1,
+      holdingCostBasisLine: null
     }
   },
 
@@ -1236,6 +1239,24 @@ export default {
       }
     },
 
+    onHoldingChartReady({ chart, candleSeries }) {
+      if (this.holdingCostBasisLine) {
+        candleSeries.removePriceLine(this.holdingCostBasisLine)
+      }
+      
+      const costBasisPrice = this.holding.purchase_price
+      if (costBasisPrice && costBasisPrice > 0) {
+        this.holdingCostBasisLine = candleSeries.createPriceLine({
+          price: costBasisPrice,
+          color: '#808080',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Cost Basis'
+        })
+      }
+    },
+
     async fetchFullPriceHistory() {
       this.chartLoading = true
       try {
@@ -1251,6 +1272,15 @@ export default {
         if (response.ok) {
           const data = await response.json()
           this.fullPriceHistory = data || []
+          
+          this.$nextTick(() => {
+            if (this.$refs.holdingChart) {
+              this.onHoldingChartReady({
+                chart: this.$refs.holdingChart.getChart(),
+                candleSeries: this.$refs.holdingChart.getCandleSeries()
+              })
+            }
+          })
         }
       } catch (error) {
         console.error('Error fetching full price history:', error)
