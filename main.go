@@ -4758,7 +4758,7 @@ func main() {
 		log.Println("Finished initial historic price data fetch")
 	}()
 
-	go fetchOldPriceDataPeriodic(24 * time.Hour)
+	go fetchOldPriceDataPeriodic(7 * 24 * time.Hour)
 	go fetchNewsPeriodic(120 * time.Minute)
 	go fetchPricesPeriodic(10 * time.Minute)
 	go fillInBetweenPricesPeriodic(90 * time.Minute)
