@@ -36,7 +36,7 @@ var (
 	JWT_SECRET string
 	BASE_URL   string
 	db         *DB
-	dbMutex    sync.Mutex
+	dbMutex    sync.RWMutex
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -197,8 +197,8 @@ func (database *DB) addAssetDetails(detail AssetDetails) error {
 }
 
 func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var detail AssetDetails
 	err := database.QueryRow(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC LIMIT 1`, ticker, ticker).Scan(&detail.Ticker, &detail.ISIN, &detail.MarketCap, &detail.MarketCapEur, &detail.Country, &detail.Sector, &detail.Eps, &detail.PbRatio, &detail.PeRatio, &detail.DividendYield, &detail.Revenue, &detail.NetIncome, &detail.ProfitMargin, &detail.Hash, &detail.Date)
@@ -208,9 +208,69 @@ func (database *DB) getLatestAssetDetails(ticker string) (*AssetDetails, error) 
 	return &detail, err
 }
 
+func (database *DB) isETF(ticker string, isin string) (bool, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+	var etfFlag interface{}
+	err := database.QueryRow(`SELECT etf FROM holdings WHERE ticker = ? OR isin = ? LIMIT 1`, ticker, isin).Scan(&etfFlag)
+	if err != nil {
+		return false, err
+	}
+	switch v := etfFlag.(type) {
+	case int64:
+		return v == 1, nil
+	case bool:
+		return v, nil
+	case string:
+		return v == "true" || v == "1", nil
+	default:
+		return false, nil
+	}
+}
+
+func (database *DB) getUnderlyingAssetsForETF(ticker string, isin string) ([]Asset, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+	rows, err := database.Query(`SELECT a.id_asset, a.name, a.ticker, a.isin, a.exchange, a.sector, a.region, a.id_holding, a.currency FROM assets a JOIN holdings h ON a.id_holding = h.id_holding WHERE h.ticker = ? OR h.isin = ?`, ticker, isin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var assets []Asset
+	for rows.Next() {
+		var asset Asset
+		err := rows.Scan(&asset.IdAsset, &asset.Name, &asset.Ticker, &asset.ISIN, &asset.Exchange, &asset.Sector, &asset.Region, &asset.idHolding, &asset.currency)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	return assets, nil
+}
+
+func (database *DB) getUnderlyingAssetTickers(ticker string, isin string) ([]string, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+	rows, err := database.Query(`SELECT DISTINCT a.ticker FROM assets a JOIN holdings h ON a.id_holding = h.id_holding WHERE h.ticker = ? OR h.isin = ?`, ticker, isin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tickers []string
+	for rows.Next() {
+		var ticker string
+		err := rows.Scan(&ticker)
+		if err != nil {
+			return nil, err
+		}
+		tickers = append(tickers, ticker)
+	}
+	return tickers, nil
+}
+
 func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`SELECT ticker, isin, market_cap, market_cap_eur, country, sector, eps, pb_ratio, pe_ratio, dividend_yield, revenue, net_income, profit_margin, hash, date FROM asset_details WHERE ticker = ? OR isin = ? ORDER BY CAST(date AS INTEGER) DESC`, ticker, ticker)
 	if err != nil {
@@ -413,8 +473,8 @@ func fetchNewsPeriodic(interval time.Duration) {
 }
 
 func (database *DB) newsExists(title string, summary string, text string) (bool, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var count int
 	if text != "" {
@@ -1223,8 +1283,8 @@ func (database *DB) addUser(user User) error {
 }
 
 func (database *DB) getUserByEmail(email string) (*User, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var user User
 	err := database.QueryRow(`
@@ -1237,8 +1297,8 @@ func (database *DB) getUserByEmail(email string) (*User, error) {
 }
 
 func (database *DB) verifyUser(email string, password string) (bool, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var hashedPassword string
 	err := database.QueryRow(`
@@ -1398,8 +1458,8 @@ func (database *DB) modifyHolding(holding Holding) error {
 }
 
 func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
@@ -1426,8 +1486,8 @@ func (database *DB) getHoldingsByUser(userID string) ([]Holding, error) {
 }
 
 func (database *DB) getPortfolioDailySummary(userID string, date string) (*PortfolioDailySentiment, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var summary PortfolioDailySentiment
 	err := database.QueryRow(`
@@ -1436,14 +1496,23 @@ func (database *DB) getPortfolioDailySummary(userID string, date string) (*Portf
 		WHERE user_id = ? AND date = ?
 	`, userID, date).Scan(&summary.IdSentiment, &summary.UserID, &summary.Date, &summary.Summary, &summary.Sentiment)
 	if err != nil {
-		return nil, err
+		err = database.QueryRow(`
+			SELECT id_sentiment, user_id, date, summary, sentiment
+			FROM portfolio_daily_sentiment
+			WHERE user_id = ?
+			ORDER BY date DESC
+			LIMIT 1
+		`, userID).Scan(&summary.IdSentiment, &summary.UserID, &summary.Date, &summary.Summary, &summary.Sentiment)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &summary, nil
 }
 
 func (database *DB) getHoldingDailySummary(holdingID string, date string) (*DailySentiment, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var summary DailySentiment
 	err := database.QueryRow(`
@@ -1452,7 +1521,16 @@ func (database *DB) getHoldingDailySummary(holdingID string, date string) (*Dail
 		WHERE ticker = ? AND date = ?
 	`, holdingID, date).Scan(&summary.IdSentiment, &summary.Ticker, &summary.Date, &summary.Summary, &summary.Sentiment)
 	if err != nil {
-		return nil, err
+		err = database.QueryRow(`
+			SELECT id_sentiment, ticker, date, summary, sentiment
+			FROM daily_sentiment
+			WHERE ticker = ?
+			ORDER BY date DESC
+			LIMIT 1
+		`, holdingID).Scan(&summary.IdSentiment, &summary.Ticker, &summary.Date, &summary.Summary, &summary.Sentiment)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &summary, nil
 }
@@ -1596,8 +1674,8 @@ func (database *DB) deleteETFDataForHolding(holdingID string) error {
 }
 
 func (database *DB) getAllETFHoldings() ([]Holding, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
@@ -1682,8 +1760,8 @@ func (database *DB) upsertPortfolioDailySentiment(sentiment PortfolioDailySentim
 }
 
 func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]News, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
@@ -1716,8 +1794,8 @@ func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]Ne
 }
 
 func (database *DB) getAllUsers() ([]User, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`SELECT id, user_name, email FROM users`)
 	if err != nil {
@@ -1738,8 +1816,8 @@ func (database *DB) getAllUsers() ([]User, error) {
 }
 
 func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency
@@ -1764,8 +1842,8 @@ func (database *DB) getAssetsByTicker(ticker string) ([]Asset, error) {
 }
 
 func (database *DB) getUniqueTickers() ([]string, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT DISTINCT ticker FROM (
@@ -1794,8 +1872,8 @@ func (database *DB) getUniqueTickers() ([]string, error) {
 }
 
 func (database *DB) getUniqueISINs() ([]string, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT DISTINCT isin FROM (
@@ -1824,8 +1902,8 @@ func (database *DB) getUniqueISINs() ([]string, error) {
 }
 
 func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
 		SELECT id_holding, name, ticker, isin, exchange, etf, quantity, purchase_price, ter, policy, user_id, currency
@@ -1903,8 +1981,8 @@ func addPriceIndexes(database *sql.DB) error {
 }
 
 func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
 
 	var lastTimestamp sql.NullInt64
 	now := time.Now().UTC().Unix()
@@ -3254,10 +3332,24 @@ func getLatestNewsForPortfolio(c echo.Context) error {
 		return c.JSON(http.StatusOK, []News{})
 	}
 
-	// Build list of tickers from user's holdings
-	tickers := make([]string, 0, len(holdings))
+	// Build list of tickers from user's holdings, including underlying assets for ETFs
+	tickerSet := make(map[string]bool)
 	for _, h := range holdings {
-		tickers = append(tickers, h.Ticker)
+		tickerSet[h.Ticker] = true
+
+		if isETF, err := db.isETF(h.Ticker, h.ISIN); err == nil && isETF {
+			underlyingTickers, err := db.getUnderlyingAssetTickers(h.Ticker, h.ISIN)
+			if err == nil {
+				for _, ut := range underlyingTickers {
+					tickerSet[ut] = true
+				}
+			}
+		}
+	}
+
+	tickers := make([]string, 0, len(tickerSet))
+	for ticker := range tickerSet {
+		tickers = append(tickers, ticker)
 	}
 
 	// Build query with placeholders for tickers
@@ -3326,17 +3418,61 @@ func getLatestNewsForAsset(c echo.Context) error {
 	if err != nil {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
+	log.Printf("getLatestNewsForAsset: identifier=%s, resolved ticker=%s", identifier, ticker)
 
-	query := `
-		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
-		FROM news
-		WHERE ticker = ?
-		ORDER BY CAST(published_at AS INTEGER) DESC
-		LIMIT ? OFFSET ?
-	`
+	var query string
+	var args []interface{}
+
+	isETF, etfErr := db.isETF(ticker, identifier)
+	log.Printf("isETF check: ticker=%s, identifier=%s, isETF=%v, err=%v", ticker, identifier, isETF, etfErr)
+
+	if etfErr == nil && isETF {
+		log.Printf("Detected ETF for ticker=%s, identifier=%s", ticker, identifier)
+		underlyingTickers, err := db.getUnderlyingAssetTickers(ticker, identifier)
+		log.Printf("Underlying tickers: %v, error: %v", underlyingTickers, err)
+		if err == nil && len(underlyingTickers) > 0 {
+			allTickers := append([]string{ticker}, underlyingTickers...)
+			placeholders := ""
+			args = make([]interface{}, 0, len(allTickers)+2)
+			for i, t := range allTickers {
+				if i > 0 {
+					placeholders += ","
+				}
+				placeholders += "?"
+				args = append(args, t)
+			}
+			args = append(args, limit, offset)
+
+			query = fmt.Sprintf(`
+				SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+				FROM news
+				WHERE ticker IN (%s)
+				ORDER BY CAST(published_at AS INTEGER) DESC
+				LIMIT ? OFFSET ?
+			`, placeholders)
+		} else {
+			query = `
+				SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+				FROM news
+				WHERE ticker = ?
+				ORDER BY CAST(published_at AS INTEGER) DESC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{ticker, limit, offset}
+		}
+	} else {
+		query = `
+			SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+			FROM news
+			WHERE ticker = ?
+			ORDER BY CAST(published_at AS INTEGER) DESC
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{ticker, limit, offset}
+	}
 
 	dbMutex.Lock()
-	rows, err := db.Query(query, ticker, limit, offset)
+	rows, err := db.Query(query, args...)
 	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news: %v", err)
@@ -3383,10 +3519,24 @@ func getPortfolioDaySentiment(c echo.Context) error {
 		})
 	}
 
-	// Build list of tickers from user's holdings
-	tickers := make([]string, 0, len(holdings))
+	// Build list of tickers from user's holdings, including underlying assets for ETFs
+	tickerSet := make(map[string]bool)
 	for _, h := range holdings {
-		tickers = append(tickers, h.Ticker)
+		tickerSet[h.Ticker] = true
+
+		if isETF, err := db.isETF(h.Ticker, h.ISIN); err == nil && isETF {
+			underlyingTickers, err := db.getUnderlyingAssetTickers(h.Ticker, h.ISIN)
+			if err == nil {
+				for _, ut := range underlyingTickers {
+					tickerSet[ut] = true
+				}
+			}
+		}
+	}
+
+	tickers := make([]string, 0, len(tickerSet))
+	for ticker := range tickerSet {
+		tickers = append(tickers, ticker)
 	}
 
 	// Build query with placeholders for tickers
@@ -3460,16 +3610,54 @@ func getAssetDaySentiment(c echo.Context) error {
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
 	endOfDay := startOfDay + 86400
 
-	query := `
-		SELECT sentiment FROM news
-		WHERE ticker = ?
-		AND CAST(published_at AS INTEGER) >= ?
-		AND CAST(published_at AS INTEGER) < ?
-		AND sentiment IS NOT NULL
-	`
+	var query string
+	var args []interface{}
+
+	if isETF, err := db.isETF(ticker, identifier); err == nil && isETF {
+		underlyingTickers, err := db.getUnderlyingAssetTickers(ticker, identifier)
+		if err == nil && len(underlyingTickers) > 0 {
+			allTickers := append([]string{ticker}, underlyingTickers...)
+			placeholders := ""
+			args = make([]interface{}, 0, len(allTickers)+2)
+			for i, t := range allTickers {
+				if i > 0 {
+					placeholders += ","
+				}
+				placeholders += "?"
+				args = append(args, t)
+			}
+			args = append(args, startOfDay, endOfDay)
+
+			query = fmt.Sprintf(`
+				SELECT sentiment FROM news
+				WHERE ticker IN (%s)
+				AND CAST(published_at AS INTEGER) >= ?
+				AND CAST(published_at AS INTEGER) < ?
+				AND sentiment IS NOT NULL
+			`, placeholders)
+		} else {
+			query = `
+				SELECT sentiment FROM news
+				WHERE ticker = ?
+				AND CAST(published_at AS INTEGER) >= ?
+				AND CAST(published_at AS INTEGER) < ?
+				AND sentiment IS NOT NULL
+			`
+			args = []interface{}{ticker, startOfDay, endOfDay}
+		}
+	} else {
+		query = `
+			SELECT sentiment FROM news
+			WHERE ticker = ?
+			AND CAST(published_at AS INTEGER) >= ?
+			AND CAST(published_at AS INTEGER) < ?
+			AND sentiment IS NOT NULL
+		`
+		args = []interface{}{ticker, startOfDay, endOfDay}
+	}
 
 	dbMutex.Lock()
-	rows, err := db.Query(query, ticker, startOfDay, endOfDay)
+	rows, err := db.Query(query, args...)
 	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying news sentiment: %v", err)
@@ -4299,15 +4487,67 @@ func getAssetDailySentimentSummary(c echo.Context) error {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
-	sentimentSummary, err := db.getHoldingDailySummary(ticker, date)
-	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
-			return c.JSON(http.StatusOK, nil)
+	var sentimentSummary *DailySentiment
+	sentimentSummary, err = db.getHoldingDailySummary(ticker, date)
+
+	isETF, etfErr := db.isETF(ticker, identifier)
+	if etfErr == nil && isETF {
+		underlyingTickers, utErr := db.getUnderlyingAssetTickers(ticker, identifier)
+		if utErr == nil && len(underlyingTickers) > 0 {
+			var totalSentiment float64
+			count := 0
+			var summaries []string
+
+			if sentimentSummary != nil && !math.IsNaN(sentimentSummary.Sentiment) {
+				totalSentiment = sentimentSummary.Sentiment
+				count = 1
+				if sentimentSummary.Summary != "" {
+					summaries = append(summaries, sentimentSummary.Summary)
+				}
+			}
+
+			for _, ut := range underlyingTickers {
+				ds, dsErr := db.getHoldingDailySummary(ut, date)
+				if dsErr == nil && ds != nil && !math.IsNaN(ds.Sentiment) {
+					totalSentiment += ds.Sentiment
+					count++
+					if ds.Summary != "" {
+						summaries = append(summaries, ds.Summary)
+					}
+				}
+			}
+
+			if count > 0 {
+				if sentimentSummary == nil {
+					sentimentSummary = &DailySentiment{
+						Ticker: ticker,
+						Date:   date,
+					}
+				}
+				sentimentSummary.Sentiment = totalSentiment / float64(count)
+				if len(summaries) > 0 {
+					combinedSummary := "Combined ETF sentiment: "
+					for i, s := range summaries {
+						if i > 0 {
+							combinedSummary += " | "
+						}
+						combinedSummary += s
+					}
+					sentimentSummary.Summary = combinedSummary
+				}
+			}
 		}
-		return c.String(http.StatusInternalServerError, "Error retrieving asset sentiment summary")
 	}
 
-	return c.JSON(http.StatusOK, sentimentSummary)
+	if sentimentSummary != nil {
+		return c.JSON(http.StatusOK, sentimentSummary)
+	}
+
+	if err != nil && err.Error() == "sql: no rows in result set" {
+		return c.JSON(http.StatusOK, nil)
+	}
+
+	return c.String(http.StatusInternalServerError, "Error retrieving asset sentiment summary")
 }
 
 func GetAssetSentiments(c echo.Context) error {
@@ -4321,17 +4561,56 @@ func GetAssetSentiments(c echo.Context) error {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
-	query := `
-		SELECT published_at, sentiment
-		FROM news
-		WHERE ticker = ?
-		AND sentiment IS NOT NULL
-		ORDER BY CAST(published_at AS INTEGER) DESC
-		LIMIT 100
-	`
+	var query string
+	var args []interface{}
+
+	if isETF, err := db.isETF(ticker, identifier); err == nil && isETF {
+		underlyingTickers, err := db.getUnderlyingAssetTickers(ticker, identifier)
+		if err == nil && len(underlyingTickers) > 0 {
+			allTickers := append([]string{ticker}, underlyingTickers...)
+			placeholders := ""
+			args = make([]interface{}, 0, len(allTickers))
+			for i, t := range allTickers {
+				if i > 0 {
+					placeholders += ","
+				}
+				placeholders += "?"
+				args = append(args, t)
+			}
+
+			query = fmt.Sprintf(`
+				SELECT published_at, sentiment
+				FROM news
+				WHERE ticker IN (%s)
+				AND sentiment IS NOT NULL
+				ORDER BY CAST(published_at AS INTEGER) DESC
+				LIMIT 100
+			`, placeholders)
+		} else {
+			query = `
+				SELECT published_at, sentiment
+				FROM news
+				WHERE ticker = ?
+				AND sentiment IS NOT NULL
+				ORDER BY CAST(published_at AS INTEGER) DESC
+				LIMIT 100
+			`
+			args = []interface{}{ticker}
+		}
+	} else {
+		query = `
+			SELECT published_at, sentiment
+			FROM news
+			WHERE ticker = ?
+			AND sentiment IS NOT NULL
+			ORDER BY CAST(published_at AS INTEGER) DESC
+			LIMIT 100
+		`
+		args = []interface{}{ticker}
+	}
 
 	dbMutex.Lock()
-	rows, err := db.Query(query, ticker)
+	rows, err := db.Query(query, args...)
 	dbMutex.Unlock()
 	if err != nil {
 		log.Printf("Error querying asset sentiments: %v", err)

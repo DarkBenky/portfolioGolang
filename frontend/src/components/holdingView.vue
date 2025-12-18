@@ -1,4 +1,43 @@
 <template>
+  <!-- News Dialog -->
+  <v-dialog v-model="showNewsDialog" max-width="800">
+    <v-card v-if="selectedNewsItem">
+      <v-card-title class="d-flex justify-space-between align-center">
+        <div class="d-flex align-center">
+          <v-chip 
+            :color="getSentimentColor(selectedNewsItem.sentiment)" 
+            size="small" 
+            variant="tonal"
+            class="mr-3"
+          >
+            Sentiment: {{ selectedNewsItem.sentiment?.toFixed(2) || '0.00' }}
+          </v-chip>
+          <span class="text-caption text-grey">{{ formatNewsDate(selectedNewsItem.published_at) }}</span>
+        </div>
+        <v-btn icon variant="text" @click="showNewsDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <h2 class="text-h6 mb-4">{{ selectedNewsItem.title }}</h2>
+        <div class="text-body-1 mb-4" style="white-space: pre-wrap;">{{ selectedNewsItem.text || selectedNewsItem.summary }}</div>
+        <v-divider class="my-4"></v-divider>
+        <div class="d-flex justify-center">
+          <v-btn
+            :href="selectedNewsItem.link"
+            target="_blank"
+            rel="noopener noreferrer"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-open-in-new"
+          >
+            Read Original Article
+          </v-btn>
+        </div>
+      </v-card-text>
+    </v-card>
+  </v-dialog>
+
   <tbody class="holding-tbody">
     <tr class="holding-row" @click="opened = !opened">
     <!-- Mini Chart -->
@@ -573,6 +612,57 @@
                           <div v-if="assetDetailsLoading[expandedAsset.name]" class="text-center py-2">
                             <v-progress-circular indeterminate size="20" color="primary"></v-progress-circular>
                           </div>
+
+                          <v-divider class="my-3"></v-divider>
+
+                          <div class="asset-news-section">
+                            <div class="d-flex align-center mb-3">
+                              <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
+                              <span class="text-subtitle-2">Latest News - {{ expandedAsset.name }}</span>
+                            </div>
+
+                            <SentimentCard
+                              v-if="assetSentiment[expandedAsset.name]"
+                              :label="`${expandedAsset.name} Sentiment`"
+                              :sentiment-score="assetSentiment[expandedAsset.name].sentiment"
+                              :summary="assetSentiment[expandedAsset.name].summary"
+                              :date="assetSentiment[expandedAsset.name].date"
+                              :show-trend="false"
+                              class="mb-3"
+                            />
+
+                            <div v-if="assetNewsLoading[expandedAsset.name]" class="text-center py-4">
+                              <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+                            </div>
+                            <div v-else-if="!assetNews[expandedAsset.name] || assetNews[expandedAsset.name].length === 0" class="text-center text-grey py-4">
+                              <v-icon size="32" class="mb-2">mdi-newspaper-remove</v-icon>
+                              <div class="text-caption">No news available</div>
+                            </div>
+                            <div v-else class="asset-news-list">
+                              <div 
+                                v-for="news in assetNews[expandedAsset.name].slice(0, 3)" 
+                                :key="news.id_news"
+                                class="asset-news-item"
+                                @click="openNewsDialog(news)"
+                              >
+                                <div class="d-flex align-center mb-1">
+                                  <v-chip 
+                                    :color="getSentimentColor(news.sentiment)" 
+                                    size="x-small" 
+                                    variant="tonal"
+                                    class="mr-2"
+                                  >
+                                    {{ news.sentiment?.toFixed(2) || '0.00' }}
+                                  </v-chip>
+                                  <span class="text-caption text-grey">
+                                    {{ formatNewsDate(news.published_at) }}
+                                  </span>
+                                </div>
+                                <div class="text-body-2 font-weight-medium mb-1">{{ news.title }}</div>
+                                <div class="text-caption text-grey">{{ truncateText(news.summary, 100) }}</div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -580,6 +670,19 @@
                 </v-table>
               </v-card-text>
             </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Sentiment Summary Section -->
+        <v-row v-if="dailySummary" class="mt-4">
+          <v-col cols="12">
+            <SentimentCard
+              :label="`${holding.ticker} Sentiment Today`"
+              :sentiment-score="dailySummary.sentiment"
+              :summary="dailySummary.summary"
+              :date="dailySummary.date"
+              :show-trend="false"
+            />
           </v-col>
         </v-row>
 
@@ -937,13 +1040,15 @@
 
 <script>
 import CandleChart from './candleChart.vue'
+import SentimentCard from './sentimentCard.vue'
 import { API_BASE_URL, PYTHON_API_URL } from '../config'
 
 export default {
   name: 'HoldingView',
 
   components: {
-    CandleChart
+    CandleChart,
+    SentimentCard
   },
 
   props: {
@@ -989,6 +1094,11 @@ export default {
       assetDetailsLoading: {},
       expandedAsset: null,
       assetCharts: {},
+      assetNews: {},
+      assetNewsLoading: {},
+      assetSentiment: {},
+      selectedNewsItem: null,
+      showNewsDialog: false,
       
       showEditDialog: false,
       editForm: {
@@ -1578,8 +1688,8 @@ export default {
 
           if (response.ok) {
             const data = await response.json()
-            if (data && data.length > 0) {
-              this.assetDetails[asset.name] = data[0]
+            if (data) {
+              this.assetDetails[asset.name] = data
             }
           }
         } catch (error) {
@@ -1646,7 +1756,64 @@ export default {
           this.fetchAssetDetailsForHoldings()
           this.fetchAssetStats('N/A', asset.isin)
         }
+        if (!this.assetNews[asset.name] || this.assetNews[asset.name].length === 0) {
+          this.fetchAssetNews(asset.name, asset.ticker)
+          this.fetchAssetSentiment(asset.name, asset.ticker)
+        }
       }
+    },
+
+    async fetchAssetNews(assetName, ticker) {
+      console.log(`Fetching news for ${assetName} using ticker: ${ticker || assetName}`)
+      this.assetNewsLoading[assetName] = true
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/asset/news?ticker=${encodeURIComponent(ticker || assetName)}&limit=5`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          this.assetNews[assetName] = data || []
+        }
+      } catch (error) {
+        console.error(`Error fetching news for ${assetName}:`, error)
+      } finally {
+        this.assetNewsLoading[assetName] = false
+      }
+    },
+
+    async fetchAssetSentiment(assetName, ticker) {
+      try {
+        console.log(`Fetching sentiment for ${assetName}`)
+        const today = new Date().toISOString().split('T')[0]
+        const response = await fetch(
+          `${API_BASE_URL}/api/asset/daily_sentiment?ticker=${encodeURIComponent(ticker || assetName)}&date=${today}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          if (data) {
+            this.assetSentiment[assetName] = data
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching sentiment for ${assetName}:`, error)
+      }
+    },
+
+    openNewsDialog(newsItem) {
+      this.selectedNewsItem = newsItem
+      this.showNewsDialog = true
     },
 
     calculateAssetPercentage(index, returnNumber = false) {
@@ -2211,6 +2378,8 @@ export default {
   border-radius: 8px;
   padding: 16px;
   border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .summary-content p {
@@ -2220,7 +2389,7 @@ export default {
 
 /* Markdown Content Styles */
 .markdown-content {
-  line-height: 1.7;
+  line-height: 1.6;
 }
 
 .markdown-content p {
@@ -2259,5 +2428,35 @@ export default {
 
 .markdown-content a:hover {
   opacity: 0.8;
+}
+
+.asset-news-section {
+  padding: 12px;
+  background: rgba(var(--v-theme-surface), 0.3);
+  border-radius: 8px;
+}
+
+.asset-news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.asset-news-item {
+  display: block;
+  padding: 12px;
+  background: rgba(var(--v-theme-surface-variant), 0.2);
+  border-radius: 6px;
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.3);
+  transition: all 0.2s ease;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.asset-news-item:hover {
+  background: rgba(var(--v-theme-surface-variant), 0.35);
+  border-left-color: rgba(var(--v-theme-primary), 0.6);
+  transform: translateX(2px);
 }
 </style>

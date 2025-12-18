@@ -320,6 +320,19 @@
               </v-table>
             </v-card-text>
           </v-card>
+
+          <!-- Portfolio Sentiment Card -->
+          <v-row v-if="portfolioSentiment && activeView == 'dashboard'" class="mt-4">
+            <v-col cols="12">
+              <SentimentCard
+                label="Portfolio Sentiment"
+                :sentiment-score="portfolioSentiment.sentiment"
+                :summary="portfolioSentiment.summary"
+                :date="portfolioSentiment.date"
+                :show-trend="false"
+              />
+            </v-col>
+          </v-row>
         </v-container>
 
         <v-container v-else-if="activeView === 'dashboard'" fluid>
@@ -557,13 +570,176 @@
               </v-card>
             </v-col>
           </v-row>
+
+          <!-- Portfolio Sentiment Card -->
+          <v-row v-if="portfolioSentiment" class="mt-4">
+            <v-col cols="12">
+              <SentimentCard
+                label="Portfolio Sentiment"
+                :sentiment-score="portfolioSentiment.sentiment"
+                :summary="portfolioSentiment.summary"
+                :date="portfolioSentiment.date"
+                :show-trend="false"
+              />
+            </v-col>
+          </v-row>
         </v-container>
 
         <v-container v-else-if="activeView === 'news'" fluid>
-          <v-card class="pa-4">
-            <h3>News View</h3>
-            <p>This section is under construction.</p>
-          </v-card>
+          <v-row>
+            <v-col cols="12" md="4">
+              <SentimentCard
+                v-if="portfolioSentiment"
+                label="Portfolio Sentiment Today"
+                :sentiment-score="portfolioSentiment.sentiment"
+                :summary="portfolioSentiment.summary"
+                :date="portfolioSentiment.date"
+                :show-trend="false"
+              />
+              <v-card v-else elevation="2" class="mb-4">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-chart-line</v-icon>
+                  Portfolio Sentiment Today
+                </v-card-title>
+                <v-card-text class="text-center py-8">
+                  <v-icon size="48" color="grey">mdi-chart-timeline-variant</v-icon>
+                  <div class="text-body-2 text-grey mt-3">No sentiment data available yet</div>
+                  <div class="text-caption text-grey">Sentiment analysis will appear after news is processed</div>
+                </v-card-text>
+              </v-card>
+
+              <v-card class="mt-4" elevation="2">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-filter</v-icon>
+                  Filters
+                </v-card-title>
+                <v-card-text>
+                  <v-text-field
+                    v-model="newsSearchQuery"
+                    label="Search news..."
+                    prepend-inner-icon="mdi-magnify"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    clearable
+                    class="mb-3"
+                  ></v-text-field>
+
+                  <v-select
+                    v-model="selectedTickerFilter"
+                    :items="tickerFilterOptions"
+                    label="Filter by holding"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    class="mb-3"
+                  ></v-select>
+
+                  <div class="text-caption text-grey mb-2">Filter by sentiment:</div>
+                  <v-chip-group
+                    v-model="newsFilter"
+                    mandatory
+                    column
+                    selected-class="text-primary"
+                  >
+                    <v-chip
+                      value="all"
+                      size="small"
+                      variant="outlined"
+                      filter
+                    >
+                      <v-icon size="small" start>mdi-all-inclusive</v-icon>
+                      All
+                    </v-chip>
+                    <v-chip
+                      value="positive"
+                      size="small"
+                      variant="outlined"
+                      filter
+                      color="success"
+                    >
+                      <v-icon size="small" start>mdi-thumb-up</v-icon>
+                      Positive
+                    </v-chip>
+                    <v-chip
+                      value="neutral"
+                      size="small"
+                      variant="outlined"
+                      filter
+                    >
+                      <v-icon size="small" start>mdi-minus</v-icon>
+                      Neutral
+                    </v-chip>
+                    <v-chip
+                      value="negative"
+                      size="small"
+                      variant="outlined"
+                      filter
+                      color="error"
+                    >
+                      <v-icon size="small" start>mdi-thumb-down</v-icon>
+                      Negative
+                    </v-chip>
+                  </v-chip-group>
+                </v-card-text>
+              </v-card>
+
+              <v-card class="mt-4" elevation="2">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-information</v-icon>
+                  News Statistics
+                </v-card-title>
+                <v-card-text>
+                  <div class="d-flex justify-space-between mb-2">
+                    <span class="text-caption text-grey">Total Articles:</span>
+                    <span class="font-weight-bold">{{ filteredNews.length }}</span>
+                  </div>
+                  <div class="d-flex justify-space-between mb-2">
+                    <span class="text-caption text-grey">Positive:</span>
+                    <span class="font-weight-bold text-success">{{ newsStats.positive }}</span>
+                  </div>
+                  <div class="d-flex justify-space-between mb-2">
+                    <span class="text-caption text-grey">Negative:</span>
+                    <span class="font-weight-bold text-error">{{ newsStats.negative }}</span>
+                  </div>
+                  <div class="d-flex justify-space-between">
+                    <span class="text-caption text-grey">Neutral:</span>
+                    <span class="font-weight-bold">{{ newsStats.neutral }}</span>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="8">
+              <v-card elevation="2">
+                <v-card-title class="d-flex align-center">
+                  <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
+                  Portfolio News Feed
+                  <v-spacer></v-spacer>
+                  <v-btn
+                    icon
+                    size="small"
+                    @click="refreshNews"
+                    :loading="newsLoading"
+                  >
+                    <v-icon>mdi-refresh</v-icon>
+                  </v-btn>
+                </v-card-title>
+                <v-card-text>
+                  <NewsFeed
+                    :news-items="filteredNews"
+                    :loading="newsLoading"
+                    :loading-more="newsLoadingMore"
+                    :error="newsError"
+                    :has-more="newsHasMore"
+                    :show-ticker="true"
+                    @load-more="loadMoreNews"
+                    @retry="fetchPortfolioNews"
+                  />
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </v-container>
 
         <v-container v-else-if="activeView === 'allocation'" fluid>
@@ -589,6 +765,8 @@ import LoginRegister from './components/loginRegister.vue'
 import { API_BASE_URL, PYTHON_API_URL } from './config'
 import CandleChart from './components/candleChart.vue'
 import HoldingView from './components/holdingView.vue'
+import SentimentCard from './components/sentimentCard.vue'
+import NewsFeed from './components/newsFeed.vue'
 
 export default {
   name: 'App',
@@ -596,7 +774,9 @@ export default {
   components: {
     LoginRegister,
     CandleChart,
-    HoldingView
+    HoldingView,
+    SentimentCard,
+    NewsFeed
   },
 
   data() {
@@ -652,7 +832,20 @@ export default {
       holdingsSearch: '',
       holdingsSortBy: 'value',
       
-      portfolioCostBasisLine: null
+      portfolioCostBasisLine: null,
+
+      // News view state
+      portfolioNews: [],
+      portfolioSentiment: null,
+      newsLoading: false,
+      newsError: '',
+      newsOffset: 0,
+      newsLimit: 20,
+      newsHasMore: true,
+      newsLoadingMore: false,
+      newsFilter: 'all',
+      newsSearchQuery: '',
+      selectedTickerFilter: 'all'
     }
   },
 
@@ -728,6 +921,58 @@ export default {
       }
       
       return holdings
+    },
+
+    filteredNews() {
+      let news = [...this.portfolioNews]
+
+      if (this.newsFilter !== 'all') {
+        news = news.filter(item => {
+          if (this.newsFilter === 'positive') return item.sentiment > 0.3
+          if (this.newsFilter === 'negative') return item.sentiment < -0.3
+          if (this.newsFilter === 'neutral') return item.sentiment >= -0.3 && item.sentiment <= 0.3
+          return true
+        })
+      }
+
+      if (this.selectedTickerFilter !== 'all') {
+        news = news.filter(item => item.ticker === this.selectedTickerFilter)
+      }
+
+      if (this.newsSearchQuery) {
+        const query = this.newsSearchQuery.toLowerCase()
+        news = news.filter(item =>
+          item.title.toLowerCase().includes(query) ||
+          item.summary.toLowerCase().includes(query)
+        )
+      }
+
+      return news
+    },
+
+    newsStats() {
+      const stats = { positive: 0, negative: 0, neutral: 0 }
+      this.filteredNews.forEach(item => {
+        if (item.sentiment > 0.3) stats.positive++
+        else if (item.sentiment < -0.3) stats.negative++
+        else stats.neutral++
+      })
+      return stats
+    },
+
+    tickerFilterOptions() {
+      const options = [{ title: 'All Holdings', value: 'all' }]
+      if (this.portfolioHoldings) {
+        const tickers = [...new Set(this.portfolioHoldings.map(h => h.ticker))].sort()
+        tickers.forEach(ticker => {
+          const holding = this.portfolioHoldings.find(h => h.ticker === ticker)
+          options.push({
+            title: `${ticker} - ${holding.name}`,
+            value: ticker
+          })
+        })
+      }
+      return options
     }
   },
 
@@ -748,6 +993,15 @@ export default {
     homeCurrency(newVal) {
       localStorage.setItem('homeCurrency', newVal)
       this.conversionCache = {}
+    },
+
+    activeView(newVal) {
+      if (newVal === 'news' && this.portfolioNews.length === 0) {
+        this.fetchPortfolioNews()
+        this.fetchPortfolioSentiment()
+      } else if ((newVal === 'dashboard' || newVal === 'holdings') && !this.portfolioSentiment) {
+        this.fetchPortfolioSentiment()
+      }
     }
   },
 
@@ -769,6 +1023,10 @@ export default {
         this.fetchPortfolioHoldings()
         this.getPortfolioAllocation()
         this.fetchPortfolioStatistics()
+        this.fetchPortfolioSentiment()
+        if (this.activeView === 'news') {
+          this.fetchPortfolioNews()
+        }
       }, 100)
     }
 
@@ -1120,6 +1378,95 @@ export default {
       } catch (error) {
         console.error('Error fetching portfolio holdings:', error)
       }
+    },
+
+    async fetchPortfolioNews() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      this.newsLoading = true
+      this.newsError = ''
+      this.newsOffset = 0
+      this.portfolioNews = []
+
+      try {
+        const url = `${API_BASE_URL}/api/portfolio/news?limit=${this.newsLimit}&offset=0`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio news')
+        }
+        const data = await response.json()
+        this.portfolioNews = data || []
+        this.newsHasMore = data && data.length === this.newsLimit
+      } catch (error) {
+        console.error('Error fetching portfolio news:', error)
+        this.newsError = error.message || 'Failed to load news'
+      } finally {
+        this.newsLoading = false
+      }
+    },
+
+    async fetchPortfolioSentiment() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      try {
+        const today = new Date().toISOString().split('T')[0]
+        const url = `${API_BASE_URL}/api/portfolio/daily_sentiment?date=${today}`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to fetch portfolio sentiment')
+        }
+        const data = await response.json()
+        this.portfolioSentiment = data
+      } catch (error) {
+        console.error('Error fetching portfolio sentiment:', error)
+      }
+    },
+
+    async loadMoreNews() {
+      const token = this.getCookie('auth_token')
+      if (!token || this.newsLoadingMore || !this.newsHasMore) return
+
+      this.newsLoadingMore = true
+      const newOffset = this.newsOffset + this.newsLimit
+
+      try {
+        const url = `${API_BASE_URL}/api/portfolio/news?limit=${this.newsLimit}&offset=${newOffset}`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error('Failed to load more news')
+        }
+        const data = await response.json()
+        if (data && data.length > 0) {
+          this.portfolioNews = [...this.portfolioNews, ...data]
+          this.newsOffset = newOffset
+          this.newsHasMore = data.length === this.newsLimit
+        } else {
+          this.newsHasMore = false
+        }
+      } catch (error) {
+        console.error('Error loading more news:', error)
+      } finally {
+        this.newsLoadingMore = false
+      }
+    },
+
+    refreshNews() {
+      this.fetchPortfolioNews()
+      this.fetchPortfolioSentiment()
     },
 
     // Update chart width on resize

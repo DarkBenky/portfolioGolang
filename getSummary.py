@@ -73,7 +73,8 @@ Write 1-2 sentences about potential impact on stock price or what investors shou
 Focus only on facts from the articles. Include specific numbers, percentages, dates, and company names. Do not add speculation or make up information."""
 
     response = ollama.generate(
-        model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
+        # model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
+        model="qwen3:8b",
         prompt=prompt,
         options={
             "num_predict": max_tokens,
