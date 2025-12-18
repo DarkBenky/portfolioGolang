@@ -4759,12 +4759,12 @@ func main() {
 	}()
 
 	go fetchOldPriceDataPeriodic(24 * time.Hour)
-	go fetchNewsPeriodic(60 * time.Minute)
-	go fetchPricesPeriodic(5 * time.Minute)
-	go fillInBetweenPricesPeriodic(60 * time.Minute)
-	go updateSentimentsPeriodic(4 * time.Hour)
-	go updateETFDataPeriodic(6 * time.Hour)
-	go fetchAssetDetailsPeriodic(4 * time.Hour)
+	go fetchNewsPeriodic(120 * time.Minute)
+	go fetchPricesPeriodic(10 * time.Minute)
+	go fillInBetweenPricesPeriodic(90 * time.Minute)
+	go updateSentimentsPeriodic(6 * time.Hour)
+	go updateETFDataPeriodic(7 * time.Hour)
+	go fetchAssetDetailsPeriodic(8 * time.Hour)
 
 	e := echo.New()
 
