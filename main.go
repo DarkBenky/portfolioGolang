@@ -2846,48 +2846,41 @@ func GetPortfolioValue(c echo.Context) error {
 }
 
 func GetPortfolioValueHistory(c echo.Context) error {
-	// Get user ID from JWT token
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
-	period := c.QueryParam("period")                  // e.g., "1d", "1w", "1m", "3m", "1y"
-	candleInterval := c.QueryParam("candle_interval") // e.g., "1m", "5m", "1h", "1d"
+	interval := c.QueryParam("interval")
 	userID := claims.UserID
 
-	// Calculate start time based on period
 	now := time.Now().UTC()
-	var startTime time.Time
-	switch period {
-	case "1d":
-		startTime = now.Add(-24 * time.Hour)
-	case "1w":
-		startTime = now.Add(-7 * 24 * time.Hour)
-	case "1m":
-		startTime = now.Add(-30 * 24 * time.Hour)
-	case "3m":
-		startTime = now.Add(-90 * 24 * time.Hour)
-	case "1y":
-		startTime = now.Add(-365 * 24 * time.Hour)
-	default:
-		startTime = now.Add(-7 * 24 * time.Hour) // Default to 1 week
-	}
 
-	// Determine aggregation interval in seconds
 	var intervalSeconds int64
-	switch candleInterval {
-	case "1m":
-		intervalSeconds = 60
+	var startTime time.Time
+
+	switch interval {
 	case "5m":
 		intervalSeconds = 300
+		startTime = now.Add(-24 * time.Hour)
 	case "15m":
 		intervalSeconds = 900
+		startTime = now.Add(-7 * 24 * time.Hour)
 	case "1h":
 		intervalSeconds = 3600
+		startTime = now.Add(-30 * 24 * time.Hour)
 	case "4h":
 		intervalSeconds = 14400
+		startTime = now.Add(-90 * 24 * time.Hour)
 	case "1d":
 		intervalSeconds = 86400
+		startTime = now.Add(-365 * 24 * time.Hour)
+	case "1w":
+		intervalSeconds = 604800
+		startTime = now.Add(-730 * 24 * time.Hour)
+	case "1M":
+		intervalSeconds = 2592000
+		startTime = time.Time{}
 	default:
-		intervalSeconds = 300 // Default to 5 minutes
+		intervalSeconds = 3600
+		startTime = now.Add(-30 * 24 * time.Hour)
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
@@ -3163,24 +3156,31 @@ func getAssetValueChange(c echo.Context) error {
 	userID := claims.UserID
 	identifier := c.QueryParam("ticker")
 
+	if identifier == "" {
+		return c.String(http.StatusBadRequest, "Ticker parameter is required")
+	}
+
 	assetTicker, err := resolveTickerOrISIN(identifier)
 	if err != nil {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
+		assetTicker = identifier
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
+		log.Printf("Error retrieving holdings for user %s: %v", userID, err)
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
 
 	var totalQuantity float64
 	for _, holding := range holdings {
-		if holding.Ticker == assetTicker || holding.ISIN == identifier {
+		if holding.Ticker == assetTicker || holding.ISIN == identifier || holding.Ticker == identifier {
 			totalQuantity += holding.Quantity
 		}
 	}
 
 	if totalQuantity == 0 {
+		log.Printf("No holdings found for asset %s (resolved: %s) for user %s", identifier, assetTicker, userID)
 		return c.String(http.StatusNotFound, "No holdings found for the specified asset")
 	}
 
@@ -3194,7 +3194,8 @@ func getAssetValueChange(c echo.Context) error {
 	`, assetTicker).Scan(&latestPrice)
 	dbMutex.Unlock()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
+		log.Printf("Error retrieving latest price for %s: %v", assetTicker, err)
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("Error retrieving latest price for %s", assetTicker))
 	}
 
 	oneDayAgo := time.Now().UTC().Add(-24 * time.Hour).Unix()
@@ -3209,7 +3210,8 @@ func getAssetValueChange(c echo.Context) error {
 	`, assetTicker, oneDayAgo).Scan(&previousPrice)
 	dbMutex.Unlock()
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error retrieving previous price")
+		log.Printf("Error retrieving previous price for %s: %v", assetTicker, err)
+		previousPrice = latestPrice
 	}
 
 	currentValue := latestPrice * totalQuantity
@@ -3704,44 +3706,37 @@ func GetAssetPriceHistory(c echo.Context) error {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
-	period := c.QueryParam("period")                  // e.g., "1d", "1w", "1m", "3m", "1y"
-	candleInterval := c.QueryParam("candle_interval") // e.g., "1m", "5m", "1h", "1d"
-
-	// Calculate start time based on period
+	interval := c.QueryParam("interval")
 	now := time.Now().UTC()
-	var startTime time.Time
-	switch period {
-	case "1d":
-		startTime = now.Add(-24 * time.Hour)
-	case "1w":
-		startTime = now.Add(-7 * 24 * time.Hour)
-	case "1m":
-		startTime = now.Add(-30 * 24 * time.Hour)
-	case "3m":
-		startTime = now.Add(-90 * 24 * time.Hour)
-	case "1y":
-		startTime = now.Add(-365 * 24 * time.Hour)
-	default:
-		startTime = now.Add(-7 * 24 * time.Hour) // Default to 1 week
-	}
 
-	// Determine aggregation interval in seconds
 	var intervalSeconds int64
-	switch candleInterval {
-	case "1m":
-		intervalSeconds = 60
+	var startTime time.Time
+
+	switch interval {
 	case "5m":
 		intervalSeconds = 300
+		startTime = now.Add(-24 * time.Hour)
 	case "15m":
 		intervalSeconds = 900
+		startTime = now.Add(-7 * 24 * time.Hour)
 	case "1h":
 		intervalSeconds = 3600
+		startTime = now.Add(-30 * 24 * time.Hour)
 	case "4h":
 		intervalSeconds = 14400
+		startTime = now.Add(-90 * 24 * time.Hour)
 	case "1d":
 		intervalSeconds = 86400
+		startTime = now.Add(-365 * 24 * time.Hour)
+	case "1w":
+		intervalSeconds = 604800
+		startTime = now.Add(-730 * 24 * time.Hour)
+	case "1M":
+		intervalSeconds = 2592000
+		startTime = time.Time{}
 	default:
-		intervalSeconds = 300 // Default to 5 minutes
+		intervalSeconds = 3600
+		startTime = now.Add(-30 * 24 * time.Hour)
 	}
 
 	startTimestamp := startTime.Unix()

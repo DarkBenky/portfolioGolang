@@ -8,6 +8,16 @@
       <v-app-bar color="primary" dark>
         <v-app-bar-title>Portfolio Tracker</v-app-bar-title>
         <v-spacer></v-spacer>
+        <v-select
+          v-model="homeCurrency"
+          :items="['EUR', 'USD', 'CHF', 'GBP']"
+          label="Home Currency"
+          variant="outlined"
+          density="compact"
+          hide-details
+          style="max-width: 120px;"
+          class="mr-4"
+        ></v-select>
         <span class="mr-4">{{ userEmail }}</span>
         <v-btn icon @click="logout">
           <v-icon>mdi-logout</v-icon>
@@ -300,10 +310,12 @@
                   </tr>
                 </thead>
                 <HoldingView
-                  v-for="holding in filteredHoldings"
+                  v-for="holding in sortedHoldings"
                   :key="holding.id_holding"
                   :holding="holding"
                   :auth-token="getCookie('auth_token')"
+                  :home-currency="homeCurrency"
+                  @day-change="updateHoldingDayChange"
                 />
               </v-table>
             </v-card-text>
@@ -373,12 +385,14 @@
             <v-card-title class="d-flex align-center">
               <span>Portfolio Value</span>
               <v-spacer></v-spacer>
-              <v-btn-toggle v-model="selectedPeriod" mandatory density="compact" color="primary">
-                <v-btn value="1d" size="small">1D</v-btn>
-                <v-btn value="1w" size="small">1W</v-btn>
-                <v-btn value="1m" size="small">1M</v-btn>
-                <v-btn value="3m" size="small">3M</v-btn>
-                <v-btn value="1y" size="small">1Y</v-btn>
+              <v-btn-toggle v-model="selectedInterval" mandatory density="compact" color="primary">
+                <v-btn value="5m" size="small">5m</v-btn>
+                <v-btn value="15m" size="small">15m</v-btn>
+                <v-btn value="1h" size="small">1h</v-btn>
+                <v-btn value="4h" size="small">4h</v-btn>
+                <v-btn value="1d" size="small">1d</v-btn>
+                <v-btn value="1w" size="small">1w</v-btn>
+                <v-btn value="1M" size="small">1M</v-btn>
               </v-btn-toggle>
             </v-card-title>
             <v-card-text>
@@ -594,9 +608,12 @@ export default {
       portfolioData: [],
       portfolioLoading: false,
       portfolioError: '',
-      selectedPeriod: '1m',
+      selectedInterval: '1d',
       chartWidth: 800,
       statsData: {},
+      homeCurrency: 'EUR',
+      conversionCache: {},
+      conversionPromises: {},
 
       // Sidebar state
       drawer: true,
@@ -631,7 +648,7 @@ export default {
 
       // Holdings view state
       holdingsSearch: '',
-      holdingsSortBy: 'ticker'
+      holdingsSortBy: 'value'
     }
   },
 
@@ -670,12 +687,33 @@ export default {
       return this.generatePieSlices(this.sortedCompanies, this.pieColors)
     },
 
+    sortedHoldings() {
+      let holdings = [...this.filteredHoldings]
+      
+      if (this.holdingsSortBy === 'ticker') {
+        holdings.sort((a, b) => a.ticker.localeCompare(b.ticker))
+      } else if (this.holdingsSortBy === 'value') {
+        holdings.sort((a, b) => {
+          const valueA = a.quantity * a.purchase_price
+          const valueB = b.quantity * b.purchase_price
+          return valueB - valueA
+        })
+      } else if (this.holdingsSortBy === 'change') {
+        holdings.sort((a, b) => {
+          const changeA = a.dayChangePercent || 0
+          const changeB = b.dayChangePercent || 0
+          return changeB - changeA
+        })
+      }
+      
+      return holdings
+    },
+
     filteredHoldings() {
       if (!this.portfolioHoldings) return []
       
       let holdings = [...this.portfolioHoldings]
       
-      // Filter by search
       if (this.holdingsSearch) {
         const search = this.holdingsSearch.toLowerCase()
         holdings = holdings.filter(h => 
@@ -685,25 +723,12 @@ export default {
         )
       }
       
-      // Sort
-      holdings.sort((a, b) => {
-        if (this.holdingsSortBy === 'ticker') {
-          return a.ticker.localeCompare(b.ticker)
-        } else if (this.holdingsSortBy === 'value') {
-          const valueA = a.quantity * a.purchase_price
-          const valueB = b.quantity * b.purchase_price
-          return valueB - valueA
-        }
-        // For 'change', we'd need real-time data which is fetched in each row
-        return 0
-      })
-      
       return holdings
     }
   },
 
   watch: {
-    selectedPeriod() {
+    selectedInterval() {
       this.fetchPortfolioHistory()
     },
 
@@ -714,12 +739,22 @@ export default {
           this.fetchPortfolioHistory()
         }, 100)
       }
+    },
+
+    homeCurrency(newVal) {
+      localStorage.setItem('homeCurrency', newVal)
+      this.conversionCache = {}
     }
   },
 
   mounted() {
     const token = this.getCookie('auth_token')
     const email = this.getCookie('user_email')
+    const savedCurrency = localStorage.getItem('homeCurrency')
+    
+    if (savedCurrency) {
+      this.homeCurrency = savedCurrency
+    }
     
     if (token) {
       this.isAuthenticated = true
@@ -759,6 +794,45 @@ export default {
       } catch (error) {
         console.error('Error fetching portfolio allocation:', error)
       }
+    },
+
+    async convertToHomeCurrency(amount, fromCurrency) {
+      if (!amount || amount === 0) return 0
+      if (fromCurrency === this.homeCurrency) return amount
+      
+      const cacheKey = `${fromCurrency}_${this.homeCurrency}`
+      
+      if (this.conversionCache[cacheKey]) {
+        return amount * this.conversionCache[cacheKey]
+      }
+      
+      if (this.conversionPromises[cacheKey]) {
+        const rate = await this.conversionPromises[cacheKey]
+        return amount * rate
+      }
+      
+      this.conversionPromises[cacheKey] = (async () => {
+        try {
+          const response = await fetch(
+            `${PYTHON_API_URL}/api/convert_currency?amount=1&from_currency=${fromCurrency}&to_currency=${this.homeCurrency}`
+          )
+          
+          if (response.ok) {
+            const data = await response.json()
+            const rate = data.converted_amount
+            this.conversionCache[cacheKey] = rate
+            delete this.conversionPromises[cacheKey]
+            return rate
+          }
+        } catch (error) {
+          console.error('Currency conversion error:', error)
+          delete this.conversionPromises[cacheKey]
+        }
+        return 1
+      })()
+      
+      const rate = await this.conversionPromises[cacheKey]
+      return amount * rate
     },
 
     // Cookie utilities
@@ -846,6 +920,13 @@ export default {
       
       this.addHoldingError = ''
       this.addHoldingSuccess = false
+    },
+
+    updateHoldingDayChange(holdingId, changePercent) {
+      const holding = this.portfolioHoldings?.find(h => h.id_holding === holdingId)
+      if (holding) {
+        holding.dayChangePercent = changePercent
+      }
     },
 
     clearSearch() {
@@ -936,16 +1017,8 @@ export default {
       this.portfolioError = ''
 
       try {
-        // Determine interval based on period
-        let interval = '1h'
-        if (this.selectedPeriod === '1d') interval = '5m'
-        else if (this.selectedPeriod === '1w') interval = '5m'
-        else if (this.selectedPeriod === '1m') interval = '15m'
-        else if (this.selectedPeriod === '3m') interval = '1h'
-        else if (this.selectedPeriod === '1y') interval = '1d'
-
         const response = await fetch(
-          `${API_BASE_URL}/api/portfolio/history?period=${this.selectedPeriod}&interval=${interval}`,
+          `${API_BASE_URL}/api/portfolio/history?interval=${this.selectedInterval}`,
           {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -959,8 +1032,6 @@ export default {
 
         const data = await response.json()
 
-        // Transform data for candle chart
-        // The API returns { timestamp, open, high, low, close, value }
         this.portfolioData = data.map(item => ({
           timestamp: item.timestamp,
           open: item.open,

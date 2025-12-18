@@ -81,8 +81,22 @@ def getPriceDataOld(Ticker: str):
         })
     return candles
 
+def convertCurrency(amount: float, from_currency: str, to_currency: str) -> float:
+    if from_currency == to_currency:
+        return amount
+
+    pair = f"{from_currency}{to_currency}=X"
+    ticker = yf.Ticker(pair)
+    data = ticker.history(period="1d")
+
+    if data.empty:
+        raise ValueError(f"Exchange rate not available for {pair}")
+
+    rate = data["Close"].iloc[-1]
+    return amount * rate
+
 if __name__ == "__main__":
     # Example usage
-    Ticker = "EXSA.DE"
+    Ticker = "EDFS.DE"
     print(getPriceDataOld(Ticker))
     

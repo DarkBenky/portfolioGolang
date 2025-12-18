@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
-from getPrice import getPrice, getPriceDataOld
+from getPrice import convertCurrency, getPrice, getPriceDataOld
 from getSummary import summarize_daily_news, summarize_daily_portfolio_news
 from getStock import get_stock_data
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
@@ -418,6 +418,28 @@ async def api_stock_history(ticker):
         return flask.jsonify({'error': 'Could not fetch stock history for this ticker'}), 404
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
+    
+@app.route('/api/convert_currency', methods=['GET'])
+async def api_convert_currency():
+    amount = float(flask.request.args.get('amount', '0'))
+    from_currency = flask.request.args.get('from_currency', 'USD')
+    to_currency = flask.request.args.get('to_currency', 'USD')
+    
+    loop = asyncio.get_event_loop()
+    converted_amount = await loop.run_in_executor(
+        executor, 
+        convertCurrency, 
+        amount, 
+        from_currency, 
+        to_currency
+    )
+    
+    return flask.jsonify({
+        'amount': amount,
+        'from_currency': from_currency,
+        'to_currency': to_currency,
+        'converted_amount': converted_amount
+    })
 
 if __name__ == '__main__':
     # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app

@@ -32,7 +32,7 @@
 
     <!-- Current Price -->
     <td class="text-right">
-      <span class="font-weight-medium">{{ formatCurrency(currentPrice, holding.currency) }}</span>
+      <span class="font-weight-medium">{{ formatCurrency(convertedPrice, homeCurrency) }}</span>
     </td>
 
     <!-- Day Change % -->
@@ -50,7 +50,7 @@
     <!-- Day Change $ -->
     <td class="text-right">
       <span :class="isPositiveDay ? 'text-success' : 'text-error'">
-        {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(dayChange, holding.currency) }}
+        {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(convertedDayChange, homeCurrency) }}
       </span>
     </td>
 
@@ -69,13 +69,13 @@
     <!-- Total Change $ -->
     <td class="text-right">
       <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-medium">
-        {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, holding.currency) }}
+        {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, homeCurrency) }}
       </span>
     </td>
 
     <!-- Current Value -->
     <td class="text-right">
-      <div class="font-weight-bold">{{ formatCurrency(currentValue, holding.currency) }}</div>
+      <div class="font-weight-bold">{{ formatCurrency(currentValue, homeCurrency) }}</div>
       <div class="text-caption text-grey">{{ formatQuantity(holding.quantity) }} {{ holding.etf ? 'units' : 'shares' }}</div>
     </td>
 
@@ -101,12 +101,14 @@
                   Price Chart - {{ holding.ticker }}
                 </div>
                 <div class="d-flex ga-2">
-                  <v-btn-toggle v-model="chartPeriod" mandatory density="compact" color="primary">
-                    <v-btn value="1d" size="x-small">1D</v-btn>
-                    <v-btn value="1w" size="x-small">1W</v-btn>
-                    <v-btn value="1m" size="x-small">1M</v-btn>
-                    <v-btn value="3m" size="x-small">3M</v-btn>
-                    <v-btn value="1y" size="x-small">1Y</v-btn>
+                  <v-btn-toggle v-model="chartInterval" mandatory density="compact" color="primary">
+                    <v-btn value="5m" size="x-small">5m</v-btn>
+                    <v-btn value="15m" size="x-small">15m</v-btn>
+                    <v-btn value="1h" size="x-small">1h</v-btn>
+                    <v-btn value="4h" size="x-small">4h</v-btn>
+                    <v-btn value="1d" size="x-small">1d</v-btn>
+                    <v-btn value="1w" size="x-small">1w</v-btn>
+                    <v-btn value="1M" size="x-small">1M</v-btn>
                   </v-btn-toggle>
                 </div>
               </v-card-title>
@@ -708,6 +710,223 @@
             </v-card>
           </v-col>
         </v-row>
+
+        <!-- Edit/Remove/Add Section -->
+        <v-row class="mt-4">
+          <v-col cols="12">
+            <v-card variant="outlined">
+              <v-card-title class="text-subtitle-1 pb-2">
+                <v-icon size="small" class="mr-2">mdi-cog-outline</v-icon>
+                Manage Holding
+              </v-card-title>
+              <v-card-text>
+                <v-row dense>
+                  <v-col cols="12" md="4">
+                    <v-btn
+                      block
+                      color="primary"
+                      variant="tonal"
+                      prepend-icon="mdi-pencil"
+                      @click="showEditDialog = true"
+                    >
+                      Edit Details
+                    </v-btn>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-btn
+                      block
+                      color="success"
+                      variant="tonal"
+                      prepend-icon="mdi-plus-circle"
+                      @click="showAddQuantityDialog = true"
+                    >
+                      Add to Position
+                    </v-btn>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-btn
+                      block
+                      color="error"
+                      variant="tonal"
+                      prepend-icon="mdi-delete"
+                      @click="showRemoveDialog = true"
+                    >
+                      Remove Holding
+                    </v-btn>
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Edit Dialog -->
+        <v-dialog v-model="showEditDialog" max-width="600">
+          <v-card>
+            <v-card-title class="d-flex align-center justify-space-between">
+              <span>Edit Holding - {{ holding.ticker }}</span>
+              <v-btn icon variant="text" @click="showEditDialog = false">
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
+            </v-card-title>
+            <v-card-text>
+              <v-form ref="editForm">
+                <v-text-field
+                  v-model="editForm.name"
+                  label="Name"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                ></v-text-field>
+                <v-text-field
+                  v-model="editForm.quantity"
+                  label="Quantity"
+                  type="number"
+                  step="0.000001"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  :rules="[v => v > 0 || 'Quantity must be positive']"
+                ></v-text-field>
+                <v-text-field
+                  v-model="editForm.purchasePrice"
+                  label="Average Purchase Price"
+                  type="number"
+                  step="0.01"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  :rules="[v => v > 0 || 'Price must be positive']"
+                ></v-text-field>
+                <v-text-field
+                  v-model="editForm.ter"
+                  label="TER (%)"
+                  type="number"
+                  step="0.01"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  :disabled="!holding.etf"
+                ></v-text-field>
+                <v-select
+                  v-model="editForm.policy"
+                  label="Distribution Policy"
+                  :items="['Accumulating', 'Distributing', 'N/A']"
+                  variant="outlined"
+                  density="compact"
+                  :disabled="!holding.etf"
+                ></v-select>
+              </v-form>
+              <v-alert v-if="editError" type="error" class="mt-3">{{ editError }}</v-alert>
+              <v-alert v-if="editSuccess" type="success" class="mt-3">Holding updated successfully!</v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
+              <v-btn color="primary" variant="flat" @click="updateHolding" :loading="editLoading">
+                Save Changes
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Add Quantity Dialog -->
+        <v-dialog v-model="showAddQuantityDialog" max-width="500">
+          <v-card>
+            <v-card-title class="d-flex align-center justify-space-between">
+              <span>Add to Position - {{ holding.ticker }}</span>
+              <v-btn icon variant="text" @click="showAddQuantityDialog = false">
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
+            </v-card-title>
+            <v-card-text>
+              <v-form ref="addForm">
+                <v-text-field
+                  v-model="addQuantityForm.quantity"
+                  label="Additional Quantity"
+                  type="number"
+                  step="0.000001"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  :rules="[v => v > 0 || 'Quantity must be positive']"
+                  hint="Amount to add to current position"
+                ></v-text-field>
+                <v-text-field
+                  v-model="addQuantityForm.price"
+                  label="Purchase Price"
+                  type="number"
+                  step="0.01"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  :rules="[v => v > 0 || 'Price must be positive']"
+                  hint="Price per unit for this purchase"
+                ></v-text-field>
+                <v-alert type="info" variant="tonal" class="mb-3">
+                  <div class="text-body-2">
+                    <div>Current quantity: {{ formatQuantity(holding.quantity) }}</div>
+                    <div>Current avg price: {{ formatCurrency(holding.purchase_price, holding.currency) }}</div>
+                    <div v-if="addQuantityForm.quantity > 0 && addQuantityForm.price > 0" class="mt-2">
+                      <strong>New quantity:</strong> {{ formatQuantity(parseFloat(holding.quantity) + parseFloat(addQuantityForm.quantity)) }}<br>
+                      <strong>New avg price:</strong> {{ formatCurrency(calculateNewAvgPrice(), holding.currency) }}
+                    </div>
+                  </div>
+                </v-alert>
+              </v-form>
+              <v-alert v-if="addError" type="error" class="mt-3">{{ addError }}</v-alert>
+              <v-alert v-if="addSuccess" type="success" class="mt-3">Position updated successfully!</v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn variant="text" @click="showAddQuantityDialog = false">Cancel</v-btn>
+              <v-btn color="success" variant="flat" @click="addToPosition" :loading="addLoading">
+                Add to Position
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Remove Confirmation Dialog -->
+        <v-dialog v-model="showRemoveDialog" max-width="500">
+          <v-card>
+            <v-card-title class="d-flex align-center justify-space-between">
+              <span>Remove Holding</span>
+              <v-btn icon variant="text" @click="showRemoveDialog = false">
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
+            </v-card-title>
+            <v-card-text>
+              <v-alert type="warning" variant="tonal" class="mb-4">
+                <div class="text-body-2">
+                  Are you sure you want to remove <strong>{{ holding.ticker }}</strong> from your portfolio?
+                </div>
+              </v-alert>
+              <div class="text-body-2 mb-3">
+                <div><strong>Name:</strong> {{ holding.name }}</div>
+                <div><strong>Quantity:</strong> {{ formatQuantity(holding.quantity) }}</div>
+                <div><strong>Current Value:</strong> {{ formatCurrency(currentValue, holding.currency) }}</div>
+                <div><strong>Total Gain/Loss:</strong> 
+                  <span :class="isPositiveTotal ? 'text-success' : 'text-error'">
+                    {{ formatCurrency(totalChange, holding.currency) }} ({{ formatPercent(totalChangePercent) }})
+                  </span>
+                </div>
+              </div>
+              <v-alert type="error" variant="tonal">
+                This action cannot be undone!
+              </v-alert>
+              <v-alert v-if="removeError" type="error" class="mt-3">{{ removeError }}</v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn variant="text" @click="showRemoveDialog = false">Cancel</v-btn>
+              <v-btn color="error" variant="flat" @click="removeHolding" :loading="removeLoading">
+                Remove Holding
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+        
       </div>
     </td>
   </tr>
@@ -716,7 +935,7 @@
 
 <script>
 import CandleChart from './candleChart.vue'
-import { API_BASE_URL } from '../config'
+import { API_BASE_URL, PYTHON_API_URL } from '../config'
 
 export default {
   name: 'HoldingView',
@@ -733,10 +952,14 @@ export default {
     authToken: {
       type: String,
       required: true
+    },
+    homeCurrency: {
+      type: String,
+      default: 'EUR'
     }
   },
 
-  emits: ['click'],
+  emits: ['click', 'day-change'],
 
   data() {
     return {
@@ -750,7 +973,7 @@ export default {
       chartLoading: false,
       chartWidth: 80,
       chartHeight: 30,
-      chartPeriod: '1w',
+      chartInterval: '1d',
       newsList: [],
       newsLoading: false,
       newsOffset: 0,
@@ -763,7 +986,33 @@ export default {
       assetDetails: {},
       assetDetailsLoading: {},
       expandedAsset: null,
-      assetCharts: {}
+      assetCharts: {},
+      
+      showEditDialog: false,
+      editForm: {
+        name: '',
+        quantity: 0,
+        purchasePrice: 0,
+        ter: 0,
+        policy: 'N/A'
+      },
+      editLoading: false,
+      editError: '',
+      editSuccess: false,
+      
+      showAddQuantityDialog: false,
+      addQuantityForm: {
+        quantity: 0,
+        price: 0
+      },
+      addLoading: false,
+      addError: '',
+      addSuccess: false,
+      
+      showRemoveDialog: false,
+      removeLoading: false,
+      removeError: '',
+      conversionRate: 1
     }
   },
 
@@ -772,13 +1021,20 @@ export default {
       return this.holding.isin && this.holding.isin !== 'N/A' ? this.holding.isin : this.holding.ticker
     },
 
-    // Calculate total change since purchase
+    convertedPrice() {
+      return this.currentPrice * this.conversionRate
+    },
+
+    convertedDayChange() {
+      return this.dayChange * this.conversionRate
+    },
+
     currentValue() {
-      return this.currentPrice * this.holding.quantity
+      return this.convertedPrice * this.holding.quantity
     },
 
     costBasis() {
-      return this.holding.purchase_price * this.holding.quantity
+      return this.holding.purchase_price * this.holding.quantity * this.conversionRate
     },
 
     totalChange() {
@@ -865,6 +1121,9 @@ export default {
   },
 
   watch: {
+    homeCurrency() {
+      this.fetchConversionRate()
+    },
     opened(newVal) {
       if (newVal) {
         this.fetchFullPriceHistory()
@@ -874,18 +1133,70 @@ export default {
         this.fetchAssetCharts()
       }
     },
-    chartPeriod() {
+    chartInterval() {
       if (this.opened) {
         this.fetchFullPriceHistory()
+      }
+    },
+    showEditDialog(newVal) {
+      if (newVal) {
+        this.editForm = {
+          name: this.holding.name,
+          quantity: this.holding.quantity,
+          purchasePrice: this.holding.purchase_price,
+          ter: this.holding.ter || 0,
+          policy: this.holding.policy || 'N/A'
+        }
+        this.editError = ''
+        this.editSuccess = false
+      }
+    },
+    showAddQuantityDialog(newVal) {
+      if (newVal) {
+        this.addQuantityForm = {
+          quantity: 0,
+          price: this.currentPrice || 0
+        }
+        this.addError = ''
+        this.addSuccess = false
+      }
+    },
+    showRemoveDialog(newVal) {
+      if (newVal) {
+        this.removeError = ''
       }
     }
   },
 
   mounted() {
+    this.fetchConversionRate()
     this.fetchData()
   },
 
   methods: {
+    async fetchConversionRate() {
+      if (this.holding.currency === this.homeCurrency) {
+        this.conversionRate = 1
+        return
+      }
+
+      try {
+        const response = await fetch(
+          `${PYTHON_API_URL}/api/convert_currency?amount=1&from_currency=${this.holding.currency}&to_currency=${this.homeCurrency}`
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          this.conversionRate = data.converted_amount
+        } else {
+          this.conversionRate = 1
+        }
+      } catch (error) {
+        console.error('Error fetching conversion rate:', error)
+        this.conversionRate = 1
+      }
+    },
+
     async fetchData() {
       this.loading = true
       try {
@@ -903,7 +1214,7 @@ export default {
     async fetchPriceHistory() {
       try {
         const response = await fetch(
-          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=1d&interval=15m`,
+          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&interval=15m`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -928,17 +1239,8 @@ export default {
     async fetchFullPriceHistory() {
       this.chartLoading = true
       try {
-        const intervalMap = {
-          '1d': '5m',
-          '1w': '15m',
-          '1m': '1h',
-          '3m': '1h',
-          '1y': '1d'
-        }
-        const interval = intervalMap[this.chartPeriod] || '1h'
-        
         const response = await fetch(
-          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&period=${this.chartPeriod}&interval=${interval}`,
+          `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(this.identifier)}&interval=${this.chartInterval}`,
           {
             headers: {
               'Authorization': `Bearer ${this.authToken}`
@@ -973,10 +1275,11 @@ export default {
           this.dayChange = data.day_change || 0
           this.dayChangePercent = data.day_change_percent || 0
           
-          // Update current price from value if we have quantity
           if (this.holding.quantity > 0 && data.current_value) {
             this.currentPrice = data.current_value / this.holding.quantity
           }
+          
+          this.$emit('day-change', this.holding.id_holding, this.dayChangePercent)
         }
       } catch (error) {
         console.error('Error fetching asset change:', error)
@@ -1380,7 +1683,149 @@ export default {
       const firstPrice = prices[0].close
       const lastPrice = prices[prices.length - 1].close
       
-      return lastPrice >= firstPrice ? '#26a79a' : '#ef5250'
+      return lastPrice >= firstPrice ? '#26a79a' : '#ef5350'
+    },
+
+    calculateNewAvgPrice() {
+      const currentQty = parseFloat(this.holding.quantity) || 0
+      const currentPrice = parseFloat(this.holding.purchase_price) || 0
+      const addQty = parseFloat(this.addQuantityForm.quantity) || 0
+      const addPrice = parseFloat(this.addQuantityForm.price) || 0
+      
+      if (currentQty + addQty === 0) return 0
+      
+      const totalCost = (currentQty * currentPrice) + (addQty * addPrice)
+      return totalCost / (currentQty + addQty)
+    },
+
+    async updateHolding() {
+      this.editLoading = true
+      this.editError = ''
+      this.editSuccess = false
+
+      try {
+        const formData = new FormData()
+        formData.append('HoldingID', this.holding.id_holding)
+        formData.append('Name', this.editForm.name)
+        formData.append('Ticker', this.holding.ticker)
+        formData.append('ISIN', this.holding.isin || '')
+        formData.append('Exchange', this.holding.exchange || '')
+        formData.append('Currency', this.holding.currency || 'USD')
+        formData.append('ETF', this.holding.etf ? 'true' : 'false')
+        formData.append('Quantity', this.editForm.quantity.toString())
+        formData.append('PurchasePrice', this.editForm.purchasePrice.toString())
+        formData.append('TER', this.editForm.ter.toString())
+        formData.append('Policy', this.editForm.policy)
+
+        const response = await fetch(`${API_BASE_URL}/api/asset/holdings`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          body: formData
+        })
+
+        if (response.ok) {
+          this.editSuccess = true
+          setTimeout(() => {
+            this.showEditDialog = false
+            this.$emit('holding-updated')
+            window.location.reload()
+          }, 1500)
+        } else {
+          const errorText = await response.text()
+          this.editError = errorText || 'Failed to update holding'
+        }
+      } catch (error) {
+        console.error('Update holding error:', error)
+        this.editError = error.message || 'Failed to update holding'
+      } finally {
+        this.editLoading = false
+      }
+    },
+
+    async addToPosition() {
+      this.addLoading = true
+      this.addError = ''
+      this.addSuccess = false
+
+      try {
+        const newQuantity = parseFloat(this.holding.quantity) + parseFloat(this.addQuantityForm.quantity)
+        const newAvgPrice = this.calculateNewAvgPrice()
+
+        const formData = new FormData()
+        formData.append('HoldingID', this.holding.id_holding)
+        formData.append('Name', this.holding.name)
+        formData.append('Ticker', this.holding.ticker)
+        formData.append('ISIN', this.holding.isin || '')
+        formData.append('Exchange', this.holding.exchange || '')
+        formData.append('Currency', this.holding.currency || 'USD')
+        formData.append('ETF', this.holding.etf ? 'true' : 'false')
+        formData.append('Quantity', newQuantity.toString())
+        formData.append('PurchasePrice', newAvgPrice.toString())
+        formData.append('TER', (this.holding.ter || 0).toString())
+        formData.append('Policy', this.holding.policy || 'N/A')
+
+        const response = await fetch(`${API_BASE_URL}/api/asset/holdings`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          body: formData
+        })
+
+        if (response.ok) {
+          this.addSuccess = true
+          setTimeout(() => {
+            this.showAddQuantityDialog = false
+            this.$emit('holding-updated')
+            window.location.reload()
+          }, 1500)
+        } else {
+          const errorText = await response.text()
+          this.addError = errorText || 'Failed to add to position'
+        }
+      } catch (error) {
+        console.error('Add to position error:', error)
+        this.addError = error.message || 'Failed to add to position'
+      } finally {
+        this.addLoading = false
+      }
+    },
+
+    async removeHolding() {
+      this.removeLoading = true
+      this.removeError = ''
+
+      try {
+        const formData = new FormData()
+        formData.append('HoldingID', this.holding.id_holding)
+
+        const response = await fetch(
+          `${API_BASE_URL}/api/asset/holdings`,
+          {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            },
+            body: formData
+          }
+        )
+
+        if (response.ok) {
+          this.showRemoveDialog = false
+          this.$emit('holding-removed')
+          window.location.reload()
+        } else {
+          const errorText = await response.text()
+          this.removeError = errorText || 'Failed to remove holding'
+        }
+      } catch (error) {
+        console.error('Remove holding error:', error)
+        this.removeError = error.message || 'Failed to remove holding'
+      } finally {
+        this.removeLoading = false
+      }
     }
   }
 }
