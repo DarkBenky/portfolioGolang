@@ -72,20 +72,30 @@ Write 1-2 sentences about potential impact on stock price or what investors shou
 
 Focus only on facts from the articles. Include specific numbers, percentages, dates, and company names. Do not add speculation or make up information."""
 
-    response = ollama.generate(
-        # model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
-        model="qwen3:8b",
-        prompt=prompt,
-        options={
-            "num_predict": max_tokens,
-            "temperature": 0.4,
-            "repeat_penalty": 1.15,
-            "top_k": 40,
-            "top_p": 0.9,
-        }
-    )
+    try:
+        response = ollama.generate(
+            # model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
+            model="qwen3:4b",
+            prompt=prompt,
+            options={
+                "num_predict": max_tokens,
+                "temperature": 0.4,
+                "repeat_penalty": 1.15,
+                "top_k": 40,
+                "top_p": 0.9,
+            }
+        )
 
-    summary_text = response['response'].strip()
+        summary_text = response['response'].strip()
+        
+        if not summary_text or len(summary_text) < 50:
+            print(f"Warning: Model generated empty or short response. Using fallback.")
+            summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
+            summary_text += "\n".join([f"- {summary}" for summary in news_list[:5]])
+    except Exception as e:
+        print(f"Error generating summary with Ollama: {e}")
+        summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
+        summary_text += "\n".join([f"- {summary}" for summary in news_list[:5]])
     
     # Clean up repetitive content while preserving structure
     lines = summary_text.split('\n')
