@@ -4,12 +4,7 @@
     <v-card v-if="selectedNewsItem">
       <v-card-title class="d-flex justify-space-between align-center">
         <div class="d-flex align-center">
-          <v-chip 
-            :color="getSentimentColor(selectedNewsItem.sentiment)" 
-            size="small" 
-            variant="tonal"
-            class="mr-3"
-          >
+          <v-chip :color="getSentimentColor(selectedNewsItem.sentiment)" size="small" variant="tonal" class="mr-3">
             Sentiment: {{ selectedNewsItem.sentiment?.toFixed(2) || '0.00' }}
           </v-chip>
           <span class="text-caption text-grey">{{ formatNewsDate(selectedNewsItem.published_at) }}</span>
@@ -20,17 +15,12 @@
       </v-card-title>
       <v-card-text>
         <h2 class="text-h6 mb-4">{{ selectedNewsItem.title }}</h2>
-        <div class="text-body-1 mb-4" style="white-space: pre-wrap;">{{ selectedNewsItem.text || selectedNewsItem.summary }}</div>
+        <div class="text-body-1 mb-4" style="white-space: pre-wrap;">{{ selectedNewsItem.text ||
+          selectedNewsItem.summary }}</div>
         <v-divider class="my-4"></v-divider>
         <div class="d-flex justify-center">
-          <v-btn
-            :href="selectedNewsItem.link"
-            target="_blank"
-            rel="noopener noreferrer"
-            color="primary"
-            variant="tonal"
-            prepend-icon="mdi-open-in-new"
-          >
+          <v-btn :href="selectedNewsItem.link" target="_blank" rel="noopener noreferrer" color="primary" variant="tonal"
+            prepend-icon="mdi-open-in-new">
             Read Original Article
           </v-btn>
         </div>
@@ -40,1018 +30,829 @@
 
   <tbody class="holding-tbody">
     <tr class="holding-row" @click="opened = !opened">
-    <!-- Mini Chart -->
-    <td class="chart-cell">
-      <div class="mini-chart-container">
-        <svg :width="chartWidth" :height="chartHeight" class="mini-chart">
-          <polyline
-            :points="chartPoints"
-            fill="none"
-            :stroke="isPositiveDay ? '#26a79a' : '#ef5250'"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </div>
-    </td>
-
-    <!-- Ticker -->
-    <td>
-      <div class="d-flex align-center">
-        <div>
-          <div class="font-weight-bold">{{ holding.ticker }}</div>
-          <div class="text-caption text-grey text-truncate" style="max-width: 140px;">
-            {{ holding.name }}
-          </div>
+      <!-- Mini Chart -->
+      <td class="chart-cell">
+        <div class="mini-chart-container">
+          <svg :width="chartWidth" :height="chartHeight" class="mini-chart">
+            <polyline :points="chartPoints" fill="none" :stroke="isPositiveDay ? '#26a79a' : '#ef5250'"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </div>
-        <v-chip v-if="holding.etf" size="x-small" color="blue" class="ml-2">ETF</v-chip>
-      </div>
-    </td>
+      </td>
 
-    <!-- Current Price -->
-    <td class="text-right">
-      <span class="font-weight-medium">{{ formatCurrency(convertedPrice, homeCurrency) }}</span>
-    </td>
+      <!-- Ticker -->
+      <td>
+        <div class="d-flex align-center">
+          <div>
+            <div class="font-weight-bold">{{ holding.ticker }}</div>
+            <div class="text-caption text-grey text-truncate" style="max-width: 140px;">
+              {{ holding.name }}
+            </div>
+          </div>
+          <v-chip v-if="holding.etf" size="x-small" color="blue" class="ml-2">ETF</v-chip>
+        </div>
+      </td>
 
-    <!-- Day Change % -->
-    <td class="text-right">
-      <v-chip
-        :color="isPositiveDay ? 'success' : 'error'"
-        size="small"
-        variant="tonal"
-        label
-      >
-        {{ isPositiveDay ? '+' : '' }}{{ formatPercent(dayChangePercent) }}
-      </v-chip>
-    </td>
+      <!-- Current Price -->
+      <td class="text-right">
+        <span class="font-weight-medium">{{ formatCurrency(convertedPrice, homeCurrency) }}</span>
+      </td>
 
-    <!-- Day Change $ -->
-    <td class="text-right">
-      <span :class="isPositiveDay ? 'text-success' : 'text-error'">
-        {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(convertedDayChange, homeCurrency) }}
-      </span>
-    </td>
+      <!-- Day Change % -->
+      <td class="text-right">
+        <v-chip :color="isPositiveDay ? 'success' : 'error'" size="small" variant="tonal" label>
+          {{ isPositiveDay ? '+' : '' }}{{ formatPercent(dayChangePercent) }}
+        </v-chip>
+      </td>
 
-    <!-- Total Change % -->
-    <td class="text-right">
-      <v-chip
-        :color="isPositiveTotal ? 'success' : 'error'"
-        size="small"
-        variant="tonal"
-        label
-      >
-        {{ isPositiveTotal ? '+' : '' }}{{ formatPercent(totalChangePercent) }}
-      </v-chip>
-    </td>
+      <!-- Day Change $ -->
+      <td class="text-right">
+        <span :class="isPositiveDay ? 'text-success' : 'text-error'">
+          {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(convertedDayChange, homeCurrency) }}
+        </span>
+      </td>
 
-    <!-- Total Change $ -->
-    <td class="text-right">
-      <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-medium">
-        {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, homeCurrency) }}
-      </span>
-    </td>
+      <!-- Total Change % -->
+      <td class="text-right">
+        <v-chip :color="isPositiveTotal ? 'success' : 'error'" size="small" variant="tonal" label>
+          {{ isPositiveTotal ? '+' : '' }}{{ formatPercent(totalChangePercent) }}
+        </v-chip>
+      </td>
 
-    <!-- Current Value -->
-    <td class="text-right">
-      <div class="font-weight-bold">{{ formatCurrency(currentValue, homeCurrency) }}</div>
-      <div class="text-caption text-grey">{{ formatQuantity(holding.quantity) }} {{ holding.etf ? 'units' : 'shares' }}</div>
-    </td>
+      <!-- Total Change $ -->
+      <td class="text-right">
+        <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-medium">
+          {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, homeCurrency) }}
+        </span>
+      </td>
 
-    <!-- Expand Icon -->
-    <td class="text-center expand-cell">
-      <v-icon size="small" :class="{ 'rotate-180': opened }">
-        mdi-chevron-down
-      </v-icon>
-    </td>
-  </tr>
+      <!-- Current Value -->
+      <td class="text-right">
+        <div class="font-weight-bold">{{ formatCurrency(currentValue, homeCurrency) }}</div>
+        <div class="text-caption text-grey">{{ formatQuantity(holding.quantity) }} {{ holding.etf ? 'units' : 'shares'
+          }}</div>
+      </td>
 
-  <!-- Expandable Detail Row -->
-  <tr v-if="opened" class="detail-row">
-    <td colspan="9" class="pa-0">
-      <div class="detail-container">
-        <!-- Full Price Chart at Top -->
-        <v-row class="mb-4">
-          <v-col cols="12">
-            <v-card variant="outlined">
-              <v-card-title class="d-flex justify-space-between align-center pb-2">
-                <div class="d-flex align-center">
-                  <v-icon size="small" class="mr-2">mdi-chart-line</v-icon>
-                  Price Chart - {{ holding.ticker }}
-                </div>
-                <div class="d-flex ga-2">
-                  <v-btn-toggle v-model="chartInterval" mandatory density="compact" color="primary">
-                    <v-btn value="5m" size="x-small">5m</v-btn>
-                    <v-btn value="15m" size="x-small">15m</v-btn>
-                    <v-btn value="1h" size="x-small">1h</v-btn>
-                    <v-btn value="4h" size="x-small">4h</v-btn>
-                    <v-btn value="1d" size="x-small">1d</v-btn>
-                    <v-btn value="1w" size="x-small">1w</v-btn>
-                    <v-btn value="1M" size="x-small">1M</v-btn>
-                  </v-btn-toggle>
-                </div>
-              </v-card-title>
-              <v-card-text class="pa-0">
-                <div v-if="chartLoading" class="d-flex justify-center align-center" style="height: 300px;">
-                  <v-progress-circular indeterminate color="primary" size="40"></v-progress-circular>
-                </div>
-                <div v-else-if="fullPriceHistory.length > 0" style="width: 100%;">
-                  <CandleChart
-                  ref="holdingChart"
-                  :data="fullPriceHistory"
-                  :height="500"
-                  :show-volume="false"
-                  theme="dark"
-                  @chart-ready="onHoldingChartReady"/>
-                </div>
-                <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
-                  No chart data available
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
+      <!-- Expand Icon -->
+      <td class="text-center expand-cell">
+        <v-icon size="small" :class="{ 'rotate-180': opened }">
+          mdi-chevron-down
+        </v-icon>
+      </td>
+    </tr>
 
-        <!-- Info Cards Row -->
-        <v-row>
-          <!-- Left Column: Asset Info -->
-          <v-col cols="12" md="4">
-            <v-card variant="outlined" class="h-100">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-information-outline</v-icon>
-                Asset Details
-              </v-card-title>
-              <v-card-text>
-                <div class="detail-grid">
-                  <div class="detail-item">
-                    <span class="detail-label">Name</span>
-                    <span class="detail-value">{{ holding.name }}</span>
+    <!-- Expandable Detail Row -->
+    <tr v-if="opened" class="detail-row">
+      <td colspan="9" class="pa-0">
+        <div class="detail-container">
+          <!-- Full Price Chart at Top -->
+          <v-row class="mb-4">
+            <v-col cols="12">
+              <v-card variant="outlined">
+                <v-card-title class="d-flex justify-space-between align-center pb-2">
+                  <div class="d-flex align-center">
+                    <v-icon size="small" class="mr-2">mdi-chart-line</v-icon>
+                    Price Chart - {{ holding.ticker }}
                   </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Ticker</span>
-                    <span class="detail-value font-weight-bold">{{ holding.ticker }}</span>
+                  <div class="d-flex ga-2">
+                    <v-btn-toggle v-model="chartInterval" mandatory density="compact" color="primary">
+                      <v-btn value="5m" size="x-small">5m</v-btn>
+                      <v-btn value="15m" size="x-small">15m</v-btn>
+                      <v-btn value="1h" size="x-small">1h</v-btn>
+                      <v-btn value="4h" size="x-small">4h</v-btn>
+                      <v-btn value="1d" size="x-small">1d</v-btn>
+                      <v-btn value="1w" size="x-small">1w</v-btn>
+                      <v-btn value="1M" size="x-small">1M</v-btn>
+                    </v-btn-toggle>
                   </div>
-                  <div v-if="holding.isin && holding.isin !== 'N/A'" class="detail-item">
-                    <span class="detail-label">ISIN</span>
-                    <span class="detail-value text-mono">{{ holding.isin }}</span>
+                </v-card-title>
+                <v-card-text class="pa-0">
+                  <div v-if="chartLoading" class="d-flex justify-center align-center" style="height: 300px;">
+                    <v-progress-circular indeterminate color="primary" size="40"></v-progress-circular>
                   </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Exchange</span>
-                    <span class="detail-value">{{ holding.exchange || 'N/A' }}</span>
+                  <div v-else-if="fullPriceHistory.length > 0" style="width: 100%;">
+                    <CandleChart ref="holdingChart" :data="fullPriceHistory" :height="500" :show-volume="false"
+                      theme="dark" @chart-ready="onHoldingChartReady" />
                   </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Currency</span>
-                    <span class="detail-value">{{ holding.currency }}</span>
+                  <div v-else class="d-flex justify-center align-center text-grey" style="height: 300px;">
+                    No chart data available
                   </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Type</span>
-                    <v-chip :color="holding.etf ? 'blue' : 'grey'" size="x-small">
-                      {{ holding.etf ? 'ETF' : 'Stock/Crypto' }}
-                    </v-chip>
-                  </div>
-                  <div v-if="holding.etf && holding.ter > 0" class="detail-item">
-                    <span class="detail-label">TER</span>
-                    <span class="detail-value">{{ holding.ter.toFixed(2) }}%</span>
-                  </div>
-                  <div v-if="holding.policy && holding.policy !== 'N/A'" class="detail-item">
-                    <span class="detail-label">Distribution</span>
-                    <v-chip :color="holding.policy === 'Accumulating' ? 'purple' : 'orange'" size="x-small">
-                      {{ holding.policy }}
-                    </v-chip>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
 
-          <!-- Middle Column: Position Info -->
-          <v-col cols="12" md="4">
-            <v-card variant="outlined" class="h-100">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-wallet-outline</v-icon>
-                Position
-              </v-card-title>
-              <v-card-text>
-                <div class="detail-grid">
-                  <div class="detail-item">
-                    <span class="detail-label">Quantity</span>
-                    <span class="detail-value font-weight-bold">{{ formatQuantity(holding.quantity) }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Avg. Purchase Price</span>
-                    <span class="detail-value">{{ formatCurrency(holding.purchase_price, holding.currency) }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Cost Basis</span>
-                    <span class="detail-value">{{ formatCurrency(costBasis, holding.currency) }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Current Price</span>
-                    <span class="detail-value font-weight-bold">{{ formatCurrency(currentPrice, holding.currency) }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Current Value</span>
-                    <span class="detail-value font-weight-bold text-primary">{{ formatCurrency(currentValue, holding.currency) }}</span>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-
-          <!-- Right Column: Performance -->
-          <v-col cols="12" md="4">
-            <v-card variant="outlined" class="h-100">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-trending-up</v-icon>
-                Performance
-              </v-card-title>
-              <v-card-text>
-                <div class="detail-grid">
-                  <div class="detail-item">
-                    <span class="detail-label">Today's Change</span>
-                    <div>
-                      <span :class="isPositiveDay ? 'text-success' : 'text-error'" class="font-weight-bold">
-                        {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(dayChange, holding.currency) }}
-                      </span>
-                      <v-chip :color="isPositiveDay ? 'success' : 'error'" size="x-small" class="ml-2">
-                        {{ isPositiveDay ? '+' : '' }}{{ dayChangePercent.toFixed(2) }}%
+          <!-- Info Cards Row -->
+          <v-row>
+            <!-- Left Column: Asset Info -->
+            <v-col cols="12" md="4">
+              <v-card variant="outlined" class="h-100">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-information-outline</v-icon>
+                  Asset Details
+                </v-card-title>
+                <v-card-text>
+                  <div class="detail-grid">
+                    <div class="detail-item">
+                      <span class="detail-label">Name</span>
+                      <span class="detail-value">{{ holding.name }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Ticker</span>
+                      <span class="detail-value font-weight-bold">{{ holding.ticker }}</span>
+                    </div>
+                    <div v-if="holding.isin && holding.isin !== 'N/A'" class="detail-item">
+                      <span class="detail-label">ISIN</span>
+                      <span class="detail-value text-mono">{{ holding.isin }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Exchange</span>
+                      <span class="detail-value">{{ holding.exchange || 'N/A' }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Currency</span>
+                      <span class="detail-value">{{ holding.currency }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Type</span>
+                      <v-chip :color="holding.etf ? 'blue' : 'grey'" size="x-small">
+                        {{ holding.etf ? 'ETF' : 'Stock/Crypto' }}
+                      </v-chip>
+                    </div>
+                    <div v-if="holding.etf && holding.ter > 0" class="detail-item">
+                      <span class="detail-label">TER</span>
+                      <span class="detail-value">{{ holding.ter.toFixed(2) }}%</span>
+                    </div>
+                    <div v-if="holding.policy && holding.policy !== 'N/A'" class="detail-item">
+                      <span class="detail-label">Distribution</span>
+                      <v-chip :color="holding.policy === 'Accumulating' ? 'purple' : 'orange'" size="x-small">
+                        {{ holding.policy }}
                       </v-chip>
                     </div>
                   </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Total Gain/Loss</span>
-                    <div>
-                      <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-bold">
-                        {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, holding.currency) }}
-                      </span>
-                      <v-chip :color="isPositiveTotal ? 'success' : 'error'" size="x-small" class="ml-2">
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Middle Column: Position Info -->
+            <v-col cols="12" md="4">
+              <v-card variant="outlined" class="h-100">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-wallet-outline</v-icon>
+                  Position
+                </v-card-title>
+                <v-card-text>
+                  <div class="detail-grid">
+                    <div class="detail-item">
+                      <span class="detail-label">Quantity</span>
+                      <span class="detail-value font-weight-bold">{{ formatQuantity(holding.quantity) }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Avg. Purchase Price</span>
+                      <span class="detail-value">{{ formatCurrency(holding.purchase_price, holding.currency) }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Cost Basis</span>
+                      <span class="detail-value">{{ formatCurrency(costBasis, holding.currency) }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Current Price</span>
+                      <span class="detail-value font-weight-bold">{{ formatCurrency(currentPrice, holding.currency)
+                        }}</span>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Current Value</span>
+                      <span class="detail-value font-weight-bold text-primary">{{ formatCurrency(currentValue,
+                        holding.currency) }}</span>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Right Column: Performance -->
+            <v-col cols="12" md="4">
+              <v-card variant="outlined" class="h-100">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-trending-up</v-icon>
+                  Performance
+                </v-card-title>
+                <v-card-text>
+                  <div class="detail-grid">
+                    <div class="detail-item">
+                      <span class="detail-label">Today's Change</span>
+                      <div>
+                        <span :class="isPositiveDay ? 'text-success' : 'text-error'" class="font-weight-bold">
+                          {{ isPositiveDay ? '+' : '' }}{{ formatCurrency(dayChange, holding.currency) }}
+                        </span>
+                        <v-chip :color="isPositiveDay ? 'success' : 'error'" size="x-small" class="ml-2">
+                          {{ isPositiveDay ? '+' : '' }}{{ dayChangePercent.toFixed(2) }}%
+                        </v-chip>
+                      </div>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Total Gain/Loss</span>
+                      <div>
+                        <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="font-weight-bold">
+                          {{ isPositiveTotal ? '+' : '' }}{{ formatCurrency(totalChange, holding.currency) }}
+                        </span>
+                        <v-chip :color="isPositiveTotal ? 'success' : 'error'" size="x-small" class="ml-2">
+                          {{ isPositiveTotal ? '+' : '' }}{{ totalChangePercent.toFixed(2) }}%
+                        </v-chip>
+                      </div>
+                    </div>
+                    <div class="detail-item">
+                      <span class="detail-label">Return on Investment</span>
+                      <span :class="isPositiveTotal ? 'text-success' : 'text-error'"
+                        class="detail-value font-weight-bold text-h6">
                         {{ isPositiveTotal ? '+' : '' }}{{ totalChangePercent.toFixed(2) }}%
-                      </v-chip>
-                    </div>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">Return on Investment</span>
-                    <span :class="isPositiveTotal ? 'text-success' : 'text-error'" class="detail-value font-weight-bold text-h6">
-                      {{ isPositiveTotal ? '+' : '' }}{{ totalChangePercent.toFixed(2) }}%
-                    </span>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Daily Summary Section -->
-        <v-row class="mt-4">
-          <v-col cols="12">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
-                <div class="d-flex align-center">
-                  <v-icon size="small" class="mr-2">mdi-text-box-outline</v-icon>
-                  Today's Summary - {{ holding.ticker }}
-                </div>
-                <v-chip 
-                  v-if="dailySummary?.sentiment !== undefined"
-                  :color="getSentimentColor(dailySummary.sentiment)" 
-                  size="small"
-                  variant="tonal"
-                >
-                  Sentiment: {{ getSentimentLabel(dailySummary.sentiment) }}
-                </v-chip>
-              </v-card-title>
-              <v-card-text>
-                <div v-if="dailySummaryLoading" class="d-flex justify-center py-4">
-                  <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
-                </div>
-                <div v-else-if="dailySummary?.summary" class="summary-content">
-                  <div class="text-body-2 markdown-content" v-html="formatMarkdown(dailySummary.summary)"></div>
-                </div>
-                <div v-else class="text-center text-grey py-4">
-                  <v-icon size="36" class="mb-2">mdi-text-box-remove-outline</v-icon>
-                  <div>No summary available for today</div>
-                  <div class="text-caption mt-1">Summaries are generated periodically from recent news</div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Pie Charts for ETFs - Sectors, Regions & Top 10 Holdings -->
-        <v-row v-if="holding.etf && (holding.sectors?.length > 0 || holding.regions?.length > 0 || holding.assets?.length > 0)" class="mt-4">
-          <v-col v-if="holding.sectors?.length > 0" cols="12" md="4">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-domain</v-icon>
-                Sector Allocation
-              </v-card-title>
-              <v-card-text>
-                <div class="pie-chart-container">
-                  <svg viewBox="0 0 200 200" class="pie-chart">
-                    <g transform="translate(100, 100)">
-                      <path
-                        v-for="(slice, index) in sectorPieSlices"
-                        :key="'sector-' + index"
-                        :d="slice.path"
-                        :fill="slice.color"
-                        class="pie-slice"
-                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
-                        @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
-                        @mouseleave="hoveredSlice = null"
-                      >
-                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
-                      </path>
-                    </g>
-                  </svg>
-                  <div class="pie-legend">
-                    <div 
-                      v-for="(sector, index) in sortedSectors" 
-                      :key="sector.name" 
-                      class="legend-item"
-                      :class="{ 'legend-item-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
-                      :data-type="'sector'"
-                      :data-index="index"
-                      @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
-                      @mouseleave="hoveredSlice = null"
-                    >
-                      <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
-                      <span class="legend-text">{{ sector.name }}</span>
-                      <span class="legend-value">{{ sector.percentage.toFixed(1) }}%</span>
-                    </div>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-
-          <v-col v-if="holding.regions?.length > 0" cols="12" md="4">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-earth</v-icon>
-                Region Allocation
-              </v-card-title>
-              <v-card-text>
-                <div class="pie-chart-container">
-                  <svg viewBox="0 0 200 200" class="pie-chart">
-                    <g transform="translate(100, 100)">
-                      <path
-                        v-for="(slice, index) in regionPieSlices"
-                        :key="'region-' + index"
-                        :d="slice.path"
-                        :fill="slice.color"
-                        class="pie-slice"
-                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
-                        @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
-                        @mouseleave="hoveredSlice = null"
-                      >
-                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
-                      </path>
-                    </g>
-                  </svg>
-                  <div class="pie-legend">
-                    <div 
-                      v-for="(region, index) in sortedRegions" 
-                      :key="region.name" 
-                      class="legend-item"
-                      :class="{ 'legend-item-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
-                      :data-type="'region'"
-                      :data-index="index"
-                      @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
-                      @mouseleave="hoveredSlice = null"
-                    >
-                      <span class="legend-color" :style="{ backgroundColor: pieColors2[index % pieColors2.length] }"></span>
-                      <span class="legend-text">{{ region.name }}</span>
-                      <span class="legend-value">{{ region.percentage.toFixed(1) }}%</span>
-                    </div>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-
-          <v-col v-if="holding.assets?.length > 0" cols="12" md="4">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-chart-pie</v-icon>
-                Top 10 Holdings
-              </v-card-title>
-              <v-card-text>
-                <div class="pie-chart-container" style="overflow-y: scroll">
-                  <svg viewBox="0 0 200 200" class="pie-chart">
-                    <g transform="translate(100, 100)">
-                      <path
-                        v-for="(slice, index) in topHoldingsPieSlices"
-                        :key="'holding-' + index"
-                        :d="slice.path"
-                        :fill="slice.color"
-                        class="pie-slice"
-                        :class="{ 'pie-slice-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
-                        @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
-                        @mouseleave="hoveredSlice = null"
-                      >
-                        <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
-                      </path>
-                    </g>
-                  </svg>
-                  <div class="pie-legend">
-                    <div 
-                      v-for="(asset, index) in topHoldingsForPie" 
-                      :key="asset.id_asset" 
-                      class="legend-item"
-                      :class="{ 'legend-item-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
-                      :data-type="'holding'"
-                      :data-index="index"
-                      @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
-                      @mouseleave="hoveredSlice = null"
-                    >
-                      <span class="legend-color" :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
-                      <span class="legend-text">{{ asset.name }}</span>
-                      <span class="legend-value">{{ calculateAssetPercentage(index) }}%</span>
-                    </div>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Top 10 Holdings for ETFs -->
-        <v-row v-if="holding.etf && holding.assets?.length > 0" class="mt-4">
-          <v-col cols="12">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
-                <div class="d-flex align-center">
-                  <v-icon size="small" class="mr-2">mdi-view-list</v-icon>
-                  Top Holdings
-                </div>
-                <v-chip size="small" color="blue" variant="tonal">
-                  {{ holding.assets.length }} Assets
-                </v-chip>
-              </v-card-title>
-              <v-card-text class="pa-0">
-                <v-table density="compact" class="holdings-sub-table">
-                  <thead>
-                    <tr>
-                      <th class="text-left">Chart</th>
-                      <th class="text-left">Weight</th>
-                      <th class="text-left">Name</th>
-                      <th class="text-left">ISIN</th>
-                      <th class="text-left">Country</th>
-                      <th class="text-left">Sector</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr 
-                      v-for="(asset, index) in holding.assets" 
-                      :key="asset.id_asset" 
-                      class="asset-row"
-                      @click="toggleAssetDetails(asset)"
-                    >
-                      <td class="chart-cell">
-                        <div class="mini-chart-container">
-                          <svg :width="60" :height="24" class="mini-chart">
-                            <polyline
-                              v-if="assetCharts[asset.name]?.length > 0"
-                              :points="getAssetChartPoints(asset.name, 60, 24)"
-                              fill="none"
-                              :stroke="getAssetChartColor(asset.name)"
-                              stroke-width="1.5"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            />
-                            <line v-else x1="0" y1="12" x2="60" y2="12" stroke="#666" stroke-width="1" />
-                          </svg>
-                        </div>
-                      </td>
-                      <td class="font-weight-bold">{{ calculateAssetPercentage(index) }}%</td>
-                      <td>
-                        <div class="text-truncate" style="max-width: 200px;">
-                          <div class="font-weight-medium">{{ asset.name }}</div>
-                        </div>
-                      </td>
-                      <td class="text-mono text-caption">{{ asset.isin || 'N/A' }}</td>
-                      <td>
-                        <v-chip 
-                          v-if="assetDetails[asset.name]?.country" 
-                          size="x-small" 
-                          color="secondary" 
-                          variant="tonal"
-                        >
-                          {{ assetDetails[asset.name].country }}
-                        </v-chip>
-                        <v-chip v-else-if="asset.region" size="x-small" color="secondary" variant="tonal">
-                          {{ asset.region }}
-                        </v-chip>
-                        <span v-else class="text-grey">-</span>
-                      </td>
-                      <td>
-                        <v-chip 
-                          v-if="assetDetails[asset.name]?.sector" 
-                          size="x-small" 
-                          color="primary" 
-                          variant="tonal"
-                        >
-                          {{ assetDetails[asset.name].sector }}
-                        </v-chip>
-                        <v-chip v-else-if="asset.sector" size="x-small" color="primary" variant="tonal">
-                          {{ asset.sector }}
-                        </v-chip>
-                        <span v-else class="text-grey">-</span>
-                      </td>
-                    </tr>
-                    <tr v-if="expandedAsset && expandedAsset.name" class="asset-detail-row">
-                      <td colspan="6" class="pa-0">
-                        <div class="asset-detail-container">
-                          <v-row dense>
-                            <v-col cols="12" md="6">
-                              <div class="detail-section">
-                                <h4 class="text-subtitle-2 mb-2">Financial Metrics</h4>
-                                <div class="metric-grid">
-                                  <div class="metric-item">
-                                    <span class="metric-label">Market Cap</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.market_cap || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">P/E Ratio</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pe_ratio || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">P/B Ratio</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pb_ratio || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">EPS</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.eps || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">Dividend Yield</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.dividend_yield ? assetDetails[expandedAsset.name].dividend_yield + '%' : 'N/A' }}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </v-col>
-                            <v-col cols="12" md="6">
-                              <div class="detail-section">
-                                <h4 class="text-subtitle-2 mb-2">Revenue & Profitability</h4>
-                                <div class="metric-grid">
-                                  <div class="metric-item">
-                                    <span class="metric-label">Revenue</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.revenue || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">Net Income</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.net_income || 'N/A' }}</span>
-                                  </div>
-                                  <div class="metric-item">
-                                    <span class="metric-label">Profit Margin</span>
-                                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.profit_margin ? assetDetails[expandedAsset.name].profit_margin + '%' : 'N/A' }}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </v-col>
-                          </v-row>
-                          <div v-if="assetDetailsLoading[expandedAsset.name]" class="text-center py-2">
-                            <v-progress-circular indeterminate size="20" color="primary"></v-progress-circular>
-                          </div>
-
-                          <v-divider class="my-3"></v-divider>
-
-                          <div class="asset-news-section">
-                            <div class="d-flex align-center mb-3">
-                              <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
-                              <span class="text-subtitle-2">Latest News - {{ expandedAsset.name }}</span>
-                            </div>
-
-                            <SentimentCard
-                              v-if="assetSentiment[expandedAsset.name]"
-                              :label="`${expandedAsset.name} Sentiment`"
-                              :sentiment-score="assetSentiment[expandedAsset.name].sentiment"
-                              :summary="assetSentiment[expandedAsset.name].summary"
-                              :date="assetSentiment[expandedAsset.name].date"
-                              :show-trend="false"
-                              class="mb-3"
-                            />
-
-                            <div v-if="assetNewsLoading[expandedAsset.name]" class="text-center py-4">
-                              <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
-                            </div>
-                            <div v-else-if="!assetNews[expandedAsset.name] || assetNews[expandedAsset.name].length === 0" class="text-center text-grey py-4">
-                              <v-icon size="32" class="mb-2">mdi-newspaper-remove</v-icon>
-                              <div class="text-caption">No news available</div>
-                            </div>
-                            <div v-else class="asset-news-list">
-                              <div 
-                                v-for="news in assetNews[expandedAsset.name].slice(0, 3)" 
-                                :key="news.id_news"
-                                class="asset-news-item"
-                                @click="openNewsDialog(news)"
-                              >
-                                <div class="d-flex align-center mb-1">
-                                  <v-chip 
-                                    :color="getSentimentColor(news.sentiment)" 
-                                    size="x-small" 
-                                    variant="tonal"
-                                    class="mr-2"
-                                  >
-                                    {{ news.sentiment?.toFixed(2) || '0.00' }}
-                                  </v-chip>
-                                  <span class="text-caption text-grey">
-                                    {{ formatNewsDate(news.published_at) }}
-                                  </span>
-                                </div>
-                                <div class="text-body-2 font-weight-medium mb-1">{{ news.title }}</div>
-                                <div class="text-caption text-grey">{{ truncateText(news.summary, 100) }}</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Sentiment Summary Section -->
-        <v-row v-if="dailySummary" class="mt-4">
-          <v-col cols="12">
-            <SentimentCard
-              :label="`${holding.ticker} Sentiment Today`"
-              :sentiment-score="dailySummary.sentiment"
-              :summary="dailySummary.summary"
-              :date="dailySummary.date"
-              :show-trend="false"
-            />
-          </v-col>
-        </v-row>
-
-        <!-- News Section -->
-        <v-row class="mt-4">
-          <v-col cols="12">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
-                <div class="d-flex align-center">
-                  <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
-                  Latest News - {{ holding.ticker }}
-                </div>
-                <v-btn 
-                  v-if="newsList.length > 0" 
-                  variant="text" 
-                  size="small" 
-                  color="primary"
-                  @click="loadMoreNews"
-                  :loading="newsLoading"
-                >
-                  Load More
-                </v-btn>
-              </v-card-title>
-              <v-card-text>
-                <div v-if="newsLoading && newsList.length === 0" class="d-flex justify-center py-4">
-                  <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
-                </div>
-                <div v-else-if="newsList.length === 0" class="text-center text-grey py-4">
-                  <v-icon size="48" class="mb-2">mdi-newspaper-remove</v-icon>
-                  <div>No news available for {{ holding.ticker }}</div>
-                </div>
-                <div v-else class="news-list">
-                  <div 
-                    v-for="news in newsList" 
-                    :key="news.id_news" 
-                    class="news-item"
-                  >
-                    <div class="news-header" @click="toggleNewsExpand(news.id_news)">
-                      <div class="d-flex align-center flex-grow-1">
-                        <v-icon 
-                          size="small" 
-                          class="mr-2 news-expand-icon"
-                          :class="{ 'rotate-180': expandedNews[news.id_news] }"
-                        >
-                          mdi-chevron-down
-                        </v-icon>
-                        <span class="news-title">{{ news.title }}</span>
-                      </div>
-                      <v-chip 
-                        :color="getSentimentColor(news.sentiment)" 
-                        size="x-small" 
-                        variant="tonal"
-                        class="ml-2 flex-shrink-0"
-                      >
-                        {{ news.sentiment?.toFixed(2) || '0.00' }}
-                      </v-chip>
-                    </div>
-                    
-                    <!-- Summary Preview (always visible) -->
-                    <div class="news-preview text-caption text-grey mt-2" v-if="!expandedNews[news.id_news]">
-                      {{ truncateText(news.summary, 150) }}
-                    </div>
-                    
-                    <!-- Expanded Content -->
-                    <div v-if="expandedNews[news.id_news]" class="news-expanded mt-3">
-                      <!-- Author & Date -->
-                      <div class="news-info d-flex flex-wrap ga-3 mb-3">
-                        <div v-if="news.author" class="d-flex align-center">
-                          <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
-                          <span class="text-caption">{{ news.author }}</span>
-                        </div>
-                        <div class="d-flex align-center">
-                          <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
-                          <span class="text-caption">{{ formatNewsDate(news.published_at) }}</span>
-                        </div>
-                        <div class="d-flex align-center">
-                          <v-icon size="x-small" class="mr-1">mdi-emoticon-outline</v-icon>
-                          <span class="text-caption">Sentiment: {{ news.sentiment?.toFixed(3) || 'N/A' }}</span>
-                          <v-chip 
-                            :color="getSentimentColor(news.sentiment)" 
-                            size="x-small" 
-                            variant="tonal"
-                            class="ml-1"
-                          >
-                            {{ getSentimentLabel(news.sentiment) }}
-                          </v-chip>
-                        </div>
-                      </div>
-                      
-                      <!-- Summary -->
-                      <div class="news-full-summary mb-3">
-                        <div class="text-caption text-uppercase text-grey mb-1">Summary</div>
-                        <div class="text-body-2 markdown-content" v-html="formatMarkdown(news.summary || 'No summary available')"></div>
-                      </div>
-                      
-                      <!-- Full Text -->
-                      <div v-if="news.text" class="news-full-text mb-3">
-                        <div class="text-caption text-uppercase text-grey mb-1">Full Article</div>
-                        <div class="text-body-2 markdown-content news-text-content" v-html="formatMarkdown(news.text)"></div>
-                      </div>
-                      
-                      <!-- Source Link -->
-                      <div class="news-source mt-3 pt-3">
-                        <v-btn 
-                          v-if="news.link"
-                          variant="outlined" 
-                          size="small" 
-                          color="primary"
-                          :href="news.link"
-                          target="_blank"
-                          prepend-icon="mdi-open-in-new"
-                        >
-                          View Original Source
-                        </v-btn>
-                      </div>
-                    </div>
-                    
-                    <!-- Collapsed Meta -->
-                    <div v-if="!expandedNews[news.id_news]" class="news-meta text-caption mt-2">
-                      <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
-                      {{ formatNewsDate(news.published_at) }}
-                      <span v-if="news.author" class="ml-3">
-                        <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
-                        {{ news.author }}
                       </span>
                     </div>
                   </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
 
-        <!-- Edit/Remove/Add Section -->
-        <v-row class="mt-4">
-          <v-col cols="12">
-            <v-card variant="outlined">
-              <v-card-title class="text-subtitle-1 pb-2">
-                <v-icon size="small" class="mr-2">mdi-cog-outline</v-icon>
-                Manage Holding
-              </v-card-title>
-              <v-card-text>
-                <v-row dense>
-                  <v-col cols="12" md="4">
-                    <v-btn
-                      block
-                      color="primary"
-                      variant="tonal"
-                      prepend-icon="mdi-pencil"
-                      @click="showEditDialog = true"
-                    >
-                      Edit Details
-                    </v-btn>
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-btn
-                      block
-                      color="success"
-                      variant="tonal"
-                      prepend-icon="mdi-plus-circle"
-                      @click="showAddQuantityDialog = true"
-                    >
-                      Add to Position
-                    </v-btn>
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-btn
-                      block
-                      color="error"
-                      variant="tonal"
-                      prepend-icon="mdi-delete"
-                      @click="showRemoveDialog = true"
-                    >
-                      Remove Holding
-                    </v-btn>
-                  </v-col>
-                </v-row>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
+          <!-- Daily Summary Section -->
+          <!-- <v-row class="mt-4">
+            <v-col cols="12">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+                  <div class="d-flex align-center">
+                    <v-icon size="small" class="mr-2">mdi-text-box-outline</v-icon>
+                    Today's Summary - {{ holding.ticker }}
+                  </div>
+                  <v-chip v-if="dailySummary?.sentiment !== undefined"
+                    :color="getSentimentColor(dailySummary.sentiment)" size="small" variant="tonal">
+                    Sentiment: {{ getSentimentLabel(dailySummary.sentiment) }}
+                  </v-chip>
+                </v-card-title>
+                <v-card-text>
+                  <div v-if="dailySummaryLoading" class="d-flex justify-center py-4">
+                    <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+                  </div>
+                  <div v-else-if="dailySummary?.summary" class="summary-content">
+                    <div class="text-body-2 markdown-content" v-html="formatMarkdown(dailySummary.summary)"></div>
+                  </div>
+                  <div v-else class="text-center text-grey py-4">
+                    <v-icon size="36" class="mb-2">mdi-text-box-remove-outline</v-icon>
+                    <div>No summary available for today</div>
+                    <div class="text-caption mt-1">Summaries are generated periodically from recent news</div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row> -->
 
-        <!-- Edit Dialog -->
-        <v-dialog v-model="showEditDialog" max-width="600">
-          <v-card>
-            <v-card-title class="d-flex align-center justify-space-between">
-              <span>Edit Holding - {{ holding.ticker }}</span>
-              <v-btn icon variant="text" @click="showEditDialog = false">
-                <v-icon>mdi-close</v-icon>
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <v-form ref="editForm">
-                <v-text-field
-                  v-model="editForm.name"
-                  label="Name"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                ></v-text-field>
-                <v-text-field
-                  v-model="editForm.ticker"
-                  label="Ticker"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  hint="Trading symbol (e.g., VWCE.DE, AAPL)"
-                  persistent-hint
-                ></v-text-field>
-                <v-text-field
-                  v-model="editForm.isin"
-                  label="ISIN"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  hint="International Securities Identification Number"
-                  persistent-hint
-                ></v-text-field>
-                <v-text-field
-                  v-model="editForm.quantity"
-                  label="Quantity"
-                  type="number"
-                  step="0.000001"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  :rules="[v => v > 0 || 'Quantity must be positive']"
-                ></v-text-field>
-                <v-text-field
-                  v-model="editForm.purchasePrice"
-                  label="Average Purchase Price"
-                  type="number"
-                  step="0.01"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  :rules="[v => v > 0 || 'Price must be positive']"
-                ></v-text-field>
-                <v-text-field
-                  v-model="editForm.ter"
-                  label="TER (%)"
-                  type="number"
-                  step="0.01"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  :disabled="!holding.etf"
-                ></v-text-field>
-                <v-select
-                  v-model="editForm.policy"
-                  label="Distribution Policy"
-                  :items="['Accumulating', 'Distributing', 'N/A']"
-                  variant="outlined"
-                  density="compact"
-                  :disabled="!holding.etf"
-                ></v-select>
-              </v-form>
-              <v-alert v-if="editError" type="error" class="mt-3">{{ editError }}</v-alert>
-              <v-alert v-if="editSuccess" type="success" class="mt-3">Holding updated successfully!</v-alert>
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
-              <v-btn color="primary" variant="flat" @click="updateHolding" :loading="editLoading">
-                Save Changes
-              </v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
-
-        <!-- Add Quantity Dialog -->
-        <v-dialog v-model="showAddQuantityDialog" max-width="500">
-          <v-card>
-            <v-card-title class="d-flex align-center justify-space-between">
-              <span>Add to Position - {{ holding.ticker }}</span>
-              <v-btn icon variant="text" @click="showAddQuantityDialog = false">
-                <v-icon>mdi-close</v-icon>
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <v-form ref="addForm">
-                <v-text-field
-                  v-model="addQuantityForm.quantity"
-                  label="Additional Quantity"
-                  type="number"
-                  step="0.000001"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  :rules="[v => v > 0 || 'Quantity must be positive']"
-                  hint="Amount to add to current position"
-                ></v-text-field>
-                <v-text-field
-                  v-model="addQuantityForm.price"
-                  label="Purchase Price"
-                  type="number"
-                  step="0.01"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  :rules="[v => v > 0 || 'Price must be positive']"
-                  hint="Price per unit for this purchase"
-                ></v-text-field>
-                <v-alert type="info" variant="tonal" class="mb-3">
-                  <div class="text-body-2">
-                    <div>Current quantity: {{ formatQuantity(holding.quantity) }}</div>
-                    <div>Current avg price: {{ formatCurrency(holding.purchase_price, holding.currency) }}</div>
-                    <div v-if="addQuantityForm.quantity > 0 && addQuantityForm.price > 0" class="mt-2">
-                      <strong>New quantity:</strong> {{ formatQuantity(parseFloat(holding.quantity) + parseFloat(addQuantityForm.quantity)) }}<br>
-                      <strong>New avg price:</strong> {{ formatCurrency(calculateNewAvgPrice(), holding.currency) }}
+          <!-- Pie Charts for ETFs - Sectors, Regions & Top 10 Holdings -->
+          <v-row
+            v-if="holding.etf && (holding.sectors?.length > 0 || holding.regions?.length > 0 || holding.assets?.length > 0)"
+            class="mt-4">
+            <v-col v-if="holding.sectors?.length > 0" cols="12" md="4">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-domain</v-icon>
+                  Sector Allocation
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path v-for="(slice, index) in sectorPieSlices" :key="'sector-' + index" :d="slice.path"
+                          :fill="slice.color" class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
+                          @mouseleave="hoveredSlice = null">
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div v-for="(sector, index) in sortedSectors" :key="sector.name" class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'sector' && hoveredSlice?.index === index }"
+                        :data-type="'sector'" :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'sector', index }; scrollLegendIntoView('sector', index)"
+                        @mouseleave="hoveredSlice = null">
+                        <span class="legend-color"
+                          :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                        <span class="legend-text">{{ sector.name }}</span>
+                        <span class="legend-value">{{ sector.percentage.toFixed(1) }}%</span>
+                      </div>
                     </div>
                   </div>
-                </v-alert>
-              </v-form>
-              <v-alert v-if="addError" type="error" class="mt-3">{{ addError }}</v-alert>
-              <v-alert v-if="addSuccess" type="success" class="mt-3">Position updated successfully!</v-alert>
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn variant="text" @click="showAddQuantityDialog = false">Cancel</v-btn>
-              <v-btn color="success" variant="flat" @click="addToPosition" :loading="addLoading">
-                Add to Position
-              </v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
+                </v-card-text>
+              </v-card>
+            </v-col>
 
-        <!-- Remove Confirmation Dialog -->
-        <v-dialog v-model="showRemoveDialog" max-width="500">
-          <v-card>
-            <v-card-title class="d-flex align-center justify-space-between">
-              <span>Remove Holding</span>
-              <v-btn icon variant="text" @click="showRemoveDialog = false">
-                <v-icon>mdi-close</v-icon>
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <v-alert type="warning" variant="tonal" class="mb-4">
-                <div class="text-body-2">
-                  Are you sure you want to remove <strong>{{ holding.ticker }}</strong> from your portfolio?
-                </div>
-              </v-alert>
-              <div class="text-body-2 mb-3">
-                <div><strong>Name:</strong> {{ holding.name }}</div>
-                <div><strong>Quantity:</strong> {{ formatQuantity(holding.quantity) }}</div>
-                <div><strong>Current Value:</strong> {{ formatCurrency(currentValue, holding.currency) }}</div>
-                <div><strong>Total Gain/Loss:</strong> 
-                  <span :class="isPositiveTotal ? 'text-success' : 'text-error'">
-                    {{ formatCurrency(totalChange, holding.currency) }} ({{ formatPercent(totalChangePercent) }})
-                  </span>
+            <v-col v-if="holding.regions?.length > 0" cols="12" md="4">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-earth</v-icon>
+                  Region Allocation
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path v-for="(slice, index) in regionPieSlices" :key="'region-' + index" :d="slice.path"
+                          :fill="slice.color" class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
+                          @mouseleave="hoveredSlice = null">
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div v-for="(region, index) in sortedRegions" :key="region.name" class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'region' && hoveredSlice?.index === index }"
+                        :data-type="'region'" :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'region', index }; scrollLegendIntoView('region', index)"
+                        @mouseleave="hoveredSlice = null">
+                        <span class="legend-color"
+                          :style="{ backgroundColor: pieColors2[index % pieColors2.length] }"></span>
+                        <span class="legend-text">{{ region.name }}</span>
+                        <span class="legend-value">{{ region.percentage.toFixed(1) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col v-if="holding.assets?.length > 0" cols="12" md="4">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1 pb-2">
+                  <v-icon size="small" class="mr-2">mdi-chart-pie</v-icon>
+                  Top 10 Holdings
+                </v-card-title>
+                <v-card-text>
+                  <div class="pie-chart-container" style="overflow-y: scroll">
+                    <svg viewBox="0 0 200 200" class="pie-chart">
+                      <g transform="translate(100, 100)">
+                        <path v-for="(slice, index) in topHoldingsPieSlices" :key="'holding-' + index" :d="slice.path"
+                          :fill="slice.color" class="pie-slice"
+                          :class="{ 'pie-slice-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
+                          @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
+                          @mouseleave="hoveredSlice = null">
+                          <title>{{ slice.name }}: {{ slice.percentage.toFixed(2) }}%</title>
+                        </path>
+                      </g>
+                    </svg>
+                    <div class="pie-legend">
+                      <div v-for="(asset, index) in topHoldingsForPie" :key="asset.id_asset" class="legend-item"
+                        :class="{ 'legend-item-active': hoveredSlice?.type === 'holding' && hoveredSlice?.index === index }"
+                        :data-type="'holding'" :data-index="index"
+                        @mouseenter="hoveredSlice = { type: 'holding', index }; scrollLegendIntoView('holding', index)"
+                        @mouseleave="hoveredSlice = null">
+                        <span class="legend-color"
+                          :style="{ backgroundColor: pieColors[index % pieColors.length] }"></span>
+                        <span class="legend-text">{{ asset.name }}</span>
+                        <span class="legend-value">{{ calculateAssetPercentage(index) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+
+          <!-- Top 10 Holdings for ETFs -->
+          <v-row v-if="holding.etf && holding.assets?.length > 0" class="mt-4">
+            <v-col cols="12">
+              <v-card variant="outlined">
+                <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+                  <div class="d-flex align-center">
+                    <v-icon size="small" class="mr-2">mdi-view-list</v-icon>
+                    Top Holdings
+                  </div>
+                  <v-chip size="small" color="blue" variant="tonal">
+                    {{ holding.assets.length }} Assets
+                  </v-chip>
+                </v-card-title>
+                <v-card-text class="pa-0">
+                  <v-table density="compact" class="holdings-sub-table">
+                    <thead>
+                      <tr>
+                        <th class="text-left">Chart</th>
+                        <th class="text-left">Weight</th>
+                        <th class="text-left">Name</th>
+                        <th class="text-left">ISIN</th>
+                        <th class="text-left">Country</th>
+                        <th class="text-left">Sector</th>
+                      </tr>
+                    </thead>
+  <tbody>
+    <tr v-for="(asset, index) in holding.assets" :key="asset.id_asset" class="asset-row"
+      @click="toggleAssetDetails(asset)">
+      <td class="chart-cell">
+        <div class="mini-chart-container">
+          <svg :width="60" :height="24" class="mini-chart">
+            <polyline v-if="assetCharts[asset.name]?.length > 0" :points="getAssetChartPoints(asset.name, 60, 24)"
+              fill="none" :stroke="getAssetChartColor(asset.name)" stroke-width="1.5" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <line v-else x1="0" y1="12" x2="60" y2="12" stroke="#666" stroke-width="1" />
+          </svg>
+        </div>
+      </td>
+      <td class="font-weight-bold">{{ calculateAssetPercentage(index) }}%</td>
+      <td>
+        <div class="text-truncate" style="max-width: 200px;">
+          <div class="font-weight-medium">{{ asset.name }}</div>
+        </div>
+      </td>
+      <td class="text-mono text-caption">{{ asset.isin || 'N/A' }}</td>
+      <td>
+        <v-chip v-if="assetDetails[asset.name]?.country" size="x-small" color="secondary" variant="tonal">
+          {{ assetDetails[asset.name].country }}
+        </v-chip>
+        <v-chip v-else-if="asset.region" size="x-small" color="secondary" variant="tonal">
+          {{ asset.region }}
+        </v-chip>
+        <span v-else class="text-grey">-</span>
+      </td>
+      <td>
+        <v-chip v-if="assetDetails[asset.name]?.sector" size="x-small" color="primary" variant="tonal">
+          {{ assetDetails[asset.name].sector }}
+        </v-chip>
+        <v-chip v-else-if="asset.sector" size="x-small" color="primary" variant="tonal">
+          {{ asset.sector }}
+        </v-chip>
+        <span v-else class="text-grey">-</span>
+      </td>
+    </tr>
+    <tr v-if="expandedAsset && expandedAsset.name" class="asset-detail-row">
+      <td colspan="6" class="pa-0">
+        <div class="asset-detail-container">
+          <v-row dense>
+            <v-col cols="12" md="6">
+              <div class="detail-section">
+                <h4 class="text-subtitle-2 mb-2">Financial Metrics</h4>
+                <div class="metric-grid">
+                  <div class="metric-item">
+                    <span class="metric-label">Market Cap</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.market_cap || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">P/E Ratio</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pe_ratio || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">P/B Ratio</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.pb_ratio || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">EPS</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.eps || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Dividend Yield</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.dividend_yield ?
+                      assetDetails[expandedAsset.name].dividend_yield + '%' : 'N/A' }}</span>
+                  </div>
                 </div>
               </div>
-              <v-alert type="error" variant="tonal">
-                This action cannot be undone!
-              </v-alert>
-              <v-alert v-if="removeError" type="error" class="mt-3">{{ removeError }}</v-alert>
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn variant="text" @click="showRemoveDialog = false">Cancel</v-btn>
-              <v-btn color="error" variant="flat" @click="removeHolding" :loading="removeLoading">
+            </v-col>
+            <v-col cols="12" md="6">
+              <div class="detail-section">
+                <h4 class="text-subtitle-2 mb-2">Revenue & Profitability</h4>
+                <div class="metric-grid">
+                  <div class="metric-item">
+                    <span class="metric-label">Revenue</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.revenue || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Net Income</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.net_income || 'N/A' }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Profit Margin</span>
+                    <span class="metric-value">{{ assetDetails[expandedAsset.name]?.profit_margin ?
+                      assetDetails[expandedAsset.name].profit_margin + '%' : 'N/A' }}</span>
+                  </div>
+                </div>
+              </div>
+            </v-col>
+          </v-row>
+          <div v-if="assetDetailsLoading[expandedAsset.name]" class="text-center py-2">
+            <v-progress-circular indeterminate size="20" color="primary"></v-progress-circular>
+          </div>
+
+          <v-divider class="my-3"></v-divider>
+
+          <div class="asset-news-section">
+            <div class="d-flex align-center mb-3">
+              <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
+              <span class="text-subtitle-2">Latest News - {{ expandedAsset.name }}</span>
+            </div>
+
+            <SentimentCard v-if="assetSentiment[expandedAsset.name]" :label="`${expandedAsset.name} Sentiment`"
+              :sentiment-score="assetSentiment[expandedAsset.name].sentiment"
+              :summary="assetSentiment[expandedAsset.name].summary" :date="assetSentiment[expandedAsset.name].date"
+              :show-trend="false" class="mb-3" />
+
+            <div v-if="assetNewsLoading[expandedAsset.name]" class="text-center py-4">
+              <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+            </div>
+            <div v-else-if="!assetNews[expandedAsset.name] || assetNews[expandedAsset.name].length === 0"
+              class="text-center text-grey py-4">
+              <v-icon size="32" class="mb-2">mdi-newspaper-remove</v-icon>
+              <div class="text-caption">No news available</div>
+            </div>
+            <div v-else class="asset-news-list">
+              <div v-for="news in assetNews[expandedAsset.name].slice(0, 3)" :key="news.id_news" class="asset-news-item"
+                @click="openNewsDialog(news)">
+                <div class="d-flex align-center mb-1">
+                  <v-chip :color="getSentimentColor(news.sentiment)" size="x-small" variant="tonal" class="mr-2">
+                    {{ news.sentiment?.toFixed(2) || '0.00' }}
+                  </v-chip>
+                  <span class="text-caption text-grey">
+                    {{ formatNewsDate(news.published_at) }}
+                  </span>
+                </div>
+                <div class="text-body-2 font-weight-medium mb-1">{{ news.title }}</div>
+                <div class="text-caption text-grey">{{ truncateText(news.summary, 100) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+  </tbody>
+  </v-table>
+  </v-card-text>
+  </v-card>
+  </v-col>
+  </v-row>
+
+  <!-- Sentiment Summary Section -->
+  <v-row v-if="dailySummary" class="mt-4">
+    <v-col cols="12">
+      <SentimentCard :label="`${holding.ticker} Sentiment Today`" :sentiment-score="dailySummary.sentiment"
+        :summary="dailySummary.summary" :date="dailySummary.date" :show-trend="false" />
+    </v-col>
+  </v-row>
+
+  <!-- News Section -->
+  <v-row class="mt-4">
+    <v-col cols="12">
+      <v-card variant="outlined">
+        <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
+          <div class="d-flex align-center">
+            <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
+            Latest News - {{ holding.ticker }}
+          </div>
+          <v-btn v-if="newsList.length > 0" variant="text" size="small" color="primary" @click="loadMoreNews"
+            :loading="newsLoading">
+            Load More
+          </v-btn>
+        </v-card-title>
+        <v-card-text>
+          <div v-if="newsLoading && newsList.length === 0" class="d-flex justify-center py-4">
+            <v-progress-circular indeterminate color="primary" size="30"></v-progress-circular>
+          </div>
+          <div v-else-if="newsList.length === 0" class="text-center text-grey py-4">
+            <v-icon size="48" class="mb-2">mdi-newspaper-remove</v-icon>
+            <div>No news available for {{ holding.ticker }}</div>
+          </div>
+          <div v-else class="news-list">
+            <div v-for="news in newsList" :key="news.id_news" class="news-item">
+              <div class="news-header" @click="toggleNewsExpand(news.id_news)">
+                <div class="d-flex align-center flex-grow-1">
+                  <v-icon size="small" class="mr-2 news-expand-icon"
+                    :class="{ 'rotate-180': expandedNews[news.id_news] }">
+                    mdi-chevron-down
+                  </v-icon>
+                  <span class="news-title">{{ news.title }}</span>
+                </div>
+                <v-chip :color="getSentimentColor(news.sentiment)" size="x-small" variant="tonal"
+                  class="ml-2 flex-shrink-0">
+                  {{ news.sentiment?.toFixed(2) || '0.00' }}
+                </v-chip>
+              </div>
+
+              <!-- Summary Preview (always visible) -->
+              <div class="news-preview text-caption text-grey mt-2" v-if="!expandedNews[news.id_news]">
+                {{ truncateText(news.summary, 150) }}
+              </div>
+
+              <!-- Expanded Content -->
+              <div v-if="expandedNews[news.id_news]" class="news-expanded mt-3">
+                <!-- Author & Date -->
+                <div class="news-info d-flex flex-wrap ga-3 mb-3">
+                  <div v-if="news.author" class="d-flex align-center">
+                    <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
+                    <span class="text-caption">{{ news.author }}</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
+                    <span class="text-caption">{{ formatNewsDate(news.published_at) }}</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon size="x-small" class="mr-1">mdi-emoticon-outline</v-icon>
+                    <span class="text-caption">Sentiment: {{ news.sentiment?.toFixed(3) || 'N/A' }}</span>
+                    <v-chip :color="getSentimentColor(news.sentiment)" size="x-small" variant="tonal" class="ml-1">
+                      {{ getSentimentLabel(news.sentiment) }}
+                    </v-chip>
+                  </div>
+                </div>
+
+                <!-- Summary -->
+                <div class="news-full-summary mb-3">
+                  <div class="text-caption text-uppercase text-grey mb-1">Summary</div>
+                  <div class="text-body-2 markdown-content"
+                    v-html="formatMarkdown(news.summary || 'No summary available')"></div>
+                </div>
+
+                <!-- Full Text -->
+                <div v-if="news.text" class="news-full-text mb-3">
+                  <div class="text-caption text-uppercase text-grey mb-1">Full Article</div>
+                  <div class="text-body-2 markdown-content news-text-content" v-html="formatMarkdown(news.text)"></div>
+                </div>
+
+                <!-- Source Link -->
+                <div class="news-source mt-3 pt-3">
+                  <v-btn v-if="news.link" variant="outlined" size="small" color="primary" :href="news.link"
+                    target="_blank" prepend-icon="mdi-open-in-new">
+                    View Original Source
+                  </v-btn>
+                </div>
+              </div>
+
+              <!-- Collapsed Meta -->
+              <div v-if="!expandedNews[news.id_news]" class="news-meta text-caption mt-2">
+                <v-icon size="x-small" class="mr-1">mdi-clock-outline</v-icon>
+                {{ formatNewsDate(news.published_at) }}
+                <span v-if="news.author" class="ml-3">
+                  <v-icon size="x-small" class="mr-1">mdi-account</v-icon>
+                  {{ news.author }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-col>
+  </v-row>
+
+  <!-- Edit/Remove/Add Section -->
+  <v-row class="mt-4">
+    <v-col cols="12">
+      <v-card variant="outlined">
+        <v-card-title class="text-subtitle-1 pb-2">
+          <v-icon size="small" class="mr-2">mdi-cog-outline</v-icon>
+          Manage Holding
+        </v-card-title>
+        <v-card-text>
+          <v-row dense>
+            <v-col cols="12" md="4">
+              <v-btn block color="primary" variant="tonal" prepend-icon="mdi-pencil" @click="showEditDialog = true">
+                Edit Details
+              </v-btn>
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-btn block color="success" variant="tonal" prepend-icon="mdi-plus-circle"
+                @click="showAddQuantityDialog = true">
+                Add to Position
+              </v-btn>
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-btn block color="error" variant="tonal" prepend-icon="mdi-delete" @click="showRemoveDialog = true">
                 Remove Holding
               </v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
-        
-      </div>
-    </td>
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+    </v-col>
+  </v-row>
+
+  <!-- Edit Dialog -->
+  <v-dialog v-model="showEditDialog" max-width="600">
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between">
+        <span>Edit Holding - {{ holding.ticker }}</span>
+        <v-btn icon variant="text" @click="showEditDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <v-form ref="editForm">
+          <v-text-field v-model="editForm.name" label="Name" variant="outlined" density="compact"
+            class="mb-3"></v-text-field>
+          <v-text-field v-model="editForm.ticker" label="Ticker" variant="outlined" density="compact" class="mb-3"
+            hint="Trading symbol (e.g., VWCE.DE, AAPL)" persistent-hint></v-text-field>
+          <v-text-field v-model="editForm.isin" label="ISIN" variant="outlined" density="compact" class="mb-3"
+            hint="International Securities Identification Number" persistent-hint></v-text-field>
+          <v-text-field v-model="editForm.quantity" label="Quantity" type="number" step="0.000001" variant="outlined"
+            density="compact" class="mb-3" :rules="[v => v > 0 || 'Quantity must be positive']"></v-text-field>
+          <v-text-field v-model="editForm.purchasePrice" label="Average Purchase Price" type="number" step="0.01"
+            variant="outlined" density="compact" class="mb-3"
+            :rules="[v => v > 0 || 'Price must be positive']"></v-text-field>
+          <v-text-field v-model="editForm.ter" label="TER (%)" type="number" step="0.01" variant="outlined"
+            density="compact" class="mb-3" :disabled="!holding.etf"></v-text-field>
+          <v-select v-model="editForm.policy" label="Distribution Policy"
+            :items="['Accumulating', 'Distributing', 'N/A']" variant="outlined" density="compact"
+            :disabled="!holding.etf"></v-select>
+        </v-form>
+        <v-alert v-if="editError" type="error" class="mt-3">{{ editError }}</v-alert>
+        <v-alert v-if="editSuccess" type="success" class="mt-3">Holding updated successfully!</v-alert>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer></v-spacer>
+        <v-btn variant="text" @click="showEditDialog = false">Cancel</v-btn>
+        <v-btn color="primary" variant="flat" @click="updateHolding" :loading="editLoading">
+          Save Changes
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- Add Quantity Dialog -->
+  <v-dialog v-model="showAddQuantityDialog" max-width="500">
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between">
+        <span>Add to Position - {{ holding.ticker }}</span>
+        <v-btn icon variant="text" @click="showAddQuantityDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <v-form ref="addForm">
+          <v-text-field v-model="addQuantityForm.quantity" label="Additional Quantity" type="number" step="0.000001"
+            variant="outlined" density="compact" class="mb-3" :rules="[v => v > 0 || 'Quantity must be positive']"
+            hint="Amount to add to current position"></v-text-field>
+          <v-text-field v-model="addQuantityForm.price" label="Purchase Price" type="number" step="0.01"
+            variant="outlined" density="compact" class="mb-3" :rules="[v => v > 0 || 'Price must be positive']"
+            hint="Price per unit for this purchase"></v-text-field>
+          <v-alert type="info" variant="tonal" class="mb-3">
+            <div class="text-body-2">
+              <div>Current quantity: {{ formatQuantity(holding.quantity) }}</div>
+              <div>Current avg price: {{ formatCurrency(holding.purchase_price, holding.currency) }}</div>
+              <div v-if="addQuantityForm.quantity > 0 && addQuantityForm.price > 0" class="mt-2">
+                <strong>New quantity:</strong> {{ formatQuantity(parseFloat(holding.quantity) +
+                  parseFloat(addQuantityForm.quantity)) }}<br>
+                <strong>New avg price:</strong> {{ formatCurrency(calculateNewAvgPrice(), holding.currency) }}
+              </div>
+            </div>
+          </v-alert>
+        </v-form>
+        <v-alert v-if="addError" type="error" class="mt-3">{{ addError }}</v-alert>
+        <v-alert v-if="addSuccess" type="success" class="mt-3">Position updated successfully!</v-alert>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer></v-spacer>
+        <v-btn variant="text" @click="showAddQuantityDialog = false">Cancel</v-btn>
+        <v-btn color="success" variant="flat" @click="addToPosition" :loading="addLoading">
+          Add to Position
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- Remove Confirmation Dialog -->
+  <v-dialog v-model="showRemoveDialog" max-width="500">
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between">
+        <span>Remove Holding</span>
+        <v-btn icon variant="text" @click="showRemoveDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <v-alert type="warning" variant="tonal" class="mb-4">
+          <div class="text-body-2">
+            Are you sure you want to remove <strong>{{ holding.ticker }}</strong> from your portfolio?
+          </div>
+        </v-alert>
+        <div class="text-body-2 mb-3">
+          <div><strong>Name:</strong> {{ holding.name }}</div>
+          <div><strong>Quantity:</strong> {{ formatQuantity(holding.quantity) }}</div>
+          <div><strong>Current Value:</strong> {{ formatCurrency(currentValue, holding.currency) }}</div>
+          <div><strong>Total Gain/Loss:</strong>
+            <span :class="isPositiveTotal ? 'text-success' : 'text-error'">
+              {{ formatCurrency(totalChange, holding.currency) }} ({{ formatPercent(totalChangePercent) }})
+            </span>
+          </div>
+        </div>
+        <v-alert type="error" variant="tonal">
+          This action cannot be undone!
+        </v-alert>
+        <v-alert v-if="removeError" type="error" class="mt-3">{{ removeError }}</v-alert>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer></v-spacer>
+        <v-btn variant="text" @click="showRemoveDialog = false">Cancel</v-btn>
+        <v-btn color="error" variant="flat" @click="removeHolding" :loading="removeLoading">
+          Remove Holding
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  </div>
+  </td>
   </tr>
   </tbody>
 </template>
@@ -1117,7 +918,7 @@ export default {
       assetSentiment: {},
       selectedNewsItem: null,
       showNewsDialog: false,
-      
+
       showEditDialog: false,
       editForm: {
         name: '',
@@ -1129,7 +930,7 @@ export default {
       editLoading: false,
       editError: '',
       editSuccess: false,
-      
+
       showAddQuantityDialog: false,
       addQuantityForm: {
         quantity: 0,
@@ -1138,7 +939,7 @@ export default {
       addLoading: false,
       addError: '',
       addSuccess: false,
-      
+
       showRemoveDialog: false,
       removeLoading: false,
       removeError: '',
@@ -1241,12 +1042,12 @@ export default {
     topHoldingsPieSlices() {
       const holdings = this.topHoldingsForPie
       if (holdings.length === 0) return []
-      
+
       const percentages = holdings.map((_, index) => ({
         name: holdings[index].name,
         percentage: this.calculateAssetPercentage(index, true)
       }))
-      
+
       return this.generatePieSlices(percentages, this.pieColors)
     }
   },
@@ -1358,7 +1159,7 @@ export default {
         if (response.ok) {
           const data = await response.json()
           this.priceHistory = data || []
-          
+
           // Get current price from latest data point
           if (this.priceHistory.length > 0) {
             this.currentPrice = this.priceHistory[this.priceHistory.length - 1].close
@@ -1373,7 +1174,7 @@ export default {
       if (this.holdingCostBasisLine) {
         candleSeries.removePriceLine(this.holdingCostBasisLine)
       }
-      
+
       const costBasisPrice = this.holding.purchase_price
       if (costBasisPrice && costBasisPrice > 0) {
         this.holdingCostBasisLine = candleSeries.createPriceLine({
@@ -1402,7 +1203,7 @@ export default {
         if (response.ok) {
           const data = await response.json()
           this.fullPriceHistory = data || []
-          
+
           this.$nextTick(() => {
             if (this.$refs.holdingChart) {
               this.onHoldingChartReady({
@@ -1434,11 +1235,11 @@ export default {
           const data = await response.json()
           this.dayChange = data.day_change || 0
           this.dayChangePercent = data.day_change_percent || 0
-          
+
           if (this.holding.quantity > 0 && data.current_value) {
             this.currentPrice = data.current_value / this.holding.quantity
           }
-          
+
           this.$emit('day-change', this.holding.id_holding, this.dayChangePercent)
         }
       } catch (error) {
@@ -1508,7 +1309,7 @@ export default {
     // Generate SVG pie chart slices
     generatePieSlices(items, colors) {
       if (!items || items.length === 0) return []
-      
+
       const total = items.reduce((sum, item) => sum + item.percentage, 0)
       const slices = []
       let currentAngle = -90 // Start from top
@@ -1549,7 +1350,7 @@ export default {
       if (value === null || value === undefined || isNaN(value)) {
         return '-'
       }
-      
+
       const currencySymbols = {
         'USD': '$',
         'EUR': '€',
@@ -1557,10 +1358,10 @@ export default {
         'CHF': 'CHF ',
         'JPY': '¥'
       }
-      
+
       const symbol = currencySymbols[currency] || currency + ' '
       const absValue = Math.abs(value)
-      
+
       if (absValue >= 1000000) {
         return symbol + (value / 1000000).toFixed(2) + 'M'
       } else if (absValue >= 1000) {
@@ -1596,7 +1397,7 @@ export default {
       const date = new Date(parseInt(timestamp) * 1000)
       const now = new Date()
       const diff = now - date
-      
+
       if (diff < 3600000) {
         return Math.floor(diff / 60000) + ' min ago'
       } else if (diff < 86400000) {
@@ -1641,61 +1442,61 @@ export default {
 
     formatMarkdown(text) {
       if (!text) return ''
-      
+
       let html = text
-      
+
       // Escape HTML to prevent XSS
       html = html.replace(/&/g, '&amp;')
-                 .replace(/</g, '&lt;')
-                 .replace(/>/g, '&gt;')
-      
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+
       // Headers (h1-h3)
       html = html.replace(/^### (.+)$/gm, '<h4 class="text-subtitle-2 font-weight-bold mt-3 mb-1">$1</h4>')
       html = html.replace(/^## (.+)$/gm, '<h3 class="text-subtitle-1 font-weight-bold mt-3 mb-1">$1</h3>')
       html = html.replace(/^# (.+)$/gm, '<h2 class="text-h6 font-weight-bold mt-3 mb-2">$1</h2>')
-      
+
       // Bold and italic
       html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
       html = html.replace(/_(.+?)_/g, '<em>$1</em>')
-      
+
       // Bullet lists
       html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
       html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="ml-4 my-2">$&</ul>')
-      
+
       // Numbered lists
       html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-      
+
       // Inline code
       html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded" style="background: rgba(var(--v-theme-surface-variant), 0.5);">$1</code>')
-      
+
       // Links
       html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-primary">$1</a>')
-      
+
       // Line breaks - convert double newlines to paragraphs
       html = html.replace(/\n\n/g, '</p><p class="mb-2">')
       html = '<p class="mb-2">' + html + '</p>'
-      
+
       // Single line breaks
       html = html.replace(/\n/g, '<br>')
-      
+
       // Clean up empty paragraphs
       html = html.replace(/<p class="mb-2"><\/p>/g, '')
       html = html.replace(/<p class="mb-2">(<h[2-4])/g, '$1')
       html = html.replace(/(<\/h[2-4]>)<\/p>/g, '$1')
-      
+
       return html
     },
 
     async fetchAssetDetailsForHoldings() {
       if (!this.holding.assets || this.holding.assets.length === 0) return
-      
+
       for (const asset of this.holding.assets.slice(0, 10)) {
         if (!asset.name || !asset.isin) continue
-        
+
         this.assetDetailsLoading[asset.name] = true
-        
+
         try {
           const response = await fetch(
             `${API_BASE_URL}/api/asset/details?ticker=${encodeURIComponent(asset.isin)}`,
@@ -1722,10 +1523,10 @@ export default {
 
     async fetchAssetCharts() {
       if (!this.holding.assets || this.holding.assets.length === 0) return
-      
+
       for (const asset of this.holding.assets.slice(0, 10)) {
         if (!asset.name || !asset.isin) continue
-        
+
         try {
           const response = await fetch(
             `${API_BASE_URL}/api/asset/history?ticker=${encodeURIComponent(asset.isin)}&period=1m&interval=1d`,
@@ -1840,23 +1641,23 @@ export default {
       if (!this.holding.assets || this.holding.assets.length === 0) {
         return returnNumber ? 0 : '0.0'
       }
-      
+
       const totalAssets = this.holding.assets.length
       const top10Count = Math.min(10, totalAssets)
-      
+
       if (index >= top10Count) {
         return returnNumber ? 0 : '0.0'
       }
-      
+
       const basePercentage = 100 / top10Count
       const decay = 0.9
       const weight = Math.pow(decay, index)
-      
+
       const totalWeight = Array.from({ length: top10Count }, (_, i) => Math.pow(decay, i))
         .reduce((sum, w) => sum + w, 0)
-      
+
       const percentage = (weight / totalWeight) * 100
-      
+
       return returnNumber ? percentage : percentage.toFixed(1)
     },
 
@@ -1896,10 +1697,10 @@ export default {
     getAssetChartColor(ticker) {
       const prices = this.assetCharts[ticker] || []
       if (prices.length < 2) return '#666'
-      
+
       const firstPrice = prices[0].close
       const lastPrice = prices[prices.length - 1].close
-      
+
       return lastPrice >= firstPrice ? '#26a79a' : '#ef5350'
     },
 
@@ -1908,9 +1709,9 @@ export default {
       const currentPrice = parseFloat(this.holding.purchase_price) || 0
       const addQty = parseFloat(this.addQuantityForm.quantity) || 0
       const addPrice = parseFloat(this.addQuantityForm.price) || 0
-      
+
       if (currentQty + addQty === 0) return 0
-      
+
       const totalCost = (currentQty * currentPrice) + (addQty * addPrice)
       return totalCost / (currentQty + addQty)
     },
@@ -2438,7 +2239,9 @@ export default {
   font-style: italic;
 }
 
-.markdown-content h2, .markdown-content h3, .markdown-content h4 {
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
   color: rgba(var(--v-theme-on-surface), 0.95);
 }
 

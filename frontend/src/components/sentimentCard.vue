@@ -185,6 +185,7 @@ export default {
 <style scoped>
 .sentiment-card {
   transition: all 0.3s ease;
+  max-height: 500px;
 }
 
 .sentiment-card:hover {
@@ -209,7 +210,7 @@ export default {
 }
 
 .summary-text {
-  max-height: 120px;
+  max-height: 450px;
   overflow-y: auto;
   line-height: 1.5;
 }
