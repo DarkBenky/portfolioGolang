@@ -750,10 +750,128 @@
         </v-container>
 
         <v-container v-else-if="activeView === 'statistics'" fluid>
-          <v-card class="pa-4">
-            <h3>Statistics View</h3>
-            <p>This section is under construction.</p>
-          </v-card>
+          <v-row>
+            <v-col cols="12">
+              <v-card>
+                <v-card-title class="d-flex align-center justify-space-between">
+                  <span>Portfolio vs Benchmark Comparison</span>
+                  <div class="d-flex gap-3">
+                    <v-select
+                      v-model="backtestBenchmark"
+                      :items="benchmarkOptions"
+                      label="Benchmark"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      style="max-width: 200px;"
+                      @update:model-value="fetchBacktest"
+                    ></v-select>
+                    <v-select
+                      v-model="backtestPeriod"
+                      :items="periodOptions"
+                      label="Period"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      style="max-width: 150px;"
+                      @update:model-value="fetchBacktest"
+                    ></v-select>
+                  </div>
+                </v-card-title>
+                <v-card-text>
+                  <v-progress-linear v-if="backtestLoading" indeterminate color="primary"></v-progress-linear>
+                  
+                  <v-alert v-if="backtestError" type="error" class="mb-4">
+                    {{ backtestError }}
+                  </v-alert>
+
+                  <div v-if="backtestData && !backtestLoading">
+                    <BacktestChart
+                      :portfolio-data="backtestData.portfolio_values"
+                      :benchmark-data="backtestData.benchmark_values"
+                      :timestamps="backtestData.timestamps"
+                      :benchmark-name="backtestBenchmark"
+                      :height="500"
+                    />
+
+                    <v-row>
+                      <v-col cols="12" md="6">
+                        <v-card variant="outlined">
+                          <v-card-title class="text-h6">Portfolio Metrics</v-card-title>
+                          <v-card-text>
+                            <v-list density="compact">
+                              <v-list-item>
+                                <v-list-item-title>CAGR</v-list-item-title>
+                                <template v-slot:append>
+                                  <span :class="backtestData.cagr_portfolio >= 0 ? 'text-success' : 'text-error'" class="font-weight-bold">
+                                    {{ backtestData.cagr_portfolio >= 0 ? '+' : '' }}{{ backtestData.cagr_portfolio }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Max Drawdown</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-error font-weight-bold">{{ backtestData.max_drawdown_portfolio }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Sharpe Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.sharpe_ratio_portfolio }}</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Sortino Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.sortino_ratio_portfolio }}</span>
+                                </template>
+                              </v-list-item>
+                            </v-list>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+
+                      <v-col cols="12" md="6">
+                        <v-card variant="outlined">
+                          <v-card-title class="text-h6">{{ backtestBenchmark }} Metrics</v-card-title>
+                          <v-card-text>
+                            <v-list density="compact">
+                              <v-list-item>
+                                <v-list-item-title>CAGR</v-list-item-title>
+                                <template v-slot:append>
+                                  <span :class="backtestData.cagr_benchmark >= 0 ? 'text-success' : 'text-error'" class="font-weight-bold">
+                                    {{ backtestData.cagr_benchmark >= 0 ? '+' : '' }}{{ backtestData.cagr_benchmark }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Max Drawdown</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-error font-weight-bold">{{ backtestData.max_drawdown_benchmark }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Sharpe Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.sharpe_ratio_benchmark }}</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Sortino Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.sortino_ratio_benchmark }}</span>
+                                </template>
+                              </v-list-item>
+                            </v-list>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </v-container>
       </v-main>
     </template>
@@ -764,6 +882,7 @@
 import LoginRegister from './components/loginRegister.vue'
 import { API_BASE_URL, PYTHON_API_URL } from './config'
 import CandleChart from './components/candleChart.vue'
+import BacktestChart from './components/backtestChart.vue'
 import HoldingView from './components/holdingView.vue'
 import SentimentCard from './components/sentimentCard.vue'
 import NewsFeed from './components/newsFeed.vue'
@@ -774,6 +893,7 @@ export default {
   components: {
     LoginRegister,
     CandleChart,
+    BacktestChart,
     HoldingView,
     SentimentCard,
     NewsFeed
@@ -845,7 +965,34 @@ export default {
       newsLoadingMore: false,
       newsFilter: 'all',
       newsSearchQuery: '',
-      selectedTickerFilter: 'all'
+      selectedTickerFilter: 'all',
+
+      backtestData: null,
+      backtestLoading: false,
+      backtestError: '',
+      backtestBenchmark: 'SPY',
+      backtestPeriod: '1Y',
+      benchmarkOptions: [
+        { title: 'S&P 500', value: 'SPY' },
+        { title: 'NASDAQ 100', value: 'QQQ' },
+        { title: 'Dow Jones', value: 'DIA' },
+        { title: 'Russell 2000', value: 'IWM' },
+        { title: 'MSCI World', value: 'URTH' },
+        { title: 'MSCI ACWI', value: 'ACWI' },
+        { title: 'STOXX Europe 600', value: 'EXSA.DE' },
+        { title: 'DAX', value: '^GDAXI' },
+        { title: 'FTSE 100', value: '^FTSE' },
+        { title: 'Gold', value: 'GLD' },
+        { title: 'Bitcoin', value: 'BTC-USD' }
+      ],
+      periodOptions: [
+        { title: '6 Months', value: '6M' },
+        { title: '1 Year', value: '1Y' },
+        { title: '3 Years', value: '3Y' },
+        { title: '5 Years', value: '5Y' },
+        { title: '10 Years', value: '10Y' },
+        { title: 'All Time', value: 'ALL' }
+      ]
     }
   },
 
@@ -1001,6 +1148,8 @@ export default {
         this.fetchPortfolioSentiment()
       } else if ((newVal === 'dashboard' || newVal === 'holdings') && !this.portfolioSentiment) {
         this.fetchPortfolioSentiment()
+      } else if (newVal === 'statistics' && !this.backtestData) {
+        this.fetchBacktest()
       }
     }
   },
@@ -1429,6 +1578,65 @@ export default {
         this.portfolioSentiment = data
       } catch (error) {
         console.error('Error fetching portfolio sentiment:', error)
+      }
+    },
+
+    async fetchBacktest() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      this.backtestLoading = true
+      this.backtestError = ''
+
+      try {
+        const now = new Date()
+        let startDate
+
+        switch (this.backtestPeriod) {
+          case '6M':
+            startDate = new Date(now.setMonth(now.getMonth() - 6))
+            break
+          case '1Y':
+            startDate = new Date(now.setFullYear(now.getFullYear() - 1))
+            break
+          case '3Y':
+            startDate = new Date(now.setFullYear(now.getFullYear() - 3))
+            break
+          case '5Y':
+            startDate = new Date(now.setFullYear(now.getFullYear() - 5))
+            break
+          case '10Y':
+            startDate = new Date(now.setFullYear(now.getFullYear() - 10))
+            break
+          case 'ALL':
+            startDate = new Date('2000-01-01')
+            break
+          default:
+            startDate = new Date(now.setFullYear(now.getFullYear() - 1))
+        }
+
+        const endDate = new Date()
+        const startDateStr = startDate.toISOString().split('T')[0]
+        const endDateStr = endDate.toISOString().split('T')[0]
+
+        const url = `${API_BASE_URL}/api/portfolio/backtest?start_date=${startDateStr}&end_date=${endDateStr}&benchmark=${this.backtestBenchmark}`
+        
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch backtest data')
+        }
+
+        this.backtestData = await response.json()
+      } catch (error) {
+        console.error('Error fetching backtest:', error)
+        this.backtestError = error.message || 'Failed to load backtest data'
+      } finally {
+        this.backtestLoading = false
       }
     },
 

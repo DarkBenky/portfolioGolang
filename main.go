@@ -5265,6 +5265,198 @@ func fillMissingTickerIsinPeriodic(interval time.Duration) {
 	}
 }
 
+type BackTestResult struct {
+	PortfolioValues  []float64 `json:"portfolio_values"`
+	BenchmarkValues  []float64 `json:"benchmark_values"`
+	Timestamps       []int64   `json:"timestamps"`
+	CAGRPortfolio    float64   `json:"cagr_portfolio"`
+	CAGRBenchmark    float64   `json:"cagr_benchmark"`
+	MaxDDPortfolio   float64   `json:"max_drawdown_portfolio"`
+	MaxDDBenchmark   float64   `json:"max_drawdown_benchmark"`
+	SharpePortfolio  float64   `json:"sharpe_ratio_portfolio"`
+	SharpeBenchmark  float64   `json:"sharpe_ratio_benchmark"`
+	SortinoPortfolio float64   `json:"sortino_ratio_portfolio"`
+	SortinoBenchmark float64   `json:"sortino_ratio_benchmark"`
+}
+
+func creteBackTestForPortfolio(userID string, startDate string, endDate string, benchmark string) (*BackTestResult, error) {
+	startTime, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid start date: %v", err)
+	}
+
+	endTime, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid end date: %v", err)
+	}
+
+	benchmarkPrices, err := getOldHistoricPriceData(benchmark)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch benchmark prices: %v", err)
+	}
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch holdings: %v", err)
+	}
+
+	if len(holdings) == 0 {
+		return nil, fmt.Errorf("no holdings found for user")
+	}
+
+	holdingPrices := make(map[string][]Price)
+	for _, holding := range holdings {
+		prices, err := getOldHistoricPriceData(holding.Ticker)
+		if err != nil {
+			log.Printf("Warning: Could not fetch prices for %s: %v", holding.Ticker, err)
+			continue
+		}
+		holdingPrices[holding.Ticker] = prices
+	}
+
+	var timestamps []int64
+	portfolioValues := make(map[int64]float64)
+	benchmarkValues := make(map[int64]float64)
+
+	for _, price := range benchmarkPrices {
+		timestamp, _ := strconv.ParseInt(price.Date, 10, 64)
+		if timestamp >= startTime.Unix() && timestamp <= endTime.Unix() {
+			timestamps = append(timestamps, timestamp)
+			benchmarkValues[timestamp] = price.Close
+		}
+	}
+
+	if len(timestamps) == 0 {
+		return nil, fmt.Errorf("no benchmark data in date range")
+	}
+
+	for _, ts := range timestamps {
+		portfolioValue := 0.0
+		for _, holding := range holdings {
+			prices, exists := holdingPrices[holding.Ticker]
+			if !exists {
+				continue
+			}
+
+			var closestPrice float64
+			minDiff := int64(math.MaxInt64)
+			for _, price := range prices {
+				priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+				diff := int64(math.Abs(float64(ts - priceTs)))
+				if diff < minDiff && priceTs <= ts {
+					minDiff = diff
+					closestPrice = price.Close
+				}
+			}
+
+			if closestPrice > 0 {
+				portfolioValue += closestPrice * holding.Quantity
+			}
+		}
+		portfolioValues[ts] = portfolioValue
+	}
+
+	portfolioValuesSlice := make([]float64, len(timestamps))
+	benchmarkValuesSlice := make([]float64, len(timestamps))
+
+	initialPortfolio := portfolioValues[timestamps[0]]
+	initialBenchmark := benchmarkValues[timestamps[0]]
+
+	for i, ts := range timestamps {
+		portfolioValuesSlice[i] = (portfolioValues[ts] / initialPortfolio) * 100
+		benchmarkValuesSlice[i] = (benchmarkValues[ts] / initialBenchmark) * 100
+	}
+
+	portfolioReturns := make([]float64, len(portfolioValuesSlice)-1)
+	benchmarkReturns := make([]float64, len(benchmarkValuesSlice)-1)
+
+	for i := 1; i < len(portfolioValuesSlice); i++ {
+		portfolioReturns[i-1] = (portfolioValuesSlice[i] - portfolioValuesSlice[i-1]) / portfolioValuesSlice[i-1]
+		benchmarkReturns[i-1] = (benchmarkValuesSlice[i] - benchmarkValuesSlice[i-1]) / benchmarkValuesSlice[i-1]
+	}
+
+	years := float64(endTime.Sub(startTime).Hours()) / (24 * 365.25)
+	cagrPortfolio := (math.Pow(portfolioValuesSlice[len(portfolioValuesSlice)-1]/100, 1/years) - 1) * 100
+	cagrBenchmark := (math.Pow(benchmarkValuesSlice[len(benchmarkValuesSlice)-1]/100, 1/years) - 1) * 100
+
+	maxDDPortfolio, _ := calculateDrawdowns(portfolioValuesSlice)
+	maxDDBenchmark, _ := calculateDrawdowns(benchmarkValuesSlice)
+
+	sharpePortfolio := calculateSharpeRatio(portfolioReturns, 0.0)
+	sharpeBenchmark := calculateSharpeRatio(benchmarkReturns, 0.0)
+
+	sortinoPortfolio := calculateSortinoRatio(portfolioReturns, 0.0)
+	sortinoBenchmark := calculateSortinoRatio(benchmarkReturns, 0.0)
+
+	return &BackTestResult{
+		PortfolioValues:  portfolioValuesSlice,
+		BenchmarkValues:  benchmarkValuesSlice,
+		Timestamps:       timestamps,
+		CAGRPortfolio:    math.Round(cagrPortfolio*100) / 100,
+		CAGRBenchmark:    math.Round(cagrBenchmark*100) / 100,
+		MaxDDPortfolio:   math.Round(maxDDPortfolio*100) / 100,
+		MaxDDBenchmark:   math.Round(maxDDBenchmark*100) / 100,
+		SharpePortfolio:  math.Round(sharpePortfolio*100) / 100,
+		SharpeBenchmark:  math.Round(sharpeBenchmark*100) / 100,
+		SortinoPortfolio: math.Round(sortinoPortfolio*100) / 100,
+		SortinoBenchmark: math.Round(sortinoBenchmark*100) / 100,
+	}, nil
+}
+
+func calculateSharpeRatio(dailyReturns []float64, riskFreeRate float64) float64 {
+	if len(dailyReturns) == 0 {
+		return 0
+	}
+
+	sum := 0.0
+	for _, r := range dailyReturns {
+		sum += r
+	}
+	avgReturn := sum / float64(len(dailyReturns))
+
+	variance := 0.0
+	for _, r := range dailyReturns {
+		diff := r - avgReturn
+		variance += diff * diff
+	}
+	stdDev := math.Sqrt(variance / float64(len(dailyReturns)))
+
+	if stdDev == 0 {
+		return 0
+	}
+
+	annualizedReturn := avgReturn * 252
+	annualizedStdDev := stdDev * math.Sqrt(252)
+
+	return (annualizedReturn - riskFreeRate) / annualizedStdDev
+}
+
+func getBacktest(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	startDate := c.QueryParam("start_date")
+	endDate := c.QueryParam("end_date")
+	benchmark := c.QueryParam("benchmark")
+
+	if startDate == "" || endDate == "" {
+		return c.String(http.StatusBadRequest, "start_date and end_date are required")
+	}
+
+	if benchmark == "" {
+		benchmark = "SPY"
+	}
+
+	result, err := creteBackTestForPortfolio(userID, startDate, endDate, benchmark)
+	if err != nil {
+		log.Printf("Error creating backtest: %v", err)
+		return c.String(http.StatusInternalServerError, fmt.Sprintf("Failed to create backtest: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -5387,6 +5579,7 @@ func main() {
 	protected.GET("/portfolio/daily_sentiment", getAllPortfolioDaySentiments)
 	protected.GET("/portfolio/allocation", getPortfolioAllocation)
 	protected.GET("/portfolio/stats", getPortfolioStats)
+	protected.GET("/portfolio/backtest", getBacktest)
 
 	// Asset endpoints
 	protected.GET("/asset/sentiments", GetAssetSentiments)
