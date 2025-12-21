@@ -263,6 +263,13 @@
               :active="activeView === 'statistics'"
               @click="activeView = 'statistics'"
             />
+            <v-list-item
+              prepend-icon="mdi-trending-up"
+              title="Trading View"
+              value="tradingView"
+              :active="activeView === 'tradingView'"
+              @click="activeView = 'tradingView'"
+            />
           </v-list>
         </v-navigation-drawer>
 
@@ -872,6 +879,9 @@
               </v-card>
             </v-col>
           </v-row>
+        </v-container>
+        <v-container v-if="activeView == 'tradingView'">
+          view were you can see individual stock and etfs and make technical analysis
         </v-container>
       </v-main>
     </template>
