@@ -626,6 +626,8 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 		} `json:"holdings"`
 		Sectors map[string]float64 `json:"sectors"`
 		Regions map[string]float64 `json:"regions"`
+		ISIN    string             `json:"isin"`
+		Ticker  string             `json:"ticker"`
 	}
 
 	err = json.NewDecoder(resp.Body).Decode(&etfData)
@@ -637,7 +639,14 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 	log.Printf("Fetched ETF data for holding ID %s: %d holdings, %d sectors, %d regions",
 		holdingID, len(etfData.Holdings), len(etfData.Sectors), len(etfData.Regions))
 
-	// Insert holdings as assets
+	if etfData.ISIN != "" && etfData.ISIN != "N/A" {
+		log.Printf("Updating holding ISIN to %s from JustETF", etfData.ISIN)
+		err = db.updateHoldingISINByID(holdingID, etfData.ISIN)
+		if err != nil {
+			log.Printf("Warning: Could not update holding ISIN: %v", err)
+		}
+	}
+
 	for _, holding := range etfData.Holdings {
 		asset := Asset{
 			IdAsset:   generateID(),
@@ -1549,6 +1558,144 @@ func (database *DB) addAsset(asset Asset) error {
 		INSERT INTO assets (id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, asset.IdAsset, asset.Name, asset.Ticker, asset.ISIN, asset.Exchange, asset.Sector, asset.Region, asset.idHolding, asset.currency)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateAssetISIN(ticker string, isin string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE assets SET isin = ? WHERE ticker = ?`, isin, ticker)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateAssetTicker(isin string, ticker string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE assets SET ticker = ? WHERE isin = ?`, ticker, isin)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateHoldingISIN(ticker string, isin string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE holdings SET isin = ? WHERE ticker = ?`, isin, ticker)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateHoldingTicker(isin string, ticker string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE holdings SET ticker = ? WHERE isin = ?`, ticker, isin)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateHoldingISINByID(holdingID string, isin string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE holdings SET isin = ? WHERE id_holding = ?`, isin, holdingID)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) updateHoldingTickerByID(holdingID string, ticker string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE holdings SET ticker = ? WHERE id_holding = ?`, ticker, holdingID)
 	if err != nil {
 		return err
 	}
@@ -4882,7 +5029,8 @@ func getOldHistoricPriceData(ticker string) ([]Price, error) {
 }
 
 func convertIsinToTicker(isin string) (string, error) {
-	url := fmt.Sprintf("%s/isin_to_ticker?isin=%s", BASE_URL, isin)
+	encodedIsin := url.QueryEscape(isin)
+	url := fmt.Sprintf("%s/isin_to_ticker?isin=%s", BASE_URL, encodedIsin)
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Printf("Error converting ISIN to ticker for %s: %v", isin, err)
@@ -4912,6 +5060,40 @@ func convertIsinToTicker(isin string) (string, error) {
 	}
 
 	return response.Ticker, nil
+}
+
+func convertTickerToIsin(ticker string) (string, error) {
+	encodedTicker := url.QueryEscape(ticker)
+	url := fmt.Sprintf("%s/ticker_to_isin?ticker=%s", BASE_URL, encodedTicker)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Error converting ticker to ISIN for %s: %v", ticker, err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("Ticker to ISIN conversion not found for %s (404), skipping", ticker)
+		return "", nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("failed to convert ticker to ISIN: %s", resp.Status)
+		log.Printf("Ticker to ISIN API error for %s: %s", ticker, resp.Status)
+		return "", err
+	}
+
+	var response struct {
+		ISIN string `json:"isin"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
+		log.Printf("Error decoding ticker to ISIN response for %s: %v", ticker, err)
+		return "", err
+	}
+
+	return response.ISIN, nil
 }
 
 func fetchOldPriceDataPeriodic(interval time.Duration) {
@@ -4963,6 +5145,123 @@ func fetchOldPriceDataPeriodic(interval time.Duration) {
 		}
 
 		log.Println("Finished fetching old historic price data for all assets")
+	}
+}
+
+func fillMissingTickerIsinPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Filling missing ticker/ISIN mappings for assets...")
+
+		dbMutex.RLock()
+		rows, err := db.Query(`SELECT DISTINCT ticker, isin FROM assets`)
+		if err != nil {
+			dbMutex.RUnlock()
+			log.Printf("Error querying assets: %v", err)
+			continue
+		}
+		type AssetEntry struct {
+			Ticker string
+			ISIN   string
+		}
+		var assets []AssetEntry
+		for rows.Next() {
+			var entry AssetEntry
+			if err := rows.Scan(&entry.Ticker, &entry.ISIN); err == nil {
+				assets = append(assets, entry)
+			}
+		}
+		rows.Close()
+		dbMutex.RUnlock()
+
+		for _, asset := range assets {
+			if (asset.ISIN == "" || asset.ISIN == "N/A") && (asset.Ticker != "" && asset.Ticker != "N/A") {
+				isin, err := convertTickerToIsin(asset.Ticker)
+				if err != nil {
+					log.Printf("Error converting ticker %s to ISIN: %v", asset.Ticker, err)
+					continue
+				}
+				if isin != "" {
+					updateErr := db.updateAssetISIN(asset.Ticker, isin)
+					if updateErr != nil {
+						log.Printf("Error updating ISIN for ticker %s: %v", asset.Ticker, updateErr)
+					} else {
+						log.Printf("Updated ISIN for ticker %s to %s", asset.Ticker, isin)
+					}
+				}
+			}
+			if (asset.Ticker == "" || asset.Ticker == "N/A") && (asset.ISIN != "" && asset.ISIN != "N/A") {
+				ticker, err := convertIsinToTicker(asset.ISIN)
+				if err != nil {
+					log.Printf("Error converting ISIN %s to ticker: %v", asset.ISIN, err)
+					continue
+				}
+				if ticker != "" {
+					updateErr := db.updateAssetTicker(asset.ISIN, ticker)
+					if updateErr != nil {
+						log.Printf("Error updating ticker for ISIN %s: %v", asset.ISIN, updateErr)
+					} else {
+						log.Printf("Updated ticker for ISIN %s to %s", asset.ISIN, ticker)
+					}
+				}
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		log.Println("Finished filling missing ticker/ISIN mappings for assets")
+
+		dbMutex.RLock()
+		rows, err = db.Query(`SELECT DISTINCT ticker, isin FROM holdings`)
+		if err != nil {
+			dbMutex.RUnlock()
+			log.Printf("Error querying holdings: %v", err)
+			continue
+		}
+		var holdings []AssetEntry
+		for rows.Next() {
+			var entry AssetEntry
+			if err := rows.Scan(&entry.Ticker, &entry.ISIN); err == nil {
+				holdings = append(holdings, entry)
+			}
+		}
+		rows.Close()
+		dbMutex.RUnlock()
+
+		for _, holding := range holdings {
+			if (holding.ISIN == "" || holding.ISIN == "N/A") && (holding.Ticker != "" && holding.Ticker != "N/A") {
+				isin, err := convertTickerToIsin(holding.Ticker)
+				if err != nil {
+					log.Printf("Error converting ticker %s to ISIN: %v", holding.Ticker, err)
+					continue
+				}
+				if isin != "" {
+					updateErr := db.updateHoldingISIN(holding.Ticker, isin)
+					if updateErr != nil {
+						log.Printf("Error updating ISIN for ticker %s: %v", holding.Ticker, updateErr)
+					} else {
+						log.Printf("Updated ISIN for ticker %s to %s", holding.Ticker, isin)
+					}
+				}
+			}
+			if (holding.Ticker == "" || holding.Ticker == "N/A") && (holding.ISIN != "" && holding.ISIN != "N/A") {
+				ticker, err := convertIsinToTicker(holding.ISIN)
+				if err != nil {
+					log.Printf("Error converting ISIN %s to ticker: %v", holding.ISIN, err)
+					continue
+				}
+				if ticker != "" {
+					updateErr := db.updateHoldingTicker(holding.ISIN, ticker)
+					if updateErr != nil {
+						log.Printf("Error updating ticker for ISIN %s: %v", holding.ISIN, updateErr)
+					} else {
+						log.Printf("Updated ticker for ISIN %s to %s", holding.ISIN, ticker)
+					}
+				}
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		log.Println("Finished filling missing ticker/ISIN mappings for holdings")
 	}
 }
 
@@ -5042,8 +5341,9 @@ func main() {
 	go fetchPricesPeriodic(10 * time.Minute)
 	go fillInBetweenPricesPeriodic(90 * time.Minute)
 	go updateSentimentsPeriodic(6 * time.Hour)
-	go updateETFDataPeriodic(7 * time.Hour)
+	go updateETFDataPeriodic(60 * time.Minute)
 	go fetchAssetDetailsPeriodic(8 * time.Hour)
+	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
 
 	e := echo.New()
 

@@ -884,6 +884,24 @@
                   class="mb-3"
                 ></v-text-field>
                 <v-text-field
+                  v-model="editForm.ticker"
+                  label="Ticker"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  hint="Trading symbol (e.g., VWCE.DE, AAPL)"
+                  persistent-hint
+                ></v-text-field>
+                <v-text-field
+                  v-model="editForm.isin"
+                  label="ISIN"
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  hint="International Securities Identification Number"
+                  persistent-hint
+                ></v-text-field>
+                <v-text-field
                   v-model="editForm.quantity"
                   label="Quantity"
                   type="number"
@@ -1255,6 +1273,8 @@ export default {
       if (newVal) {
         this.editForm = {
           name: this.holding.name,
+          ticker: this.holding.ticker || '',
+          isin: this.holding.isin || '',
           quantity: this.holding.quantity,
           purchasePrice: this.holding.purchase_price,
           ter: this.holding.ter || 0,
@@ -1904,8 +1924,8 @@ export default {
         const formData = new FormData()
         formData.append('HoldingID', this.holding.id_holding)
         formData.append('Name', this.editForm.name)
-        formData.append('Ticker', this.holding.ticker)
-        formData.append('ISIN', this.holding.isin || '')
+        formData.append('Ticker', this.editForm.ticker || '')
+        formData.append('ISIN', this.editForm.isin || '')
         formData.append('Exchange', this.holding.exchange || '')
         formData.append('Currency', this.holding.currency || 'USD')
         formData.append('ETF', this.holding.etf ? 'true' : 'false')

@@ -44,6 +44,8 @@ class ETFData:
         self.holdings: List[HoldingInfo] = []
         self.sectors: Dict[str, float] = {}
         self.regions: Dict[str, float] = {}
+        self.isin: str = 'N/A'
+        self.ticker: str = 'N/A'
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -60,7 +62,9 @@ class ETFData:
                 for h in self.holdings
             ],
             'sectors': self.sectors,
-            'regions': self.regions
+            'regions': self.regions,
+            'isin': self.isin,
+            'ticker': self.ticker
         }
 
 @ttl_cache(maxsize=2048, ttl_hours=4)
@@ -390,10 +394,32 @@ def get_sectors_and_regions_from_justetf(isin: str, html_file: Optional[str] = N
     return sectors, regions
 
 @ttl_cache(maxsize=2048, ttl_hours=4)
-def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[str, str, float]]], Dict[str, float], Dict[str, float]]:
+def extract_isin_and_ticker_from_justetf(soup: BeautifulSoup) -> Tuple[str, str]:
+    etf_isin = 'N/A'
+    etf_ticker = 'N/A'
+    
+    try:
+        identifiers_div = soup.find('div', {'class': 'identfier', 'data-testid': 'etf-profile-header_identifiers-wrapper'})
+        if identifiers_div:
+            isin_span = identifiers_div.find('span', {'data-testid': 'etf-profile-header_isin-value'})
+            if isin_span:
+                etf_isin = isin_span.get_text(strip=True)
+            
+            ticker_span = identifiers_div.find('span', {'data-testid': 'etf-profile-header_identifier-value-ticker'})
+            if ticker_span:
+                etf_ticker = ticker_span.get_text(strip=True)
+    except Exception as e:
+        print(f"  Error extracting ISIN/ticker: {e}")
+    
+    return etf_isin, etf_ticker
+
+@ttl_cache(maxsize=2048, ttl_hours=4)
+def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[str, str, float]]], Dict[str, float], Dict[str, float], str, str]:
     holdings = []
     sectors = {}
     regions = {}
+    etf_isin = 'N/A'
+    etf_ticker = 'N/A'
     
     try:
         from playwright.sync_api import sync_playwright
@@ -420,7 +446,7 @@ def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[s
             except Exception as e:
                 print(f"  ETF data not available on JustETF for this ISIN")
                 browser.close()
-                return (None, {}, {})
+                return (None, {}, {}, 'N/A', 'N/A')
             
             time.sleep(1)
             
@@ -459,6 +485,8 @@ def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[s
             browser.close()
             
             soup = BeautifulSoup(html_content, 'html.parser')
+            
+            etf_isin, etf_ticker = extract_isin_and_ticker_from_justetf(soup)
             
             holdings_table = soup.find('table', {'data-testid': 'etf-holdings_top-holdings_table'})
             if holdings_table:
@@ -514,7 +542,7 @@ def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[s
         import traceback
         traceback.print_exc()
     
-    return (holdings if holdings else None, sectors, regions)
+    return (holdings if holdings else None, sectors, regions, etf_isin, etf_ticker)
 
 @ttl_cache(maxsize=2048, ttl_hours=4)
 def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file: Optional[str] = None) -> ETFData:
@@ -530,8 +558,10 @@ def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file:
         print(f"  Loading from HTML file: {html_file}")
         justetf_holdings = get_holdings_from_justetf(isin, html_file)
         sectors, regions = get_sectors_and_regions_from_justetf(isin, html_file)
+        etf_isin = isin
+        etf_ticker = ticker
     else:
-        justetf_holdings, sectors, regions = fetch_complete_etf_data_playwright(isin)
+        justetf_holdings, sectors, regions, etf_isin, etf_ticker = fetch_complete_etf_data_playwright(isin)
     
     if justetf_holdings and len(justetf_holdings) > 0:
         result.holdings = enrich_holdings_with_details(justetf_holdings)
@@ -541,7 +571,10 @@ def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file:
     
     result.sectors = sectors
     result.regions = regions
+    result.isin = etf_isin
+    result.ticker = etf_ticker
     print(f"  Total: {len(sectors)} sectors and {len(regions)} regions")
+    print(f"  ETF ISIN: {etf_isin}, Ticker: {etf_ticker}")
     
     return result
 
@@ -549,9 +582,8 @@ if __name__ == "__main__":
     start = time.time()
     
     etf_data = get_etf_data(
-        ticker="XMME.DE", 
-        isin="IE00BTJRMP35",
-        etf_name="Xtrackers MSCI Emerging Markets"
+        ticker="STRX", 
+        isin="IE00B53L3W79",
     )
     print(f"\nTime taken: {time.time() - start:.2f} seconds")
     print(f"\nAll Holdings ({len(etf_data.holdings)} total):")
@@ -568,8 +600,7 @@ if __name__ == "__main__":
     print("Testing cache...")
     start = time.time()
     etf_data = get_etf_data(
-        ticker="XMME.DE", 
-        isin="IE00BTJRMP35",
-        etf_name="Xtrackers MSCI Emerging Markets"
+        ticker="STRX", 
+        isin="IE00B53L3W79",
     )
     print(f"Time taken (CACHED): {time.time() - start:.2f} seconds")

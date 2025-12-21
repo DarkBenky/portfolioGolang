@@ -236,6 +236,32 @@ def search_ticker_info(identifier, search_type="ticker"):
         print(f"Error searching for {identifier}: {e}")
         return []
 
+def convert_ticker_to_isin(ticker):
+    """Convert ticker to ISIN using OpenFIGI API with caching"""
+    if not ticker or ticker == 'N/A':
+        return None
+    
+    try:
+        import requests
+        url = 'https://api.openfigi.com/v3/mapping'
+        headers = {'Content-Type': 'application/json'}
+        payload = [{"idType": "TICKER", "idValue": ticker}]
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0 and 'data' in data[0]:
+                results = data[0]['data']
+                if results and len(results) > 0:
+                    isin = results[0].get('isin')
+                    if isin:
+                        return isin
+    except Exception as e:
+        print(f"OpenFIGI lookup failed for {ticker}: {e}")
+    
+    return None
+
 # curl "http://localhost:5123/api/search?identifier=AAPL"
 # curl "http://localhost:5123/api/search?identifier=US0378331005&search_type=isin"
 @app.route('/api/search', methods=['GET'])
@@ -388,6 +414,22 @@ async def api_isin_to_ticker():
         return flask.jsonify({'isin': isin, 'ticker': ticker})
     else:
         return flask.jsonify({'error': 'Could not convert ISIN to ticker'}), 404
+    
+@app.route('/api/ticker_to_isin', methods=['GET'])
+async def api_ticker_to_isin():
+    """Convert ticker symbol to ISIN"""
+    ticker = flask.request.args.get('ticker', '')
+    
+    if not ticker:
+        return flask.jsonify({'error': 'Ticker parameter is required'}), 400
+    
+    loop = asyncio.get_event_loop()
+    isin = await loop.run_in_executor(executor, convert_ticker_to_isin, ticker)
+    
+    if isin:
+        return flask.jsonify({'ticker': ticker, 'isin': isin})
+    else:
+        return flask.jsonify({'error': 'Could not convert ticker to ISIN'}), 404
 
 # curl "http://localhost:5123/api/stock/US0378331005"
 @app.route('/api/stock/<isin>', methods=['GET'])

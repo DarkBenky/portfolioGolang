@@ -1,0 +1,32 @@
+2025-12-21 16:56:24.401784: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+/home/user/miniconda3/lib/python3.13/site-packages/keras/src/export/tf2onnx_lib.py:8: FutureWarning: In the future `np.object` will be defined as the corresponding NumPy scalar.
+  if not hasattr(np, "object"):
+Device set to use cuda:0
+Python Backend Config: DEV_MODE=True, GO=http://localhost:8085, PYTHON=http://localhost:5123
+ * Serving Flask app 'getData'
+ * Debug mode: on
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5123
+ * Running on http://192.168.1.12:5123
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+2025-12-21 16:56:30.818194: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+/home/user/miniconda3/lib/python3.13/site-packages/keras/src/export/tf2onnx_lib.py:8: FutureWarning: In the future `np.object` will be defined as the corresponding NumPy scalar.
+  if not hasattr(np, "object"):
+Device set to use cuda:0
+ * Debugger is active!
+ * Debugger PIN: 393-500-571
+127.0.0.1 - - [21/Dec/2025 16:56:38] "[33mGET /api/ticker_to_isin?ticker=SXRT.DE HTTP/1.1[0m" 404 -
+ * Detected change in '/home/user/Desktop/portfolioGolang/getData.py', reloading
+Python Backend Config: DEV_MODE=True, GO=http://localhost:8085, PYTHON=http://localhost:5123
+ * Restarting with stat
+2025-12-21 16:58:40.266731: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+/home/user/miniconda3/lib/python3.13/site-packages/keras/src/export/tf2onnx_lib.py:8: FutureWarning: In the future `np.object` will be defined as the corresponding NumPy scalar.
+  if not hasattr(np, "object"):
+Device set to use cuda:0
+ * Debugger is active!
+ * Debugger PIN: 393-500-571
