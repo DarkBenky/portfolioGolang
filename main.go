@@ -268,6 +268,161 @@ func (database *DB) getUnderlyingAssetTickers(ticker string, isin string) ([]str
 	return tickers, nil
 }
 
+type GainerLoser struct {
+	Asset          *Asset
+	Holding        *Holding
+	PriceChangePct float64
+	RelatedNews    []News
+}
+
+func (database *DB) topGainersLosers(userId string, topN int, interval time.Duration, isGainer bool) ([]GainerLoser, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	now := time.Now().UTC()
+	startTime := now.Add(-interval)
+	startTimestamp := startTime.Unix()
+	endTimestamp := now.Unix()
+
+	newsStartDate := startTime.Format("2006-01-02")
+	newsEndDate := now.Format("2006-01-02")
+
+	rows, err := database.Query(`
+		SELECT DISTINCT h.id_holding, h.name, h.ticker, h.isin, h.exchange, h.policy, 
+		       h.user_id, h.currency, h.quantity, h.purchase_price, h.ter, h.etf
+		FROM holdings h
+		WHERE h.user_id = ?
+	`, userId)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []GainerLoser
+
+	for rows.Next() {
+		var holding Holding
+		err := rows.Scan(&holding.IdHolding, &holding.Name, &holding.Ticker, &holding.ISIN,
+			&holding.Exchange, &holding.Policy, &holding.userID, &holding.currency,
+			&holding.Quantity, &holding.PurchasePrice, &holding.TER, &holding.Etf)
+		if err != nil {
+			continue
+		}
+
+		priceRows, err := database.Query(`
+			SELECT close
+			FROM prices
+			WHERE ticker = ?
+			AND CAST(date AS INTEGER) >= ?
+			AND CAST(date AS INTEGER) <= ?
+			ORDER BY CAST(date AS INTEGER) ASC
+		`, holding.Ticker, startTimestamp, endTimestamp)
+		if err != nil {
+			continue
+		}
+
+		var prices []float64
+		for priceRows.Next() {
+			var price float64
+			if err := priceRows.Scan(&price); err == nil {
+				prices = append(prices, price)
+			}
+		}
+		priceRows.Close()
+
+		if len(prices) < 2 {
+			continue
+		}
+
+		startPrice := prices[0]
+		endPrice := prices[len(prices)-1]
+		changePct := ((endPrice - startPrice) / startPrice) * 100
+
+		assetRows, err := database.Query(`
+			SELECT id_asset, name, ticker, isin, exchange, sector, region, id_holding, currency
+			FROM assets
+			WHERE id_holding = ?
+		`, holding.IdHolding)
+		if err != nil {
+			continue
+		}
+
+		var assets []*Asset
+		for assetRows.Next() {
+			var asset Asset
+			if err := assetRows.Scan(&asset.IdAsset, &asset.Name, &asset.Ticker, &asset.ISIN,
+				&asset.Exchange, &asset.Sector, &asset.Region, &asset.idHolding, &asset.currency); err == nil {
+				assets = append(assets, &asset)
+			}
+		}
+		assetRows.Close()
+
+		newsRows, err := database.Query(`
+			SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+			FROM news
+			WHERE (ticker = ? OR id_holding = ?)
+			AND date(datetime(published_at, 'unixepoch')) >= ?
+			AND date(datetime(published_at, 'unixepoch')) <= ?
+			ORDER BY published_at DESC
+		`, holding.Ticker, holding.IdHolding, newsStartDate, newsEndDate)
+
+		var newsList []News
+		if err == nil {
+			defer newsRows.Close()
+			for newsRows.Next() {
+				var n News
+				var idAsset, idHolding sql.NullString
+				if err := newsRows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary,
+					&n.Text, &n.Sentiment, &n.Ticker, &idAsset, &idHolding); err == nil {
+					if idAsset.Valid {
+						n.idAsset = idAsset.String
+					}
+					if idHolding.Valid {
+						n.idHolding = idHolding.String
+					}
+					newsList = append(newsList, n)
+				}
+			}
+		}
+
+		var asset *Asset
+		if len(assets) > 0 {
+			asset = assets[0]
+		}
+
+		results = append(results, GainerLoser{
+			Asset:          asset,
+			Holding:        &holding,
+			PriceChangePct: changePct,
+			RelatedNews:    newsList,
+		})
+	}
+
+	if isGainer {
+		for i := 0; i < len(results); i++ {
+			for j := i + 1; j < len(results); j++ {
+				if results[i].PriceChangePct < results[j].PriceChangePct {
+					results[i], results[j] = results[j], results[i]
+				}
+			}
+		}
+	} else {
+		for i := 0; i < len(results); i++ {
+			for j := i + 1; j < len(results); j++ {
+				if results[i].PriceChangePct > results[j].PriceChangePct {
+					results[i], results[j] = results[j], results[i]
+				}
+			}
+		}
+	}
+
+	if len(results) > topN {
+		results = results[:topN]
+	}
+
+	return results, nil
+}
+
 func (database *DB) getAssetDetailsHistory(ticker string) ([]AssetDetails, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
@@ -5457,6 +5612,34 @@ func getBacktest(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+func topGainers(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	gainers, err := db.topGainersLosers(userID, 5, 24*time.Hour, true)
+	if err != nil {
+		log.Printf("Error getting top gainers: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving top gainers")
+	}
+
+	return c.JSON(http.StatusOK, gainers)
+}
+
+func topLosers(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	losers, err := db.topGainersLosers(userID, 5, 24*time.Hour, false)
+	if err != nil {
+		log.Printf("Error getting top losers: %v", err)
+		return c.String(http.StatusInternalServerError, "Error retrieving top losers")
+	}
+
+	return c.JSON(http.StatusOK, losers)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -5580,6 +5763,8 @@ func main() {
 	protected.GET("/portfolio/allocation", getPortfolioAllocation)
 	protected.GET("/portfolio/stats", getPortfolioStats)
 	protected.GET("/portfolio/backtest", getBacktest)
+	protected.GET("/portfolio/top_gainers", topGainers)
+	protected.GET("/portfolio/top_losers", topLosers)
 
 	// Asset endpoints
 	protected.GET("/asset/sentiments", GetAssetSentiments)
