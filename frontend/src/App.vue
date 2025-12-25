@@ -578,6 +578,105 @@
             </v-col>
           </v-row>
 
+          <!-- Top Gainers and Losers -->
+          <v-row class="mt-4">
+            <v-col cols="12" md="6">
+              <v-card elevation="2">
+                <v-card-title class="d-flex align-center bg-success-lighten-4">
+                  <v-icon size="small" class="mr-2" color="success">mdi-trending-up</v-icon>
+                  <span>Top Gainers (24h)</span>
+                </v-card-title>
+                <v-card-text class="pa-0">
+                  <div v-if="topGainersLosersLoading" class="text-center py-8">
+                    <v-progress-circular indeterminate color="success"></v-progress-circular>
+                  </div>
+                  <div v-else-if="actualGainers.length === 0" class="text-center py-8 text-grey">
+                    <v-icon size="48" color="grey-lighten-1">mdi-chart-line-variant</v-icon>
+                    <p class="mt-3">No gainers in the last 24 hours</p>
+                  </div>
+                  <v-list v-else density="compact">
+                    <v-list-item
+                      v-for="(gainer, index) in actualGainers"
+                      :key="gainer.Holding?.IdHolding || index"
+                      class="gainer-item"
+                    >
+                      <template v-slot:prepend>
+                        <v-avatar color="success" size="32" class="mr-2">
+                          <span class="text-caption">#{{ index + 1 }}</span>
+                        </v-avatar>
+                      </template>
+                      <v-list-item-title class="font-weight-bold">
+                        {{ gainer.Holding?.Ticker || 'N/A' }}
+                      </v-list-item-title>
+                      <v-list-item-subtitle class="text-caption">
+                        {{ gainer.Holding?.Name || 'Unknown' }}
+                      </v-list-item-subtitle>
+                      <template v-slot:append>
+                        <div class="text-right">
+                          <div class="text-success font-weight-bold">
+                            +{{ gainer.PriceChangePct?.toFixed(2) }}%
+                          </div>
+                          <div v-if="gainer.RelatedNews?.length > 0" class="text-caption text-grey">
+                            <v-icon size="x-small" class="mr-1">mdi-newspaper</v-icon>
+                            {{ gainer.RelatedNews.length }} news
+                          </div>
+                        </div>
+                      </template>
+                    </v-list-item>
+                  </v-list>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="6">
+              <v-card elevation="2">
+                <v-card-title class="d-flex align-center bg-error-lighten-4">
+                  <v-icon size="small" class="mr-2" color="error">mdi-trending-down</v-icon>
+                  <span>Top Losers (24h)</span>
+                </v-card-title>
+                <v-card-text class="pa-0">
+                  <div v-if="topGainersLosersLoading" class="text-center py-8">
+                    <v-progress-circular indeterminate color="error"></v-progress-circular>
+                  </div>
+                  <div v-else-if="actualLosers.length === 0" class="text-center py-8 text-grey">
+                    <v-icon size="48" color="grey-lighten-1">mdi-chart-line-variant</v-icon>
+                    <p class="mt-3">No losers in the last 24 hours</p>
+                  </div>
+                  <v-list v-else density="compact">
+                    <v-list-item
+                      v-for="(loser, index) in actualLosers"
+                      :key="loser.Holding?.IdHolding || index"
+                      class="loser-item"
+                    >
+                      <template v-slot:prepend>
+                        <v-avatar color="error" size="32" class="mr-2">
+                          <span class="text-caption">#{{ index + 1 }}</span>
+                        </v-avatar>
+                      </template>
+                      <v-list-item-title class="font-weight-bold">
+                        {{ loser.Holding?.Ticker || 'N/A' }}
+                      </v-list-item-title>
+                      <v-list-item-subtitle class="text-caption">
+                        {{ loser.Holding?.Name || 'Unknown' }}
+                      </v-list-item-subtitle>
+                      <template v-slot:append>
+                        <div class="text-right">
+                          <div class="text-error font-weight-bold">
+                            {{ loser.PriceChangePct?.toFixed(2) }}%
+                          </div>
+                          <div v-if="loser.RelatedNews?.length > 0" class="text-caption text-grey">
+                            <v-icon size="x-small" class="mr-1">mdi-newspaper</v-icon>
+                            {{ loser.RelatedNews.length }} news
+                          </div>
+                        </div>
+                      </template>
+                    </v-list-item>
+                  </v-list>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+
           <!-- Portfolio Sentiment Card -->
           <v-row v-if="portfolioSentiment" class="mt-4">
             <v-col cols="12">
@@ -718,6 +817,97 @@
             </v-col>
 
             <v-col cols="12" md="8">
+              <!-- Top Gainers/Losers News Highlights -->
+              <v-row v-if="actualGainers.length > 0 || actualLosers.length > 0" class="mb-4">
+                <v-col v-if="actualGainers.length > 0 && actualGainers[0].RelatedNews?.length > 0" cols="12" md="6">
+                  <v-card elevation="2" class="gainer-news-card">
+                    <v-card-title class="text-subtitle-2 pb-2 bg-success-lighten-5">
+                      <v-icon size="small" class="mr-2" color="success">mdi-trending-up</v-icon>
+                      Top Gainer: {{ actualGainers[0].Holding?.Ticker }}
+                      <v-chip size="x-small" color="success" class="ml-2">
+                        +{{ actualGainers[0].PriceChangePct?.toFixed(2) }}%
+                      </v-chip>
+                    </v-card-title>
+                    <v-card-text class="pa-2">
+                      <div 
+                        v-for="(news, idx) in actualGainers[0].RelatedNews?.slice(0, 3)"
+                        :key="news.id_news || idx"
+                        class="news-item-compact mb-2 pa-2"
+                      >
+                        <div class="d-flex align-center mb-1">
+                          <v-chip
+                            :color="getSentimentColor(news.sentiment)"
+                            size="x-small"
+                            variant="flat"
+                            class="mr-2"
+                          >
+                            {{ getSentimentLabel(news.sentiment) }}
+                          </v-chip>
+                          <span class="text-caption text-grey">
+                            {{ formatTimeAgo(news.published_at) }}
+                          </span>
+                        </div>
+                        <div class="text-body-2 font-weight-medium mb-1">
+                          <a :href="news.link" target="_blank" class="news-link-compact">
+                            {{ news.title }}
+                          </a>
+                        </div>
+                        <p class="text-caption text-grey-darken-1 mb-0">
+                          {{ news.summary?.substring(0, 100) }}{{ news.summary?.length > 100 ? '...' : '' }}
+                        </p>
+                      </div>
+                      <div v-if="actualGainers[0].RelatedNews?.length > 3" class="text-caption text-grey text-center mt-2">
+                        +{{ actualGainers[0].RelatedNews.length - 3 }} more articles
+                      </div>
+                    </v-card-text>
+                  </v-card>
+                </v-col>
+
+                <v-col v-if="actualLosers.length > 0 && actualLosers[0].RelatedNews?.length > 0" cols="12" md="6">
+                  <v-card elevation="2" class="loser-news-card">
+                    <v-card-title class="text-subtitle-2 pb-2 bg-error-lighten-5">
+                      <v-icon size="small" class="mr-2" color="error">mdi-trending-down</v-icon>
+                      Top Loser: {{ actualLosers[0].Holding?.Ticker }}
+                      <v-chip size="x-small" color="error" class="ml-2">
+                        {{ actualLosers[0].PriceChangePct?.toFixed(2) }}%
+                      </v-chip>
+                    </v-card-title>
+                    <v-card-text class="pa-2">
+                      <div 
+                        v-for="(news, idx) in actualLosers[0].RelatedNews?.slice(0, 3)"
+                        :key="news.id_news || idx"
+                        class="news-item-compact mb-2 pa-2"
+                      >
+                        <div class="d-flex align-center mb-1">
+                          <v-chip
+                            :color="getSentimentColor(news.sentiment)"
+                            size="x-small"
+                            variant="flat"
+                            class="mr-2"
+                          >
+                            {{ getSentimentLabel(news.sentiment) }}
+                          </v-chip>
+                          <span class="text-caption text-grey">
+                            {{ formatTimeAgo(news.published_at) }}
+                          </span>
+                        </div>
+                        <div class="text-body-2 font-weight-medium mb-1">
+                          <a :href="news.link" target="_blank" class="news-link-compact">
+                            {{ news.title }}
+                          </a>
+                        </div>
+                        <p class="text-caption text-grey-darken-1 mb-0">
+                          {{ news.summary?.substring(0, 100) }}{{ news.summary?.length > 100 ? '...' : '' }}
+                        </p>
+                      </div>
+                      <div v-if="actualLosers[0].RelatedNews?.length > 3" class="text-caption text-grey text-center mt-2">
+                        +{{ actualLosers[0].RelatedNews.length - 3 }} more articles
+                      </div>
+                    </v-card-text>
+                  </v-card>
+                </v-col>
+              </v-row>
+
               <v-card elevation="2">
                 <v-card-title class="d-flex align-center">
                   <v-icon size="small" class="mr-2">mdi-newspaper</v-icon>
@@ -977,6 +1167,10 @@ export default {
       newsSearchQuery: '',
       selectedTickerFilter: 'all',
 
+      topGainers: [],
+      topLosers: [],
+      topGainersLosersLoading: false,
+
       backtestData: null,
       backtestLoading: false,
       backtestError: '',
@@ -1039,6 +1233,14 @@ export default {
 
     companyPieSlices() {
       return this.generatePieSlices(this.sortedCompanies, this.pieColors)
+    },
+
+    actualGainers() {
+      return this.topGainers.filter(g => g.PriceChangePct > 0)
+    },
+
+    actualLosers() {
+      return this.topLosers.filter(l => l.PriceChangePct < 0)
     },
 
     sortedHoldings() {
@@ -1158,6 +1360,9 @@ export default {
         this.fetchPortfolioSentiment()
       } else if ((newVal === 'dashboard' || newVal === 'holdings') && !this.portfolioSentiment) {
         this.fetchPortfolioSentiment()
+        if (this.topGainers.length === 0 && this.topLosers.length === 0) {
+          this.fetchTopGainersLosers()
+        }
       } else if (newVal === 'statistics' && !this.backtestData) {
         this.fetchBacktest()
       }
@@ -1183,6 +1388,7 @@ export default {
         this.getPortfolioAllocation()
         this.fetchPortfolioStatistics()
         this.fetchPortfolioSentiment()
+        this.fetchTopGainersLosers()
         if (this.activeView === 'news') {
           this.fetchPortfolioNews()
         }
@@ -1687,6 +1893,35 @@ export default {
       this.fetchPortfolioSentiment()
     },
 
+    async fetchTopGainersLosers() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      this.topGainersLosersLoading = true
+
+      try {
+        const [gainersResponse, losersResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/portfolio/top_gainers`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch(`${API_BASE_URL}/api/portfolio/top_losers`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+        ])
+
+        if (gainersResponse.ok) {
+          this.topGainers = await gainersResponse.json() || []
+        }
+        if (losersResponse.ok) {
+          this.topLosers = await losersResponse.json() || []
+        }
+      } catch (error) {
+        console.error('Error fetching top gainers/losers:', error)
+      } finally {
+        this.topGainersLosersLoading = false
+      }
+    },
+
     // Update chart width on resize
     updateChartWidth() {
       const container = document.querySelector('.chart-wrapper')
@@ -1764,6 +1999,41 @@ export default {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       }).format(value)
+    },
+
+    getSentimentColor(sentiment) {
+      if (sentiment > 0.3) return '#4CAF50'
+      if (sentiment < -0.3) return '#EF5350'
+      return '#9E9E9E'
+    },
+
+    getSentimentLabel(sentiment) {
+      if (sentiment > 0.5) return 'Very Positive'
+      if (sentiment > 0.3) return 'Positive'
+      if (sentiment > 0.1) return 'Slightly Positive'
+      if (sentiment < -0.5) return 'Very Negative'
+      if (sentiment < -0.3) return 'Negative'
+      if (sentiment < -0.1) return 'Slightly Negative'
+      return 'Neutral'
+    },
+
+    formatTimeAgo(timestamp) {
+      if (!timestamp) return ''
+      
+      const date = new Date(parseInt(timestamp) * 1000)
+      const now = new Date()
+      const diffMs = now - date
+      const diffMinutes = Math.floor(diffMs / (1000 * 60))
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+      if (diffMinutes < 1) return 'Just now'
+      if (diffMinutes < 60) return `${diffMinutes}m ago`
+      if (diffHours < 24) return `${diffHours}h ago`
+      if (diffDays === 1) return 'Yesterday'
+      if (diffDays < 7) return `${diffDays}d ago`
+      
+      return date.toLocaleDateString()
     }
   }
 }
@@ -1919,5 +2189,69 @@ export default {
   display: flex;
   align-items: center;
   padding: 2px 0;
+}
+
+.gainer-item,
+.loser-item {
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.08);
+  transition: background-color 0.2s ease;
+}
+
+.gainer-item:last-child,
+.loser-item:last-child {
+  border-bottom: none;
+}
+
+.gainer-item:hover {
+  background-color: rgba(76, 175, 80, 0.05);
+}
+
+.loser-item:hover {
+  background-color: rgba(239, 83, 80, 0.05);
+}
+
+.news-item-compact {
+  border-left: 3px solid transparent;
+  background-color: rgba(var(--v-theme-surface-variant), 0.3);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.news-item-compact:hover {
+  border-left-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-surface-variant), 0.5);
+}
+
+.news-link-compact {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.news-link-compact:hover {
+  color: rgb(var(--v-theme-primary));
+}
+
+.gainer-news-card,
+.loser-news-card {
+  border-top: 3px solid;
+}
+
+.gainer-news-card {
+  border-top-color: #4CAF50;
+}
+
+.loser-news-card {
+  border-top-color: #EF5350;
+}
+
+.bg-success-lighten-4,
+.bg-success-lighten-5 {
+  background-color: rgba(76, 175, 80, 0.08) !important;
+}
+
+.bg-error-lighten-4,
+.bg-error-lighten-5 {
+  background-color: rgba(239, 83, 80, 0.08) !important;
 }
 </style>
