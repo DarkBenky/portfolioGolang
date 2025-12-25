@@ -501,7 +501,7 @@ func fetchPrices(ticker string) error {
 	params := url.Values{}
 	params.Add("ticker", ticker)
 	params.Add("last_updates_unix_timestamp", strconv.FormatInt(lastTimestamp, 10))
-	params.Add("interval", "1m")
+	params.Add("interval", "5m")
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 	resp, err := http.Get(fullURL)
