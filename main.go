@@ -2536,10 +2536,13 @@ func FillInBetweenPrices(Ticker string) error {
 		prevPrice := existingPrices[index-1]
 		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
 		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
-		if currentDateInt-prevDateInt > 60 {
-			fillsNeeded := (currentDateInt-prevDateInt)/60 - 1
+
+		const candleInterval int64 = 600
+
+		if currentDateInt-prevDateInt > candleInterval*2 {
+			fillsNeeded := (currentDateInt-prevDateInt)/candleInterval - 1
 			for i := int64(1); i <= fillsNeeded; i++ {
-				missingDate := prevDateInt + i*60
+				missingDate := prevDateInt + i*candleInterval
 				interpolatedPrice := prevPrice.Close + (price.Open-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
 				missingPrice := Price{
 					IdPrice: generateID(),
