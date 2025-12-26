@@ -145,19 +145,20 @@ export default {
     formattedSummary() {
       if (!this.summary) return ''
       
-      let html = this.summary
+      let text = this.summary
+        .replace(/^Here is a sample .+?:\s*/i, '')
+        .replace(/^Here is .+?:\s*/i, '')
+        .replace(/###\s*/g, '')
+        .replace(/##\s*/g, '')
+        .replace(/#\s*/g, '')
         .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/###\s*(.+)/g, '<h3>$1</h3>')
-        .replace(/##\s*(.+)/g, '<h2>$1</h2>')
-        .replace(/#\s*(.+)/g, '<h1>$1</h1>')
-        .replace(/^\-\s+(.+)/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-        .replace(/\n\n/g, '</p><p>')
+        .replace(/^\s*-\s+/gm, '• ')
+        .replace(/\n\n+/g, '<br><br>')
         .replace(/\n/g, '<br>')
       
-      return `<p>${html}</p>`
+      return text
     }
   },
 
@@ -216,11 +217,12 @@ export default {
 }
 
 .markdown-content {
-  font-size: 0.875rem;
+  font-size: 0.875rem !important;
+  line-height: 1.6;
 }
 
-.markdown-content p {
-  margin: 0 0 0.5em 0;
+.markdown-content * {
+  font-size: 0.875rem !important;
 }
 
 .markdown-content strong {
@@ -232,36 +234,7 @@ export default {
   font-style: italic;
 }
 
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3 {
-  margin: 0.5em 0 0.3em 0;
-  font-weight: 600;
-}
-
-.markdown-content h1 {
-  font-size: 1.2rem;
-}
-
-.markdown-content h2 {
-  font-size: 1.1rem;
-}
-
-.markdown-content h3 {
-  font-size: 1rem;
-}
-
-.markdown-content ul {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
-}
-
-.markdown-content li {
-  margin: 0.3em 0;
-  list-style-type: disc;
-}
-
 .markdown-content br {
-  line-height: 1.5;
+  line-height: 1.6;
 }
 </style>
