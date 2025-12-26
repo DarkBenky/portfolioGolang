@@ -37,6 +37,7 @@ var (
 	BASE_URL   string
 	db         *DB
 	dbMutex    sync.RWMutex
+	candleInterval int64 = 600 // 10 minutes
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -2537,7 +2538,7 @@ func FillInBetweenPrices(Ticker string) error {
 		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
 		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
 
-		const candleInterval int64 = 600
+		
 
 		if currentDateInt-prevDateInt > candleInterval*2 {
 			fillsNeeded := (currentDateInt-prevDateInt)/candleInterval - 1
