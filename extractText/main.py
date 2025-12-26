@@ -1,6 +1,9 @@
 import sqlite3
 import json
 from tensorflow.keras.preprocessing.text import Tokenizer
+import pandas as pd
+
+df = pd.read_csv('train.csv')
 
 db = sqlite3.connect('../portfolio.db')
 cursor = db.cursor()
@@ -36,6 +39,13 @@ for row in res:
         'tokenizedText': 'N/A'
     })
 
+for _, row in df.iterrows():
+    fullText += row['prompt'] + "\n"
+    texts.append({
+        'rawText': row['prompt'],
+        'tokenizedText': 'N/A'
+    })
+
 tokenizer = Tokenizer()
 tokenizer.fit_on_texts([fullText])
 
@@ -52,3 +62,4 @@ with open('tokenizer.json', 'w') as f:
 
 max_len = max(len(textObj['tokenizedText']) for textObj in texts)
 print(f'Maximum tokenized text length: {max_len}')
+print(f"Vocabulary size: {len(tokenizer.word_index) + 1}")
