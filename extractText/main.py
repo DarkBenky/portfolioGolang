@@ -10,34 +10,36 @@ df = pd.read_csv('train.csv')
 db = sqlite3.connect('../portfolio.db')
 cursor = db.cursor()
 
+END_TOKEN = '<EOS>'
+
 texts = []
 fullText = ""
 
 res = cursor.execute('SELECT summary, text FROM news').fetchall()
 for row in res:
-    fullText += row[0] + "\n" + row[1] + "\n"
+    fullText += row[0] + " " + END_TOKEN + "\n" + row[1] + " " + END_TOKEN + "\n"
     texts.append({
-        'rawText': row[0],
+        'rawText': row[0] + " " + END_TOKEN,
         'tokenizedText': 'N/A'
     })
     texts.append({
-        'rawText': row[1],
+        'rawText': row[1] + " " + END_TOKEN,
         'tokenizedText': 'N/A'
     })
 
 res = cursor.execute('SELECT summary from daily_sentiment').fetchall()
 for row in res:
-    fullText += row[0] + "\n"
+    fullText += row[0] + " " + END_TOKEN + "\n"
     texts.append({
-        'rawText': row[0],
+        'rawText': row[0] + " " + END_TOKEN,
         'tokenizedText': 'N/A'
     })
 
 res = cursor.execute('SELECT summary from portfolio_daily_sentiment').fetchall()
 for row in res:
-    fullText += row[0] + "\n"
+    fullText += row[0] + " " + END_TOKEN + "\n"
     texts.append({
-        'rawText': row[0],
+        'rawText': row[0] + " " + END_TOKEN,
         'tokenizedText': 'N/A'
     })
 
@@ -65,6 +67,7 @@ with open('tokenizer.json', 'w') as f:
 max_len = max(len(textObj['tokenizedText']) for textObj in texts)
 print(f'Maximum tokenized text length: {max_len}')
 print(f"Vocabulary size: {len(tokenizer.word_index) + 1}")
+print(f"End token ID: {tokenizer.word_index.get(END_TOKEN.lower(), 'Not found')}")
 
 class DataGenerator:
     def __init__(self, path_to_dataset, path_to_tokenizer):
