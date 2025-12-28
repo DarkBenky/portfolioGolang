@@ -53,6 +53,7 @@ tokenizer.pre_tokenizer = Whitespace()
 
 trainer = UnigramTrainer(
     vocab_size=10000,
+    show_progress=True,
     special_tokens=["[PAD]", "[UNK]", END_TOKEN]
 )
 
