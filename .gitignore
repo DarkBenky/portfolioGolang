@@ -10,3 +10,4 @@ logs/
 *.keras
 *.h5
 extractText/extractedTexts.json
+*.json
