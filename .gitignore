@@ -5,3 +5,6 @@ __pycache__/
 *.pyd
 *.db-*
 *.db
+wandb/
+logs/
+*.keras
