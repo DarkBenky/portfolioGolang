@@ -12,3 +12,4 @@ logs/
 extractText/extractedTexts.json
 *.json
 *.txt
+extractText/corpus.txt
