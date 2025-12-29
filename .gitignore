@@ -13,3 +13,7 @@ extractText/extractedTexts.json
 *.json
 *.txt
 extractText/corpus.txt
+extractText/*.txt
+extractText/*.csv
+*.gob.json
+.db_backups/
