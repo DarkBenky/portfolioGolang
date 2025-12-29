@@ -345,13 +345,12 @@ from tokenizers.models import Unigram
 from tokenizers.trainers import UnigramTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from datasets import load_dataset
+from specialCharacters import END_TOKEN
 
 MAX_COUNT = 100_000
 BATCH_SIZE = 2000
 TOKENIZE_BATCH_SIZE = 100  # Smaller batches for tokenization
 WRITE_EVERY = 1000  # Write to disk every N items
-
-END_TOKEN = '<EOS>'
 
 print("Cache directory:", os.environ['HF_DATASETS_CACHE'])
 
