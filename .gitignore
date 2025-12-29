@@ -11,3 +11,4 @@ logs/
 *.h5
 extractText/extractedTexts.json
 *.json
+*.txt
