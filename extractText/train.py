@@ -1,6 +1,17 @@
+import os
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
+
+# Enable mixed precision FIRST
+policy = mixed_precision.Policy('mixed_float16')
+mixed_precision.set_global_policy(policy)
+
+tf.config.optimizer.set_jit(False)
 from tensorflow.keras import layers
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adafactor
 from tensorflow.keras.layers import Dense, Dropout, LayerNormalization, MultiHeadAttention
 import wandb
 from wandb.integration.keras import WandbMetricsLogger
@@ -27,12 +38,10 @@ class CausalBlock(tf.keras.layers.Layer):
         self.dropout2 = layers.Dropout(dropout_rate)
 
     def call(self, x, training=False):
-        # Self-attention with causal mask
         attn_out = self.attn(x, x, use_causal_mask=True, training=training)
         attn_out = self.dropout1(attn_out, training=training)
         x = self.ln1(x + attn_out)
         
-        # Feed-forward network
         ffn_out = self.ffn(x, training=training)
         return self.ln2(x + ffn_out)
 
@@ -53,51 +62,35 @@ class PositionalEncoding(tf.keras.layers.Layer):
 
 
 def build_language_model(vocab_size, context_window, d_model, num_heads, num_layers, ffn_dim=2048, dropout_rate=0.1):
-    """
-    Build a causal language model that predicts the next token.
-    
-    Args:
-        vocab_size: Size of the vocabulary
-        context_window: Maximum sequence length
-        d_model: Embedding dimension
-        num_heads: Number of attention heads
-        num_layers: Number of transformer blocks
-        ffn_dim: Feed-forward network dimension
-        dropout_rate: Dropout rate
-    """
     inputs = layers.Input(shape=(None,), dtype=tf.int32)
     
-    # Token embedding
     x = layers.Embedding(input_dim=vocab_size, output_dim=d_model)(inputs)
     x = layers.Dropout(dropout_rate)(x)
-    
-    # Positional encoding
     x = PositionalEncoding(context_window, d_model)(x)
     
-    # Transformer blocks
     for i in range(num_layers):
         x = CausalBlock(d_model=d_model, num_heads=num_heads, ff_dim=ffn_dim, dropout_rate=dropout_rate)(x)
     
-    # Final layer norm
     x = layers.LayerNormalization(epsilon=1e-6)(x)
     
-    # Output projection to vocabulary
-    outputs = layers.Dense(vocab_size, name='output_logits')(x)
+    # Cast to float32 for numerical stability with mixed precision
+    x = layers.Lambda(lambda t: tf.cast(t, tf.float32))(x)
+    outputs = layers.Dense(vocab_size, name='output_logits', dtype='float32')(x)
     
     return tf.keras.Model(inputs=inputs, outputs=outputs, name='causal_language_model')
 
 
 if __name__ == '__main__':
-    CONTEXT_WINDOW = 1024
-    D_MODEL = 256
-    NUM_HEADS = 8
-    NUM_LAYERS = 6
-    BATCH_SIZE = 16
-    LEARNING_RATE = 0.0003
-    EPOCHS = 200
-    FFN_DIM = 2048
+    # OPTIMIZED CONFIGURATION with Mixed Precision
+    CONTEXT_WINDOW = 2048
+    D_MODEL = 1024
+    NUM_HEADS = 16
+    NUM_LAYERS = 48
+    BATCH_SIZE = 1
+    LEARNING_RATE = 0.0001
+    EPOCHS = 1000
+    FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
-   
     
     wandb.init(
         project="portfolio-transformer",
@@ -111,6 +104,7 @@ if __name__ == '__main__':
             "epochs": EPOCHS,
             "ffn_dim": FFN_DIM,
             "dropout_rate": DROPOUT_RATE,
+            "mixed_precision": True,
         }
     )
     
@@ -118,7 +112,6 @@ if __name__ == '__main__':
     vocab_size = data_gen.vocab_size
     wandb.config.update({"vocab_size": vocab_size})
     
-    # Build the language model
     model = build_language_model(
         vocab_size=vocab_size,
         context_window=CONTEXT_WINDOW,
@@ -129,15 +122,17 @@ if __name__ == '__main__':
         dropout_rate=DROPOUT_RATE
     )
     
-    # Use Adam optimizer with learning rate schedule (optional)
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=LEARNING_RATE,
         decay_steps=EPOCHS * (10_000 // BATCH_SIZE),
         alpha=0.1
     )
-    optimizer = Adam(learning_rate=lr_schedule)
     
-    # Compile with sparse categorical crossentropy (expects integer labels)
+    optimizer = Adafactor(learning_rate=lr_schedule)
+    
+    # Wrap optimizer for mixed precision
+    optimizer = mixed_precision.LossScaleOptimizer(optimizer)
+    
     model.compile(
         optimizer=optimizer,
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
@@ -151,15 +146,13 @@ if __name__ == '__main__':
     model.summary()
     
     print(f"\nTotal parameters: {model.count_params():,}")
+    print(f"Mixed precision enabled: {policy.compute_dtype}")
     
     bestLoss = float('inf')
     for epoch in range(EPOCHS):
         print(f"\n=== Epoch {epoch + 1}/{EPOCHS} ===")
         steps_per_epoch = 10_000 // BATCH_SIZE
         
-        # Your DataGenerator should return:
-        # - inputs: (batch_size, seq_len) with token IDs
-        # - targets: (batch_size, seq_len) with next token IDs (shifted by 1)
         history = model.fit(
             data_gen.generate_batches(BATCH_SIZE, CONTEXT_WINDOW),
             steps_per_epoch=steps_per_epoch,
@@ -167,6 +160,14 @@ if __name__ == '__main__':
             callbacks=[WandbMetricsLogger()],
             verbose=1
         )
+
+        wandb.log({
+            "epoch": epoch + 1,
+            "learning_rate": float(lr_schedule(epoch * steps_per_epoch)),
+            "loss": history.history['loss'][-1],
+            "accuracy": history.history['accuracy'][-1],
+            "top5_accuracy": history.history['top5_accuracy'][-1]
+        })
         
         current_loss = history.history['loss'][-1]
         if current_loss < bestLoss:

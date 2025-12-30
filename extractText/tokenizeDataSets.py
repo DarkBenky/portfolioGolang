@@ -59,7 +59,7 @@ try:
     ds_train = ds['train']
     l = len(ds_train)
     count = 0
-    MAX_COUNT = 100_000
+    MAX_COUNT = 5_000
     
     for i, item in enumerate(ds_train):
         if count >= MAX_COUNT:
@@ -100,7 +100,7 @@ try:
     ds_code_py_train = ds_code_py['train']
     l = len(ds_code_py_train)
     count = 0
-    MAX_COUNT = 100_000
+    MAX_COUNT = 20_000
     
     for i, item in enumerate(ds_code_py_train):
         if count >= MAX_COUNT:
@@ -141,7 +141,7 @@ try:
     ds_code_train = ds_code['train']
     l = len(ds_code_train)
     count = 0
-    MAX_COUNT = 100_000
+    MAX_COUNT = 20_000
     
     for i, item in enumerate(ds_code_train):
         if count >= MAX_COUNT:
@@ -182,7 +182,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 100_000
+    MAX_COUNT = 20_000
     
     for i, item in enumerate(ds_maths_train):
         if count >= MAX_COUNT:
@@ -218,7 +218,7 @@ try:
     ds_summarize_train = ds_summarize['train']
     l = len(ds_summarize_train)
     count = 0
-    MAX_COUNT = 100_000
+    MAX_COUNT = 10_000
     
     for i, item in enumerate(ds_summarize_train):
         if count >= MAX_COUNT:
