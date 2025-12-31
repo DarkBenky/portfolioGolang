@@ -83,9 +83,9 @@ def build_language_model(vocab_size, context_window, d_model, num_heads, num_lay
 if __name__ == '__main__':
     # OPTIMIZED CONFIGURATION with Mixed Precision
     CONTEXT_WINDOW = 2048
-    D_MODEL = 1024
-    NUM_HEADS = 16
-    NUM_LAYERS = 48
+    D_MODEL = 1152
+    NUM_HEADS = 18
+    NUM_LAYERS = 38
     BATCH_SIZE = 1
     LEARNING_RATE = 0.0001
     EPOCHS = 1000
