@@ -256,7 +256,7 @@ class CausalBlock(tf.keras.layers.Layer):
         attn_out = self.dropout1(attn_out, training=training)
         
         # Scaled residual connection (μParam-style)
-        scale = tf.sqrt(float(self.num_layers))
+        scale = tf.cast(tf.sqrt(float(self.num_layers)), x.dtype)
         x = residual + attn_out / scale
         
         # FFN block
@@ -283,6 +283,19 @@ class PositionalEncoding(tf.keras.layers.Layer):
         return x + self.pos_encoding[:seq_len, :]
 
 
+class TiedOutputLayer(layers.Layer):
+    """Output layer that shares weights with embedding layer"""
+    def __init__(self, embedding_layer, **kwargs):
+        super().__init__(**kwargs)
+        self.embedding_layer = embedding_layer
+    
+    def call(self, x):
+        # Cast x to float32 for stable computation
+        x = tf.cast(x, tf.float32)
+        embeddings = tf.cast(self.embedding_layer.embeddings, tf.float32)
+        return tf.matmul(x, embeddings, transpose_b=True)
+
+
 def build_language_model(vocab_size, context_window, d_model, num_heads, num_layers, ffn_dim=2048, dropout_rate=0.1):
     inputs = layers.Input(shape=(None,), dtype=tf.int32)
     
@@ -306,27 +319,17 @@ def build_language_model(vocab_size, context_window, d_model, num_heads, num_lay
     # Final norm
     x = RMSNorm(d_model)(x)
     
-    # Cast to float32 for numerical stability
-    x = layers.Lambda(lambda t: tf.cast(t, tf.float32))(x)
-    
-    # Output layer with weight tying
-    output_dense = layers.Dense(vocab_size, use_bias=False, name='output_logits', dtype='float32')
-    outputs = output_dense(x)
+    # Output layer with weight tying (shares weights with embedding)
+    # Note: TiedOutputLayer handles casting to float32 internally
+    outputs = TiedOutputLayer(embedding_layer, name='output_logits')(x)
     
     model = tf.keras.Model(inputs=inputs, outputs=outputs, name='causal_language_model')
-    
-    # WEIGHT TYING: Share embedding weights with output projection
-    # This reduces parameters and improves training
-    output_dense.kernel = tf.Variable(
-        tf.transpose(embedding_layer.embeddings),
-        trainable=True,
-        name='tied_output_kernel'
-    )
     
     return model
 
 
 if __name__ == '__main__':
+    # OPTIMIZED CONFIGURATION
     CONTEXT_WINDOW = 2048
     D_MODEL = 1152
     NUM_HEADS = 18
