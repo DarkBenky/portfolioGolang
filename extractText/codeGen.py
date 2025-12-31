@@ -13,7 +13,7 @@ vocab_size = tokenizer.get_vocab_size()
 
 py_ds = pd.read_csv('train.csv')
 
-SAVE_PATH = 'extractedTexts_py.json'
+SAVE_PATH = 'extractedTexts_multilang.json'
 CHECKPOINT_PATH = 'checkpoint.json'
 
 data = []
@@ -75,6 +75,37 @@ def load_checkpoint():
             return None
     return None
 
+def remove_language_references(text: str) -> str:
+    """Remove language-specific references from instruction text"""
+    # Remove common language references (case-insensitive)
+    patterns = [
+        r'\bPython\b',
+        r'\bJavaScript\b',
+        r'\bJS\b',
+        r'\bC\+\+\b',
+        r'\bC\b(?!\w)',  # Match 'C' but not part of other words
+        r'\bGolang\b',
+        r'\bGo\b(?=\s+code|\s+program|\s+function)',
+        r'\bRust\b',
+        r'\bJava\b',
+        r'\bRuby\b',
+        r'\bPHP\b',
+        r'\bin\s+Python',
+        r'\busing\s+Python',
+        r'\bPython\s+code',
+        r'\bPython\s+function',
+        r'\bPython\s+program',
+    ]
+    
+    cleaned_text = text
+    for pattern in patterns:
+        cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    
+    return cleaned_text
+
 # Load existing data
 data = load_existing_data()
 print(f"Loaded {len(data)} existing entries")
@@ -101,7 +132,7 @@ for index, row in py_ds.iterrows():
     print(f"Processing row {index+1}/{length}")
     
     try:
-        instruction = row['instruction']
+        original_instruction = row['instruction']
         input_text = row['input']
 
         if LIMIT and index >= LIMIT:
@@ -110,13 +141,17 @@ for index, row in py_ds.iterrows():
         lang_start = start_language_index if index == start_index else 0
         
         for lang_index, language in enumerate(LANGUAGES[lang_start:], start=lang_start):
-            lang_instruction = instruction + f" (Write the response in {language})"
+            # Remove language-specific references from the instruction
+            cleaned_instruction = remove_language_references(original_instruction)
+            
+            # Create language-specific instruction
+            lang_instruction = f"{cleaned_instruction} (Write the solution in {language})"
 
             result = chat(
                 model="deepseek-r1:32b",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Instruction: {instruction}\nInput: {input_text}\n Language Instruction: {lang_instruction}"}
+                    {"role": "user", "content": f"Instruction: {lang_instruction}\nInput: {input_text}"}
                 ],
                 options={
                     "temperature": 0.1
@@ -129,28 +164,36 @@ for index, row in py_ds.iterrows():
             thinking = result["message"].get("thinking", "")
             thinking = sanitize_output(thinking)
 
+            # Create the formatted response with emphasis on the target language
             full_response = f"""### Instruction:
-{instruction}
+{cleaned_instruction}
 
 ### Input:
 {input_text}
 
-### Language:
+### Target Language:
 {language}
 
 ### Thinking:
 {thinking}
 
-### Response:
+### Response ({language}):
 {content}
 {END_TOKEN}"""
 
-            print('full response:\n\n', full_response)
+            print(f'\n{"="*60}')
+            print(f'Language: {language}')
+            print(f'{"="*60}')
+            print(full_response)
+            print(f'{"="*60}\n')
 
             tokenized = tokenizer.encode(full_response).ids
 
             data.append(
                 {
+                    "language": language,
+                    "original_instruction": original_instruction,
+                    "cleaned_instruction": cleaned_instruction,
                     "rawText": full_response,
                     "tokenizedText": tokenized
                 }

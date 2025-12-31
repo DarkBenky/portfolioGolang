@@ -198,55 +198,88 @@ from dataGen import DataGenerator
 
 class RMSNorm(layers.Layer):
     """Faster, more stable than LayerNorm - used by LLaMA, Mistral"""
-    def __init__(self, dim, eps=1e-6):
-        super().__init__()
+    def __init__(self, dim, eps=1e-6, **kwargs):
+        super().__init__(**kwargs)
+        self.dim = dim
         self.eps = eps
+        
+    def build(self, input_shape):
         self.scale = self.add_weight(
-            shape=(dim,), initializer="ones", trainable=True, name="scale"
+            shape=(self.dim,), initializer="ones", trainable=True, name="scale"
         )
+        super().build(input_shape)
 
     def call(self, x):
         rms = tf.sqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + self.eps)
         return x / rms * self.scale
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "dim": self.dim,
+            "eps": self.eps,
+        })
+        return config
 
 
 class SwiGLU(layers.Layer):
     """Gated activation - major improvement over ReLU FFN"""
-    def __init__(self, d_model, hidden_dim, dropout_rate=0.1):
-        super().__init__()
-        self.w1 = layers.Dense(hidden_dim, use_bias=False)
-        self.w2 = layers.Dense(hidden_dim, use_bias=False)
-        self.w3 = layers.Dense(d_model, use_bias=False)
-        self.dropout = layers.Dropout(dropout_rate)
+    def __init__(self, d_model, hidden_dim, dropout_rate=0.1, **kwargs):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.hidden_dim = hidden_dim
+        self.dropout_rate = dropout_rate
+        
+    def build(self, input_shape):
+        self.w1 = layers.Dense(self.hidden_dim, use_bias=False)
+        self.w2 = layers.Dense(self.hidden_dim, use_bias=False)
+        self.w3 = layers.Dense(self.d_model, use_bias=False)
+        self.dropout = layers.Dropout(self.dropout_rate)
+        super().build(input_shape)
 
     def call(self, x, training=False):
         gate = tf.nn.silu(self.w1(x))
         x = gate * self.w2(x)
         x = self.dropout(x, training=training)
         return self.w3(x)
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "d_model": self.d_model,
+            "hidden_dim": self.hidden_dim,
+            "dropout_rate": self.dropout_rate,
+        })
+        return config
 
 
 class CausalBlock(tf.keras.layers.Layer):
-    def __init__(self, d_model, num_heads, ff_dim, dropout_rate=0.1, layer_idx=0, num_layers=1):
-        super().__init__()
+    def __init__(self, d_model, num_heads, ff_dim, dropout_rate=0.1, layer_idx=0, num_layers=1, **kwargs):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.ff_dim = ff_dim
+        self.dropout_rate = dropout_rate
         self.layer_idx = layer_idx
         self.num_layers = num_layers
         
+    def build(self, input_shape):
         self.attn = layers.MultiHeadAttention(
-            num_heads=num_heads,
-            key_dim=d_model // num_heads,
-            dropout=dropout_rate
+            num_heads=self.num_heads,
+            key_dim=self.d_model // self.num_heads,
+            dropout=self.dropout_rate
         )
         
         # SwiGLU instead of ReLU FFN
-        swiglu_dim = int(ff_dim * 2 / 3)  # Standard practice
-        self.ffn = SwiGLU(d_model, swiglu_dim, dropout_rate)
+        swiglu_dim = int(self.ff_dim * 2 / 3)  # Standard practice
+        self.ffn = SwiGLU(self.d_model, swiglu_dim, self.dropout_rate)
         
         # RMSNorm instead of LayerNorm
-        self.rms1 = RMSNorm(d_model)
-        self.rms2 = RMSNorm(d_model)
+        self.rms1 = RMSNorm(self.d_model)
+        self.rms2 = RMSNorm(self.d_model)
         
-        self.dropout1 = layers.Dropout(dropout_rate)
+        self.dropout1 = layers.Dropout(self.dropout_rate)
+        super().build(input_shape)
 
     def call(self, x, training=False):
         # Pre-norm + scaled residual for stability
@@ -266,34 +299,77 @@ class CausalBlock(tf.keras.layers.Layer):
         x = residual + ffn_out / scale
         
         return x
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "d_model": self.d_model,
+            "num_heads": self.num_heads,
+            "ff_dim": self.ff_dim,
+            "dropout_rate": self.dropout_rate,
+            "layer_idx": self.layer_idx,
+            "num_layers": self.num_layers,
+        })
+        return config
 
 
 class PositionalEncoding(tf.keras.layers.Layer):
-    def __init__(self, max_len, d_model):
-        super().__init__()
+    def __init__(self, max_len, d_model, **kwargs):
+        super().__init__(**kwargs)
+        self.max_len = max_len
+        self.d_model = d_model
+        
+    def build(self, input_shape):
         self.pos_encoding = self.add_weight(
             name='pos_encoding',
-            shape=(max_len, d_model),
+            shape=(self.max_len, self.d_model),
             initializer='zeros',
             trainable=True
         )
+        super().build(input_shape)
     
     def call(self, x):
         seq_len = tf.shape(x)[1]
         return x + self.pos_encoding[:seq_len, :]
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "max_len": self.max_len,
+            "d_model": self.d_model,
+        })
+        return config
 
 
 class TiedOutputLayer(layers.Layer):
     """Output layer that shares weights with embedding layer"""
-    def __init__(self, embedding_layer, **kwargs):
+    def __init__(self, vocab_size, d_model, **kwargs):
         super().__init__(**kwargs)
-        self.embedding_layer = embedding_layer
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self._embedding_layer = None
+    
+    def set_embedding_layer(self, embedding_layer):
+        """Call this after initialization to set the embedding layer reference"""
+        self._embedding_layer = embedding_layer
     
     def call(self, x):
         # Cast x to float32 for stable computation
         x = tf.cast(x, tf.float32)
-        embeddings = tf.cast(self.embedding_layer.embeddings, tf.float32)
+        embeddings = tf.cast(self._embedding_layer.embeddings, tf.float32)
         return tf.matmul(x, embeddings, transpose_b=True)
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "vocab_size": self.vocab_size,
+            "d_model": self.d_model,
+        })
+        return config
+    
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
 def build_language_model(vocab_size, context_window, d_model, num_heads, num_layers, ffn_dim=2048, dropout_rate=0.1):
@@ -319,9 +395,10 @@ def build_language_model(vocab_size, context_window, d_model, num_heads, num_lay
     # Final norm
     x = RMSNorm(d_model)(x)
     
-    # Output layer with weight tying (shares weights with embedding)
-    # Note: TiedOutputLayer handles casting to float32 internally
-    outputs = TiedOutputLayer(embedding_layer, name='output_logits')(x)
+    # Output layer with weight tying
+    output_layer = TiedOutputLayer(vocab_size, d_model, name='output_logits')
+    output_layer.set_embedding_layer(embedding_layer)
+    outputs = output_layer(x)
     
     model = tf.keras.Model(inputs=inputs, outputs=outputs, name='causal_language_model')
     
@@ -333,7 +410,7 @@ if __name__ == '__main__':
     CONTEXT_WINDOW = 2048
     D_MODEL = 1152
     NUM_HEADS = 18
-    NUM_LAYERS = 38
+    NUM_LAYERS = 40
     BATCH_SIZE = 1
     LEARNING_RATE = 0.0001
     EPOCHS = 1000

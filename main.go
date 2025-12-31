@@ -5785,6 +5785,22 @@ func main() {
 	protected.GET("/asset/details", getLatestAssetDetailsEndpoint)
 	protected.GET("/asset/details/history", getAssetDetails)
 
+
+	2025/12/31 03:41:00 Error retrieving latest price for EQQB: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for ISPA: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for UQAB: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for 84X0: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for EXSA: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for IBC1: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for SXRT: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for IVDF: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for IUSZ: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for JEAA: sql: no rows in result set
+	2025/12/31 03:41:00 Error retrieving latest price for EDFS: sql: no rows in result set
+
+	It wants exchange on end of ticker for some reason now
+
+
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)
 	e.Logger.Fatal(e.Start(":" + goPort))
