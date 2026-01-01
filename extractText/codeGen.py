@@ -20,8 +20,8 @@ CHECKPOINT_PATH = 'checkpoint.json'
 data = []
 
 LIMIT = None
-SAVE_INTERVAL = 5
-BATCH_SIZE = 5  # Number of rows to process from each dataset before switching
+SAVE_INTERVAL = 3
+BATCH_SIZE = 3  # Number of rows to process from each dataset before switching
 
 LANGUAGES = ['Python', 'JavaScript', 'C', 'Golang', 'Rust']
 
@@ -159,7 +159,8 @@ def process_leetcode_row(row, language):
     prompt = f"LeetCode Problem: {title}\nDifficulty: {difficulty}\n\n{cleaned_description}\n\nWrite a solution in {language}."
     
     result = chat(
-        model="deepseek-r1:32b",
+        # model="deepseek-r1:32b",
+        model="deepseek-r1:14b",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}

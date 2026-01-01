@@ -28,7 +28,7 @@ try:
     ds_code = load_dataset("microsoft/NextCoderDataset", split="train")
     l = len(ds_code)
 
-    MAX_COUNT = 1
+    MAX_COUNT = 25_000
     
     for i, sample in enumerate(ds_code):
         if i % 1000 == 0:
@@ -64,7 +64,7 @@ try:
     ds_train = ds['train']
     l = len(ds_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 500
     
     for i, item in enumerate(ds_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -105,7 +105,7 @@ try:
     ds_code_py_train = ds_code_py['train']
     l = len(ds_code_py_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 10_000
     
     for i, item in enumerate(ds_code_py_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -146,7 +146,7 @@ try:
     ds_code_train = ds_code['train']
     l = len(ds_code_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 20_000
     
     for i, item in enumerate(ds_code_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -187,7 +187,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 250
     
     for i, item in enumerate(ds_maths_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -223,7 +223,7 @@ try:
     ds_summarize_train = ds_summarize['train']
     l = len(ds_summarize_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 100
     
     for i, item in enumerate(ds_summarize_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -260,7 +260,7 @@ except Exception as e:
 print("\n=== Processing CSV Files ===")
 try:
     df = pd.read_csv('train.csv')
-    MAX_COUNT = 1
+    MAX_COUNT = 10_000
     for i, row in enumerate(df.iterrows()):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -287,7 +287,7 @@ except Exception as e:
 try:
     df_python = pd.read_csv('ProblemSolutionPythonV3.csv')
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 10_000
     for i, row in enumerate(df_python.iterrows()):
         if i % 1000 == 0:
             print(f"Python problems: {count}/{len(df_python)}")
@@ -425,6 +425,366 @@ except FileNotFoundError:
     print("math_samples.json not found, skipping...")
 except Exception as e:
     print(f"Error loading math_samples.json: {e}")
+
+# =============================
+# 9. Opc-sft-stage2 Dataset
+# =============================
+print("\n=== Processing Opc-sft-stage2 Dataset ===")
+try:
+    ds = load_dataset("OpenCoder-LLM/opc-sft-stage2", "educational_instruct")
+    ds = ds['train']
+
+    MAX_COUNT = 50_000
+    for i, item in enumerate(ds):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
+        if i % 1000 == 0:
+            print(f"Opc-sft-stage2: {i}/{len(ds)}")
+        
+        try:
+            instruction = item['instruction']
+            output = item['output']
+            
+            text_content = '### Instruction:\n' + instruction + "\n" + '### Output:\n' + output + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing Opc-sft-stage2 sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} Opc-sft-stage2 samples")
+except Exception as e:
+    print(f"Error loading Opc-sft-stage2 dataset: {e}")
+
+# =============================
+# CodeFeedback-Filtered-Instruction Dataset
+# =============================
+
+print("\n=== Processing CodeFeedback-Filtered-Instruction Dataset ===")
+try:
+    ds = load_dataset("OpenCoder-LLM/CodeFeedback-Filtered-Instruction")
+    ds = ds['train']
+
+    MAX_COUNT = 50_000
+
+    for i, item in enumerate(ds):
+
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
+        if i % 1000 == 0:
+            print(f"CodeFeedback-Filtered-Instruction: {i}/{len(ds)}")
+        
+        try:
+            instruction = item['query']
+            output = item['answer']
+            lang = item['lang']
+            
+            text_content = '### Instruction:\n' + instruction + '\n### Language: ' + lang + "\n" + '### Output:\n' + output + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing CodeFeedback-Filtered-Instruction sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} CodeFeedback-Filtered-Instruction samples")
+except Exception as e:
+    print(f"Error loading CodeFeedback-Filtered-Instruction dataset: {e}")
+
+# =============================
+# the-stack Dataset
+# =============================
+print("\n=== Processing the-stack Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train")
+    MAX_COUNT = 2_500
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack: {count}/{MAX_COUNT}")
+
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack samples")
+except Exception as e:
+    print(f"Error loading the-stack dataset: {e}")
+
+# =============================
+# the-stack-c Dataset
+# =============================
+print("\n=== Processing the-stack-c Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/c")
+    MAX_COUNT = 5_000
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-c sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-c samples")
+except Exception as e:
+    print(f"Error loading the-stack-c dataset: {e}")
+
+# =============================
+# the-stack-go Dataset
+# =============================
+print("\n=== Processing the-stack-go Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/go")
+    MAX_COUNT = 5_000
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-go: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-go sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-go samples")
+except Exception as e:
+    print(f"Error loading the-stack-go dataset: {e}")
+
+
+# =============================
+# the-stack-python Dataset
+# =============================
+print("\n=== Processing the-stack-python Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/python")
+    MAX_COUNT = 5_000
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-python: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-python sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-python samples")
+except Exception as e:
+    print(f"Error loading the-stack-python dataset: {e}")
+
+# =============================
+# the-stack-rust Dataset
+# =============================
+print("\n=== Processing the-stack-rust Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/rust")
+    MAX_COUNT = 5_000
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-rust: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-rust sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-rust samples")
+except Exception as e:
+    print(f"Error loading the-stack-rust dataset: {e}")
+
+# =============================
+# the-stack-javascript Dataset
+# =============================
+print("\n=== Processing the-stack-javascript Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/javascript")
+    MAX_COUNT = 5_000
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-javascript: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-javascript sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-javascript samples")
+except Exception as e:
+    print(f"Error loading the-stack-javascript dataset: {e}")
+
+# =============================
+# ODA-Math-460k Dataset
+# =============================
+print("\n=== Processing ODA-Math-460k Dataset ===")
+try:
+    ds = load_dataset("OpenDataArena/ODA-Math-460k")
+    ds = ds['train']
+
+    MAX_COUNT = 10_000
+    for i, item in enumerate(ds):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
+        if i % 1000 == 0:
+            print(f"ODA-Math-460k: {i}/{len(ds)}")
+        
+        try:
+            prompt = item['question']
+            solution = item['response']
+            expected_answer = item['expected_answer']
+            
+            text_content = '### Math Problem:\n' + prompt + "\n" + '### Solution:\n' + solution + "\n" + '### Expected Answer:\n' + expected_answer + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing ODA-Math-460k sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} ODA-Math-460k samples")
+except Exception as e:
+    print(f"Error loading ODA-Math-460k dataset: {e}")
+
+# =============================
+# FineFineWeb-validation Dataset
+# =============================
+print("\n=== Processing FineFineWeb-validation Dataset ===")
+try:
+    ds = load_dataset("m-a-p/FineFineWeb-validation")
+    ds = ds['train']
+    MAX_COUNT = 10_000
+    for i, item in enumerate(ds):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
+        if i % 1000 == 0:
+            print(f"FineFineWeb-validation: {i}/{len(ds)}")
+        
+        try:
+            text = item['text']
+            
+            text_content = text + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing FineFineWeb-validation sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} FineFineWeb-validation samples")
+except Exception as e:
+    print(f"Error loading FineFineWeb-validation dataset: {e}")
+
+# =============================
+# LeetCodeDataset Dataset
+# =============================
+print("\n=== Processing LeetCodeDataset Dataset ===")
+try:
+    ds = load_dataset("newfacade/LeetCodeDataset")
+    ds = ds['train']
+    MAX_COUNT = 2_700
+    for i, item in enumerate(ds):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
+        if i % 1000 == 0:
+            print(f"LeetCodeDataset: {i}/{len(ds)}")
+        
+        try:
+            query = item['query']
+            response = item['response']
+
+            text_content = query + "\n" + '### Solution:\n' + response + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing LeetCodeDataset sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} LeetCodeDataset samples")
+except Exception as e:
+    print(f"Error loading LeetCodeDataset dataset: {e}")
 
 # =============================
 # Merge with Existing File
