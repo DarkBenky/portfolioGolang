@@ -404,6 +404,7 @@ def build_language_model(vocab_size, context_window, d_model, num_heads, num_lay
     
     return model
 
+LOAD_BEST_MODEL = True
 
 if __name__ == '__main__':
     # OPTIMIZED CONFIGURATION
@@ -416,6 +417,7 @@ if __name__ == '__main__':
     EPOCHS = 1000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
+    BEST_MODEL_PATH = 'best_language_model.keras'
     
     wandb.init(
         project="portfolio-transformer",
@@ -430,7 +432,8 @@ if __name__ == '__main__':
             "ffn_dim": FFN_DIM,
             "dropout_rate": DROPOUT_RATE,
             "mixed_precision": True,
-            "improvements": "RMSNorm + SwiGLU + WeightTying + ScaledResiduals"
+            "improvements": "RMSNorm + SwiGLU + WeightTying + ScaledResiduals",
+            "load_best_model": LOAD_BEST_MODEL
         }
     )
     
@@ -438,15 +441,52 @@ if __name__ == '__main__':
     vocab_size = data_gen.vocab_size
     wandb.config.update({"vocab_size": vocab_size})
     
-    model = build_language_model(
-        vocab_size=vocab_size,
-        context_window=CONTEXT_WINDOW,
-        d_model=D_MODEL,
-        num_heads=NUM_HEADS,
-        num_layers=NUM_LAYERS,
-        ffn_dim=FFN_DIM,
-        dropout_rate=DROPOUT_RATE
-    )
+    # Load or build model based on LOAD_BEST_MODEL flag
+    if LOAD_BEST_MODEL and os.path.exists(BEST_MODEL_PATH):
+        print(f"\n{'='*60}")
+        print(f"LOADING BEST MODEL from {BEST_MODEL_PATH}")
+        print(f"{'='*60}\n")
+        
+        # Register custom objects for loading
+        custom_objects = {
+            'RMSNorm': RMSNorm,
+            'SwiGLU': SwiGLU,
+            'CausalBlock': CausalBlock,
+            'PositionalEncoding': PositionalEncoding,
+            'TiedOutputLayer': TiedOutputLayer
+        }
+        
+        model = tf.keras.models.load_model(BEST_MODEL_PATH, custom_objects=custom_objects)
+        
+        # Re-establish the embedding layer reference for TiedOutputLayer
+        embedding_layer = model.get_layer('token_embedding')
+        output_layer = model.get_layer('output_logits')
+        output_layer.set_embedding_layer(embedding_layer)
+        
+        print(" Best model loaded successfully!")
+        print(f"Total parameters: {model.count_params():,}\n")
+    else:
+        if LOAD_BEST_MODEL:
+            print(f"\n Best model not found at {BEST_MODEL_PATH}")
+            print("Building new model...\n")
+        
+        model = build_language_model(
+            vocab_size=vocab_size,
+            context_window=CONTEXT_WINDOW,
+            d_model=D_MODEL,
+            num_heads=NUM_HEADS,
+            num_layers=NUM_LAYERS,
+            ffn_dim=FFN_DIM,
+            dropout_rate=DROPOUT_RATE
+        )
+        
+        model.build(input_shape=(None, CONTEXT_WINDOW))
+        model.summary()
+        
+        print(f"\nMODERNIZED MODEL")
+        print(f"Total parameters: {model.count_params():,}")
+        print(f"Improvements: RMSNorm, SwiGLU, Weight Tying, Scaled Residuals")
+        print(f"Mixed precision: {policy.compute_dtype}")
     
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=LEARNING_RATE,
@@ -465,14 +505,6 @@ if __name__ == '__main__':
             tf.keras.metrics.SparseTopKCategoricalAccuracy(k=5, name='top5_accuracy')
         ]
     )
-    
-    model.build(input_shape=(None, CONTEXT_WINDOW))
-    model.summary()
-    
-    print(f"\nMODERNIZED MODEL")
-    print(f"Total parameters: {model.count_params():,}")
-    print(f"Improvements: RMSNorm, SwiGLU, Weight Tying, Scaled Residuals")
-    print(f"Mixed precision: {policy.compute_dtype}")
     
     bestLoss = float('inf')
     for epoch in range(EPOCHS):
@@ -498,7 +530,7 @@ if __name__ == '__main__':
         current_loss = history.history['loss'][-1]
         if current_loss < bestLoss:
             bestLoss = current_loss
-            model.save('best_language_model.keras')
+            model.save(BEST_MODEL_PATH)
             print(f"New best model saved with loss: {bestLoss:.4f}")
     
     wandb.finish()
