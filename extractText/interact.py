@@ -24,6 +24,7 @@ class TextGenerator:
     def __init__(self, weights_path, tokenizer_path, context_window=2048, d_model=1152, num_heads=18, num_layers=44, ffn_dim=None, dropout_rate=0.1):
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
         self.vocab_size = self.tokenizer.get_vocab_size()
+        self.context_window = context_window
         
         if ffn_dim is None:
             ffn_dim = d_model * 4
@@ -45,30 +46,50 @@ class TextGenerator:
         self.model.load_weights(weights_path)
         print(f"Model loaded successfully! Total parameters: {self.model.count_params():,}")
         
+        print("Compiling optimized inference function...")
+        self._predict_fn = tf.function(
+            self._predict_step,
+            input_signature=[tf.TensorSpec(shape=[1, None], dtype=tf.int32)]
+        )
+        print("Warming up model...")
+        dummy_input = tf.constant([[1, 2, 3]], dtype=tf.int32)
+        _ = self._predict_fn(dummy_input)
+        print("Ready for fast inference!\n")
+    
+    @tf.function
+    def _predict_step(self, input_seq):
+        predictions = self.model(input_seq, training=False)
+        return predictions
+    
     def generate(self, prompt, max_length=100, temperature=0.8, top_k=40):
         tokens = self.tokenizer.encode(prompt).ids
         
         print(f"Starting generation (max {max_length} tokens)...")
         
         for i in range(max_length):
-            input_seq = np.array([tokens[-2048:]], dtype=np.int32)
+            input_seq = tokens[-self.context_window:]
+            input_tensor = tf.constant([input_seq], dtype=tf.int32)
             
             try:
-                predictions = self.model.predict(input_seq, verbose=0, batch_size=1)
+                predictions = self._predict_fn(input_tensor)
+                next_token_logits = predictions[0, -1, :].numpy()
             except Exception as e:
                 print(f"\nPrediction error: {e}")
-                print("Attempting to continue...")
                 break
             
-            next_token_logits = predictions[0, -1, :]
-            
-            next_token_logits = next_token_logits / temperature
-            
-            top_k_indices = np.argsort(next_token_logits)[-top_k:]
-            top_k_logits = next_token_logits[top_k_indices]
-            
-            probs = np.exp(top_k_logits) / np.sum(np.exp(top_k_logits))
-            next_token = np.random.choice(top_k_indices, p=probs)
+            if temperature > 0:
+                next_token_logits = next_token_logits / temperature
+                
+                top_k_indices = np.argpartition(next_token_logits, -top_k)[-top_k:]
+                top_k_logits = next_token_logits[top_k_indices]
+                
+                top_k_logits = top_k_logits - np.max(top_k_logits)
+                probs = np.exp(top_k_logits)
+                probs = probs / np.sum(probs)
+                
+                next_token = np.random.choice(top_k_indices, p=probs)
+            else:
+                next_token = np.argmax(next_token_logits)
             
             tokens.append(int(next_token))
             
@@ -116,8 +137,16 @@ def main():
                 continue
             
             print("\nGenerating...")
-            response = generator.generate(prompt, max_length=32, temperature=0.8, top_k=10)
+            import time
+            start_time = time.time()
+            response = generator.generate(prompt, max_length=256, temperature=0.8, top_k=40)
+            elapsed = time.time() - start_time
+            
+            num_tokens = len(generator.tokenizer.encode(response).ids)
+            tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0
+            
             print("\nAssistant:", response)
+            print(f"\n[Generated {num_tokens} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tokens/sec)]")
             
         except KeyboardInterrupt:
             print("\n\nGoodbye!")

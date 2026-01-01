@@ -442,6 +442,7 @@ if __name__ == '__main__':
     data_gen = DataGenerator(
         [
             'extractedTexts_multilang.json',
+            'extractedTexts_CodeMix.json',
             'extractedTexts.json',
             'extractedTexts_OpenThoughts.json',
           ],

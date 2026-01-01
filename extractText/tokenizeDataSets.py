@@ -14,7 +14,7 @@ from datasets import load_dataset
 tokenizer = Tokenizer.from_file('tokenizer.json')
 print("Vocabulary size:", tokenizer.get_vocab_size())
 
-output_file = 'extractedTexts_CodeMix.json'
+output_file = 'extractedTexts_FineBert.json'
 temp_file = 'extractedTexts_temp.json'
 
 # Collection for all new data
@@ -28,7 +28,7 @@ try:
     ds_code = load_dataset("microsoft/NextCoderDataset", split="train")
     l = len(ds_code)
 
-    MAX_COUNT = 25_000
+    MAX_COUNT = 1
     
     for i, sample in enumerate(ds_code):
         if i % 1000 == 0:
@@ -64,7 +64,7 @@ try:
     ds_train = ds['train']
     l = len(ds_train)
     count = 0
-    MAX_COUNT = 500
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -105,7 +105,7 @@ try:
     ds_code_py_train = ds_code_py['train']
     l = len(ds_code_py_train)
     count = 0
-    MAX_COUNT = 20_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_code_py_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -146,7 +146,7 @@ try:
     ds_code_train = ds_code['train']
     l = len(ds_code_train)
     count = 0
-    MAX_COUNT = 50_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_code_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -187,7 +187,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 250
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_maths_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -223,7 +223,7 @@ try:
     ds_summarize_train = ds_summarize['train']
     l = len(ds_summarize_train)
     count = 0
-    MAX_COUNT = 100
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_summarize_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -260,7 +260,7 @@ except Exception as e:
 print("\n=== Processing CSV Files ===")
 try:
     df = pd.read_csv('train.csv')
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     for i, row in enumerate(df.iterrows()):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -287,7 +287,7 @@ except Exception as e:
 try:
     df_python = pd.read_csv('ProblemSolutionPythonV3.csv')
     count = 0
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     for i, row in enumerate(df_python.iterrows()):
         if i % 1000 == 0:
             print(f"Python problems: {count}/{len(df_python)}")
@@ -434,7 +434,7 @@ try:
     ds = load_dataset("OpenCoder-LLM/opc-sft-stage2", "educational_instruct")
     ds = ds['train']
 
-    MAX_COUNT = 50_000
+    MAX_COUNT = 1
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -468,7 +468,7 @@ try:
     ds = load_dataset("OpenCoder-LLM/CodeFeedback-Filtered-Instruction")
     ds = ds['train']
 
-    MAX_COUNT = 50_000
+    MAX_COUNT = 1
 
     for i, item in enumerate(ds):
 
@@ -502,7 +502,7 @@ except Exception as e:
 print("\n=== Processing the-stack Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -534,7 +534,7 @@ except Exception as e:
 print("\n=== Processing the-stack-c Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/c")
-    MAX_COUNT = 15_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -566,7 +566,7 @@ except Exception as e:
 print("\n=== Processing the-stack-go Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/go")
-    MAX_COUNT = 15_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -599,7 +599,7 @@ except Exception as e:
 print("\n=== Processing the-stack-python Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/python")
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -631,7 +631,7 @@ except Exception as e:
 print("\n=== Processing the-stack-rust Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/rust")
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -663,7 +663,7 @@ except Exception as e:
 print("\n=== Processing the-stack-javascript Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/javascript")
-    MAX_COUNT = 7_500
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -697,7 +697,7 @@ try:
     ds = load_dataset("OpenDataArena/ODA-Math-460k")
     ds = ds['train']
 
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -730,7 +730,7 @@ print("\n=== Processing FineFineWeb-validation Dataset ===")
 try:
     ds = load_dataset("m-a-p/FineFineWeb-validation")
     ds = ds['train']
-    MAX_COUNT = 10_000
+    MAX_COUNT = 30_000
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -755,13 +755,44 @@ except Exception as e:
     print(f"Error loading FineFineWeb-validation dataset: {e}")
 
 # =============================
+# FineFineWeb Dataset
+# =============================
+print("\n=== Processing FineFineWeb Dataset ===")
+try:
+    ds = load_dataset("m-a-p/FineFineWeb", split="train", streaming=True)
+    MAX_COUNT = 150_000
+    count = 0
+    for item in iter(ds):
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"FineFineWeb: {count}/{MAX_COUNT}")
+        count += 1
+        try:
+            text = item['text']
+            
+            text_content = text + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing FineFineWeb-validation sample {i}: {e}")
+            continue
+    print(f"Successfully processed {len(ds)} FineFineWeb-validation samples")
+except Exception as e:
+    print(f"Error loading FineFineWeb-validation dataset: {e}")
+
+# =============================
 # LeetCodeDataset Dataset
 # =============================
 print("\n=== Processing LeetCodeDataset Dataset ===")
 try:
     ds = load_dataset("newfacade/LeetCodeDataset")
     ds = ds['train']
-    MAX_COUNT = 2_700
+    MAX_COUNT = 1
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
