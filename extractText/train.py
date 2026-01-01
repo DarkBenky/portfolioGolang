@@ -438,6 +438,7 @@ if __name__ == '__main__':
     )
     
     data_gen = DataGenerator('extractedTexts.json', 'tokenizer.json')
+    # data_gen = DataGenerator('extractedTexts_py.json', 'tokenizer.json')
     vocab_size = data_gen.vocab_size
     wandb.config.update({"vocab_size": vocab_size})
     

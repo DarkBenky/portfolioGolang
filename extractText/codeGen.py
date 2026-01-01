@@ -54,7 +54,7 @@ def save_data(data_to_save):
     """Save data to file"""
     with open(SAVE_PATH, 'w', encoding='utf-8') as f:
         json.dump(data_to_save, f, ensure_ascii=False, indent=4)
-    print(f"✓ Saved {len(data_to_save)} entries to {SAVE_PATH}")
+    print(f"Saved {len(data_to_save)} entries to {SAVE_PATH}")
 
 def save_checkpoint(index, language_index):
     """Save checkpoint information"""
