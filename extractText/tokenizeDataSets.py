@@ -14,7 +14,7 @@ from datasets import load_dataset
 tokenizer = Tokenizer.from_file('tokenizer.json')
 print("Vocabulary size:", tokenizer.get_vocab_size())
 
-output_file = 'extractedTexts_OpenThoughts.json'
+output_file = 'extractedTexts_CodeMix.json'
 temp_file = 'extractedTexts_temp.json'
 
 # Collection for all new data
@@ -105,7 +105,7 @@ try:
     ds_code_py_train = ds_code_py['train']
     l = len(ds_code_py_train)
     count = 0
-    MAX_COUNT = 10_000
+    MAX_COUNT = 20_000
     
     for i, item in enumerate(ds_code_py_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -146,7 +146,7 @@ try:
     ds_code_train = ds_code['train']
     l = len(ds_code_train)
     count = 0
-    MAX_COUNT = 20_000
+    MAX_COUNT = 50_000
     
     for i, item in enumerate(ds_code_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
