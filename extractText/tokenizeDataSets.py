@@ -502,7 +502,7 @@ except Exception as e:
 print("\n=== Processing the-stack Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train")
-    MAX_COUNT = 2_500
+    MAX_COUNT = 5_000
     count = 0
     for sample in iter(ds):
         
@@ -534,7 +534,7 @@ except Exception as e:
 print("\n=== Processing the-stack-c Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/c")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 15_000
     count = 0
     for sample in iter(ds):
         
@@ -566,7 +566,7 @@ except Exception as e:
 print("\n=== Processing the-stack-go Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/go")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 15_000
     count = 0
     for sample in iter(ds):
         
@@ -599,7 +599,7 @@ except Exception as e:
 print("\n=== Processing the-stack-python Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/python")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 10_000
     count = 0
     for sample in iter(ds):
         
@@ -631,7 +631,7 @@ except Exception as e:
 print("\n=== Processing the-stack-rust Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/rust")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 10_000
     count = 0
     for sample in iter(ds):
         
@@ -663,7 +663,7 @@ except Exception as e:
 print("\n=== Processing the-stack-javascript Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/javascript")
-    MAX_COUNT = 5_000
+    MAX_COUNT = 7_500
     count = 0
     for sample in iter(ds):
         
