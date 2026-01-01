@@ -288,7 +288,7 @@ class CausalBlock(tf.keras.layers.Layer):
         attn_out = self.attn(x, x, use_causal_mask=True, training=training)
         attn_out = self.dropout1(attn_out, training=training)
         
-        # Scaled residual connection (μParam-style)
+        # Scaled residual connection (muParam-style)
         scale = tf.cast(tf.sqrt(float(self.num_layers)), x.dtype)
         x = residual + attn_out / scale
         
@@ -411,13 +411,13 @@ if __name__ == '__main__':
     CONTEXT_WINDOW = 2048
     D_MODEL = 1152
     NUM_HEADS = 18
-    NUM_LAYERS = 40
+    NUM_LAYERS = 42
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.0001
+    LEARNING_RATE = 0.00015
     EPOCHS = 1000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
-    BEST_MODEL_PATH = 'best_language_model.keras'
+    WEIGHTS_PATH = 'best_model_weights.h5'
     
     wandb.init(
         project="portfolio-transformer",
@@ -438,50 +438,38 @@ if __name__ == '__main__':
     )
     
     data_gen = DataGenerator('extractedTexts.json', 'tokenizer.json')
-    # data_gen = DataGenerator('extractedTexts_py.json', 'tokenizer.json')
+    # data_gen = DataGenerator('extractedTexts_multilang.json', 'tokenizer.json')
     vocab_size = data_gen.vocab_size
     wandb.config.update({"vocab_size": vocab_size})
     
-    # Load or build model based on LOAD_BEST_MODEL flag
-    if LOAD_BEST_MODEL and os.path.exists(BEST_MODEL_PATH):
+    # Always build the model architecture
+    model = build_language_model(
+        vocab_size=vocab_size,
+        context_window=CONTEXT_WINDOW,
+        d_model=D_MODEL,
+        num_heads=NUM_HEADS,
+        num_layers=NUM_LAYERS,
+        ffn_dim=FFN_DIM,
+        dropout_rate=DROPOUT_RATE
+    )
+    
+    model.build(input_shape=(None, CONTEXT_WINDOW))
+    
+    # Load weights if available
+    if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH):
         print(f"\n{'='*60}")
-        print(f"LOADING BEST MODEL from {BEST_MODEL_PATH}")
+        print(f"LOADING MODEL WEIGHTS from {WEIGHTS_PATH}")
         print(f"{'='*60}\n")
         
-        # Register custom objects for loading
-        custom_objects = {
-            'RMSNorm': RMSNorm,
-            'SwiGLU': SwiGLU,
-            'CausalBlock': CausalBlock,
-            'PositionalEncoding': PositionalEncoding,
-            'TiedOutputLayer': TiedOutputLayer
-        }
+        model.load_weights(WEIGHTS_PATH)
         
-        model = tf.keras.models.load_model(BEST_MODEL_PATH, custom_objects=custom_objects)
-        
-        # Re-establish the embedding layer reference for TiedOutputLayer
-        embedding_layer = model.get_layer('token_embedding')
-        output_layer = model.get_layer('output_logits')
-        output_layer.set_embedding_layer(embedding_layer)
-        
-        print(" Best model loaded successfully!")
+        print("Weights loaded successfully!")
         print(f"Total parameters: {model.count_params():,}\n")
     else:
         if LOAD_BEST_MODEL:
-            print(f"\n Best model not found at {BEST_MODEL_PATH}")
-            print("Building new model...\n")
+            print(f"\nWeights file not found at {WEIGHTS_PATH}")
+            print("Starting with fresh model initialization...\n")
         
-        model = build_language_model(
-            vocab_size=vocab_size,
-            context_window=CONTEXT_WINDOW,
-            d_model=D_MODEL,
-            num_heads=NUM_HEADS,
-            num_layers=NUM_LAYERS,
-            ffn_dim=FFN_DIM,
-            dropout_rate=DROPOUT_RATE
-        )
-        
-        model.build(input_shape=(None, CONTEXT_WINDOW))
         model.summary()
         
         print(f"\nMODERNIZED MODEL")
@@ -491,7 +479,7 @@ if __name__ == '__main__':
     
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=LEARNING_RATE,
-        decay_steps=EPOCHS * (10_000 // BATCH_SIZE),
+        decay_steps=EPOCHS * (1_000 // BATCH_SIZE),
         alpha=0.1
     )
     
@@ -510,7 +498,7 @@ if __name__ == '__main__':
     bestLoss = float('inf')
     for epoch in range(EPOCHS):
         print(f"\n=== Epoch {epoch + 1}/{EPOCHS} ===")
-        steps_per_epoch = 10_000 // BATCH_SIZE
+        steps_per_epoch = 1_000 // BATCH_SIZE
         
         history = model.fit(
             data_gen.generate_batches(BATCH_SIZE, CONTEXT_WINDOW),
@@ -531,7 +519,7 @@ if __name__ == '__main__':
         current_loss = history.history['loss'][-1]
         if current_loss < bestLoss:
             bestLoss = current_loss
-            model.save(BEST_MODEL_PATH)
+            model.save_weights(WEIGHTS_PATH)
             print(f"New best model saved with loss: {bestLoss:.4f}")
     
     wandb.finish()
