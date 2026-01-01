@@ -110,7 +110,8 @@ def process_train_row(row, language):
     lang_instruction = f"{cleaned_instruction} (Write the solution in {language})"
     
     result = chat(
-        model="deepseek-r1:32b",
+        # model="deepseek-r1:32b",
+        model="deepseek-r1:14b",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Instruction: {lang_instruction}\nInput: {input_text}"}

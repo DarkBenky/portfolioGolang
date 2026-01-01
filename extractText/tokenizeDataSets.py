@@ -14,7 +14,7 @@ from datasets import load_dataset
 tokenizer = Tokenizer.from_file('tokenizer.json')
 print("Vocabulary size:", tokenizer.get_vocab_size())
 
-output_file = 'extractedTexts.json'
+output_file = 'extractedTexts_OpenThoughts.json'
 temp_file = 'extractedTexts_temp.json'
 
 # Collection for all new data
@@ -27,10 +27,15 @@ print("\n=== Processing NextCoder Dataset ===")
 try:
     ds_code = load_dataset("microsoft/NextCoderDataset", split="train")
     l = len(ds_code)
+
+    MAX_COUNT = 1
     
     for i, sample in enumerate(ds_code):
         if i % 1000 == 0:
             print(f"NextCoder: {i}/{l}")
+
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
         
         try:
             prompt = sample['prompt']
@@ -59,10 +64,10 @@ try:
     ds_train = ds['train']
     l = len(ds_train)
     count = 0
-    MAX_COUNT = 5_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_train):
-        if count >= MAX_COUNT:
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
             break
         if i % 1000 == 0:
             print(f"OpenThoughts: {count}/{MAX_COUNT}")
@@ -100,10 +105,10 @@ try:
     ds_code_py_train = ds_code_py['train']
     l = len(ds_code_py_train)
     count = 0
-    MAX_COUNT = 20_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_code_py_train):
-        if count >= MAX_COUNT:
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
             break
         if i % 1000 == 0:
             print(f"Codeforces Python: {count}/{MAX_COUNT}")
@@ -141,10 +146,10 @@ try:
     ds_code_train = ds_code['train']
     l = len(ds_code_train)
     count = 0
-    MAX_COUNT = 20_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_code_train):
-        if count >= MAX_COUNT:
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
             break
         if i % 1000 == 0:
             print(f"Codeforces General: {count}/{MAX_COUNT}")
@@ -182,10 +187,10 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 20_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_maths_train):
-        if count >= MAX_COUNT:
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
             break
         if i % 1000 == 0:
             print(f"OpenMathReasoning: {count}/{MAX_COUNT}")
@@ -218,10 +223,10 @@ try:
     ds_summarize_train = ds_summarize['train']
     l = len(ds_summarize_train)
     count = 0
-    MAX_COUNT = 10_000
+    MAX_COUNT = 1
     
     for i, item in enumerate(ds_summarize_train):
-        if count >= MAX_COUNT:
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
             break
         if i % 1000 == 0:
             print(f"ArXiv: {count}/{MAX_COUNT}")
@@ -255,7 +260,10 @@ except Exception as e:
 print("\n=== Processing CSV Files ===")
 try:
     df = pd.read_csv('train.csv')
+    MAX_COUNT = 1
     for i, row in enumerate(df.iterrows()):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
         if i % 1000 == 0:
             print(f"CSV prompts: {i}/{len(df)}")
         
@@ -279,9 +287,13 @@ except Exception as e:
 try:
     df_python = pd.read_csv('ProblemSolutionPythonV3.csv')
     count = 0
+    MAX_COUNT = 1
     for i, row in enumerate(df_python.iterrows()):
         if i % 1000 == 0:
             print(f"Python problems: {count}/{len(df_python)}")
+
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
         
         try:
             _, row = row
@@ -383,7 +395,11 @@ try:
     with open('math_samples.json', 'r', encoding='utf-8') as f:
         math_samples = json.load(f)
     
+    MAX_COUNT = 1
+
     for i, sample in enumerate(math_samples):
+        if MAX_COUNT > 0 and i >= MAX_COUNT:
+            break
         if i % 1000 == 0:
             print(f"Math samples: {i}/{len(math_samples)}")
         

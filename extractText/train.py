@@ -411,13 +411,13 @@ if __name__ == '__main__':
     CONTEXT_WINDOW = 2048
     D_MODEL = 1152
     NUM_HEADS = 18
-    NUM_LAYERS = 42
+    NUM_LAYERS = 44
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.00015
-    EPOCHS = 1000
+    LEARNING_RATE = 0.0001
+    EPOCHS = 10_000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
-    WEIGHTS_PATH = 'best_model_weights.h5'
+    WEIGHTS_PATH = 'best_model.weights.h5'
     
     wandb.init(
         project="portfolio-transformer",
@@ -437,8 +437,17 @@ if __name__ == '__main__':
         }
     )
     
-    data_gen = DataGenerator('extractedTexts.json', 'tokenizer.json')
+    # data_gen = DataGenerator('extractedTexts.json', 'tokenizer.json')
     # data_gen = DataGenerator('extractedTexts_multilang.json', 'tokenizer.json')
+    data_gen = DataGenerator(
+        [
+            'extractedTexts_multilang.json',
+            # 'extractedTexts.json',
+            'extractedTexts_OpenThoughts.json',
+          ],
+        'tokenizer.json',
+    )
+    data_gen.preload_all_files()
     vocab_size = data_gen.vocab_size
     wandb.config.update({"vocab_size": vocab_size})
     
