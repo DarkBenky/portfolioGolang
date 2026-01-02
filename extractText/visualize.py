@@ -585,10 +585,128 @@ class ModelVisualizer:
             print(f"Saved to {save_path}")
         else:
             fig.show()
+    
+    def visualize_loss_landscape(self, data_generator, num_samples=10, grid_size=20, alpha_range=1.0, save_path=None):
+        from dataGen import DataGenerator
+        
+        print("Computing loss landscape (this may take a while)...")
+        
+        original_weights = [w.numpy() for w in self.model.trainable_weights]
+        
+        print("Generating random perturbation directions...")
+        direction1 = [np.random.randn(*w.shape).astype(np.float32) for w in original_weights]
+        direction2 = [np.random.randn(*w.shape).astype(np.float32) for w in original_weights]
+        
+        for i in range(len(direction1)):
+            norm1 = np.linalg.norm(direction1[i])
+            norm2 = np.linalg.norm(direction2[i])
+            if norm1 > 0:
+                direction1[i] = direction1[i] / norm1
+            if norm2 > 0:
+                direction2[i] = direction2[i] / norm2
+        
+        print(f"Preparing {num_samples} samples for loss evaluation...")
+        sample_data = []
+        for X_batch, Y_batch in data_generator.generate_batches(batch_size=1, max_sample_length=512):
+            sample_data.append((X_batch, Y_batch))
+            if len(sample_data) >= num_samples:
+                break
+        
+        print(f"Computing loss at {grid_size}x{grid_size} = {grid_size*grid_size} points...")
+        alphas = np.linspace(-alpha_range, alpha_range, grid_size)
+        betas = np.linspace(-alpha_range, alpha_range, grid_size)
+        
+        loss_grid = np.zeros((grid_size, grid_size))
+        
+        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        
+        total_points = grid_size * grid_size
+        completed = 0
+        
+        for i, alpha in enumerate(alphas):
+            for j, beta in enumerate(betas):
+                new_weights = [
+                    w + alpha * d1 + beta * d2 
+                    for w, d1, d2 in zip(original_weights, direction1, direction2)
+                ]
+                
+                for k, weight in enumerate(self.model.trainable_weights):
+                    weight.assign(new_weights[k])
+                
+                total_loss = 0.0
+                for X_batch, Y_batch in sample_data:
+                    predictions = self.model(X_batch, training=False)
+                    loss = loss_fn(Y_batch, predictions)
+                    total_loss += loss.numpy()
+                
+                loss_grid[i, j] = total_loss / len(sample_data)
+                
+                completed += 1
+                if completed % max(1, total_points // 20) == 0:
+                    progress = (completed / total_points) * 100
+                    print(f"Progress: {progress:.1f}% ({completed}/{total_points} points)")
+        
+        for k, weight in enumerate(self.model.trainable_weights):
+            weight.assign(original_weights[k])
+        
+        print("Creating 3D visualization...")
+        
+        fig = go.Figure(data=[go.Surface(
+            x=betas,
+            y=alphas,
+            z=loss_grid,
+            colorscale='Viridis',
+            colorbar=dict(title="Loss"),
+            hovertemplate='α: %{y:.3f}<br>β: %{x:.3f}<br>Loss: %{z:.4f}<extra></extra>'
+        )])
+        
+        origin_idx_alpha = grid_size // 2
+        origin_idx_beta = grid_size // 2
+        origin_loss = loss_grid[origin_idx_alpha, origin_idx_beta]
+        
+        fig.add_trace(go.Scatter3d(
+            x=[0],
+            y=[0],
+            z=[origin_loss],
+            mode='markers',
+            marker=dict(size=10, color='red', symbol='diamond'),
+            name='Current Model',
+            hovertemplate='Current Model<br>Loss: %{z:.4f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title=dict(
+                text=f'3D Loss Landscape<br><sub>Random 2D slice through weight space ({grid_size}x{grid_size} grid, {num_samples} samples)</sub>',
+                x=0.5,
+                xanchor='center'
+            ),
+            scene=dict(
+                xaxis_title='Perturbation β',
+                yaxis_title='Perturbation α',
+                zaxis_title='Loss',
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.2)
+                )
+            ),
+            width=1200,
+            height=900,
+            font=dict(size=12)
+        )
+        
+        print(f"Loss at current model: {origin_loss:.4f}")
+        print(f"Min loss in landscape: {np.min(loss_grid):.4f}")
+        print(f"Max loss in landscape: {np.max(loss_grid):.4f}")
+        
+        if save_path:
+            fig.write_html(save_path)
+            print(f"Saved to {save_path}")
+        else:
+            fig.show()
 
 
 def main():
     import os
+    from dataGen import DataGenerator
     
     output_dir = 'visualizations'
     os.makedirs(output_dir, exist_ok=True)
@@ -649,6 +767,22 @@ if __name__ == '__main__':
     
     print("\n10. Generating model representations...")
     visualizer.visualize_layer_outputs(sample_text, save_path=f'{output_dir}/model_representations.html')
+    
+    print("\n11. Generating 3D loss landscape...")
+    print("Loading data generator for loss landscape...")
+    data_gen = DataGenerator(
+        ['extractedTexts.json'],
+        'tokenizer.json',
+        cache_size=1,
+        lazy_count=True
+    )
+    visualizer.visualize_loss_landscape(
+        data_gen, 
+        num_samples=2000, 
+        grid_size=24, 
+        alpha_range=0.5,
+        save_path=f'{output_dir}/loss_landscape_3d.html'
+    )
     
     print("\n" + "="*60)
     print("All visualizations saved as interactive HTML files!")

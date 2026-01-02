@@ -187,7 +187,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 500_000
+    MAX_COUNT = 200_000
     
     for i, item in enumerate(ds_maths_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -663,7 +663,7 @@ except Exception as e:
 print("\n=== Processing the-stack-c++ Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/c++")
-    MAX_COUNT = 1
+    MAX_COUNT = 25_000
     count = 0
     for sample in iter(ds):
         
@@ -695,7 +695,7 @@ except Exception as e:
 print("\n=== Processing the-stack-sql Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/sql")
-    MAX_COUNT = 1
+    MAX_COUNT = 10_000
     count = 0
     for sample in iter(ds):
         
@@ -728,7 +728,7 @@ except Exception as e:
 print("\n=== Processing the-stack-assembly Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/assembly")
-    MAX_COUNT = 1
+    MAX_COUNT = 15_000
     count = 0
     for sample in iter(ds):
         
@@ -760,7 +760,7 @@ except Exception as e:
 print("\n=== Processing the-stack-typescript Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/typescript")
-    MAX_COUNT = 1
+    MAX_COUNT = 10_000
     count = 0
     for sample in iter(ds):
         
