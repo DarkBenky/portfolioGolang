@@ -14,7 +14,7 @@ from datasets import load_dataset
 tokenizer = Tokenizer.from_file('tokenizer.json')
 print("Vocabulary size:", tokenizer.get_vocab_size())
 
-output_file = 'extractedTexts_FineBert.json'
+output_file = 'extractedTexts_Math.json'
 temp_file = 'extractedTexts_temp.json'
 
 # Collection for all new data
@@ -187,7 +187,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 1
+    MAX_COUNT = 500_000
     
     for i, item in enumerate(ds_maths_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -502,7 +502,7 @@ except Exception as e:
 print("\n=== Processing the-stack Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train")
-    MAX_COUNT = 50_000
+    MAX_COUNT = 1
     count = 0
     for sample in iter(ds):
         
@@ -658,6 +658,136 @@ except Exception as e:
     print(f"Error loading the-stack-rust dataset: {e}")
 
 # =============================
+# the-stack-c++ Dataset
+# =============================
+print("\n=== Processing the-stack-c++ Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/c++")
+    MAX_COUNT = 1
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-c++: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-c++ sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-c++ samples")
+except Exception as e:
+    print(f"Error loading the-stack-c++ dataset: {e}")
+
+# =============================
+# the-stack-sql Dataset
+# =============================
+print("\n=== Processing the-stack-sql Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/sql")
+    MAX_COUNT = 1
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-sql: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-sql sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-sql samples")
+except Exception as e:
+    print(f"Error loading the-stack-sql dataset: {e}")
+
+
+# =============================
+# the-stack-assembly Dataset
+# =============================
+print("\n=== Processing the-stack-assembly Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/assembly")
+    MAX_COUNT = 1
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-assembly: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-assembly sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-assembly samples")
+except Exception as e:
+    print(f"Error loading the-stack-assembly dataset: {e}")
+
+# =============================
+# the-stack-typescript Dataset
+# =============================
+print("\n=== Processing the-stack-typescript Dataset ===")
+try:
+    ds = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir="data/typescript")
+    MAX_COUNT = 1
+    count = 0
+    for sample in iter(ds):
+        
+        if MAX_COUNT > 0 and count >= MAX_COUNT:
+            break
+        if count % 1000 == 0:
+            print(f"the-stack-typescript: {count}/{MAX_COUNT}")
+            
+        count += 1
+        
+        try:
+            code = sample['content']
+            text_content = code + " " + END_TOKEN
+            encoded = tokenizer.encode(text_content)
+            all_new_data.append({
+                "rawText": text_content,
+                "tokenizedText": encoded.ids
+            })
+        except Exception as e:
+            print(f"Error processing the-stack-typescript sample {len(all_new_data)}: {e}")
+            continue
+    print(f"Successfully processed {count} the-stack-typescript samples")
+except Exception as e:
+    print(f"Error loading the-stack-typescript dataset: {e}")
+
+
+# =============================
 # the-stack-javascript Dataset
 # =============================
 print("\n=== Processing the-stack-javascript Dataset ===")
@@ -697,7 +827,7 @@ try:
     ds = load_dataset("OpenDataArena/ODA-Math-460k")
     ds = ds['train']
 
-    MAX_COUNT = 1
+    MAX_COUNT = 460_000
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -730,7 +860,7 @@ print("\n=== Processing FineFineWeb-validation Dataset ===")
 try:
     ds = load_dataset("m-a-p/FineFineWeb-validation")
     ds = ds['train']
-    MAX_COUNT = 30_000
+    MAX_COUNT = 1
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break
@@ -760,7 +890,7 @@ except Exception as e:
 print("\n=== Processing FineFineWeb Dataset ===")
 try:
     ds = load_dataset("m-a-p/FineFineWeb-sample", split="train", streaming=True)
-    MAX_COUNT = 500_000
+    MAX_COUNT = 1
     count = 0
     for item in iter(ds):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
