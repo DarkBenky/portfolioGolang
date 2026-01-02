@@ -445,8 +445,10 @@ if __name__ == '__main__':
             'extractedTexts_CodeMix.json',
             'extractedTexts.json',
             'extractedTexts_OpenThoughts.json',
+            'extractedTexts_FineBert.json'
           ],
         'tokenizer.json',
+        lazy_count=True
     )
     data_gen.preload_all_files()
     vocab_size = data_gen.vocab_size

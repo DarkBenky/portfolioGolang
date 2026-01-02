@@ -502,7 +502,7 @@ except Exception as e:
 print("\n=== Processing the-stack Dataset ===")
 try:
     ds = load_dataset("bigcode/the-stack", streaming=True, split="train")
-    MAX_COUNT = 1
+    MAX_COUNT = 50_000
     count = 0
     for sample in iter(ds):
         
@@ -759,8 +759,8 @@ except Exception as e:
 # =============================
 print("\n=== Processing FineFineWeb Dataset ===")
 try:
-    ds = load_dataset("m-a-p/FineFineWeb", split="train", streaming=True)
-    MAX_COUNT = 150_000
+    ds = load_dataset("m-a-p/FineFineWeb-sample", split="train", streaming=True)
+    MAX_COUNT = 500_000
     count = 0
     for item in iter(ds):
         if MAX_COUNT > 0 and count >= MAX_COUNT:

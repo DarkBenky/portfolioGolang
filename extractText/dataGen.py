@@ -1,47 +1,100 @@
 import json
 import random
 import numpy as np
+import os
 from tokenizers import Tokenizer
 
+try:
+    import ijson
+    HAS_IJSON = True
+except ImportError:
+    HAS_IJSON = False
+
 class DataGenerator:
-    def __init__(self, dataset_paths, path_to_tokenizer, cache_size=1):
+    def __init__(self, dataset_paths, path_to_tokenizer, cache_size=1, lazy_count=True, count_cache_file='.dataset_counts.json'):
         """
         Args:
             dataset_paths: List of paths to dataset JSON files
             path_to_tokenizer: Path to tokenizer file
             cache_size: Number of files to keep in memory (default: 1)
+            lazy_count: If True, use equal weights initially (faster, less memory).
+                       If False, count all texts upfront (slower, more accurate weights)
+            count_cache_file: File to cache counts to avoid re-counting on subsequent runs
         """
         self.tokenizer = Tokenizer.from_file(path_to_tokenizer)
         self.vocab_size = self.tokenizer.get_vocab_size()
         self.dataset_paths = dataset_paths if isinstance(dataset_paths, list) else [dataset_paths]
         self.cache_size = cache_size
+        self.count_cache_file = count_cache_file
         
-        # Cache for loaded files: {file_path: valid_texts_list}
         self.file_cache = {}
-        self.cache_order = []  # Track order for LRU eviction
+        self.cache_order = []
         
-        # Count valid texts in each file
-        self.file_text_counts = []
-        total_valid = 0
+        if lazy_count:
+            print("Using lazy counting mode (equal weights for file selection)")
+            self.file_text_counts = [1] * len(self.dataset_paths)
+            total_valid = len(self.dataset_paths)
+        else:
+            print("Counting texts in all files (this may take a while for large files)...")
+            self.file_text_counts = []
+            total_valid = 0
+            
+            cached_counts = self._load_count_cache()
+            
+            for path in self.dataset_paths:
+                if path in cached_counts:
+                    count = cached_counts[path]
+                    print(f"File: {path} - {count} valid texts (cached)")
+                else:
+                    count = self._count_valid_texts_streaming(path)
+                    print(f"File: {path} - {count} valid texts")
+                    cached_counts[path] = count
+                
+                self.file_text_counts.append(count)
+                total_valid += count
+            
+            self._save_count_cache(cached_counts)
+            
+            if total_valid == 0:
+                raise ValueError("No valid texts found in any dataset file")
         
-        for path in self.dataset_paths:
-            count = self._count_valid_texts(path)
-            self.file_text_counts.append(count)
-            total_valid += count
-            print(f"File: {path} - {count} valid texts")
-        
-        if total_valid == 0:
-            raise ValueError("No valid texts found in any dataset file")
-        
-        # Create weights for file selection based on number of valid texts
         self.file_weights = [count / total_valid for count in self.file_text_counts]
         
-        print(f"\nTotal valid texts across all files: {total_valid}")
-        print(f"Vocabulary size: {self.vocab_size}")
+        print(f"\nVocabulary size: {self.vocab_size}")
         print(f"Cache size: {cache_size} file(s)")
+        print(f"Number of dataset files: {len(self.dataset_paths)}")
     
-    def _count_valid_texts(self, file_path):
-        """Count valid texts (length > 1) without loading entire file into memory"""
+    def _load_count_cache(self):
+        if os.path.exists(self.count_cache_file):
+            try:
+                with open(self.count_cache_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+    
+    def _save_count_cache(self, counts):
+        try:
+            with open(self.count_cache_file, 'w') as f:
+                json.dump(counts, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save count cache: {e}")
+    
+    def _count_valid_texts_streaming(self, file_path):
+        if HAS_IJSON:
+            count = 0
+            try:
+                with open(file_path, 'rb') as f:
+                    for item in ijson.items(f, 'item'):
+                        if 'tokenizedText' in item and len(item['tokenizedText']) > 1:
+                            count += 1
+                return count
+            except Exception as e:
+                print(f"Warning: Streaming parse failed ({e}), falling back to standard method")
+        
+        return self._count_valid_texts_fallback(file_path)
+    
+    def _count_valid_texts_fallback(self, file_path):
         count = 0
         with open(file_path, 'r', encoding='utf-8') as f:
             texts = json.load(f)
@@ -207,24 +260,36 @@ class DataGenerator:
 
 # Example usage:
 if __name__ == "__main__":
-    # Option 1: Cache one file at a time (memory efficient)
+    # Option 1: Lazy count with cache (FASTEST, LEAST MEMORY) - RECOMMENDED for large files
     data_gen = DataGenerator(
         ['extractedTexts_multilang.json', 'extractedTexts.json'],
         'tokenizer.json',
-        cache_size=1
+        cache_size=1,
+        lazy_count=True
     )
     
-    # Option 2: Cache multiple files (faster, more memory)
+    # Option 2: Count with streaming (slower init, accurate weights, moderate memory)
+    # Requires: pip install ijson
     # data_gen = DataGenerator(
     #     ['extractedTexts_multilang.json', 'extractedTexts.json'],
     #     'tokenizer.json',
-    #     cache_size=2  # Keep both files in memory
+    #     cache_size=1,
+    #     lazy_count=False
     # )
     
-    # Option 3: Preload all files (fastest, most memory)
+    # Option 3: Cache multiple files (faster sampling, more memory during training)
     # data_gen = DataGenerator(
     #     ['extractedTexts_multilang.json', 'extractedTexts.json'],
-    #     'tokenizer.json'
+    #     'tokenizer.json',
+    #     cache_size=2,
+    #     lazy_count=True
+    # )
+    
+    # Option 4: Preload all files (fastest sampling, most memory)
+    # data_gen = DataGenerator(
+    #     ['extractedTexts_multilang.json', 'extractedTexts.json'],
+    #     'tokenizer.json',
+    #     lazy_count=True
     # )
     # data_gen.preload_all_files()
     
