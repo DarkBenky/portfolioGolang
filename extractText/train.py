@@ -411,16 +411,16 @@ if __name__ == '__main__':
     CONTEXT_WINDOW = 2048
     D_MODEL = 1152
     NUM_HEADS = 18
-    NUM_LAYERS = 44
+    NUM_LAYERS = 48
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.0001
+    LEARNING_RATE = 0.00005
     EPOCHS = 10_000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
     WEIGHTS_PATH = 'best_model.weights.h5'
     
     wandb.init(
-        project="portfolio-transformer",
+        project="portfolio-transformer-v2",
         config={
             "context_window": CONTEXT_WINDOW,
             "d_model": D_MODEL,
@@ -441,11 +441,12 @@ if __name__ == '__main__':
     # data_gen = DataGenerator('extractedTexts_multilang.json', 'tokenizer.json')
     data_gen = DataGenerator(
         [
-            'extractedTexts_multilang.json',
-            'extractedTexts_CodeMix.json',
-            'extractedTexts.json',
-            'extractedTexts_OpenThoughts.json',
-            'extractedTexts_FineBert.json'
+            '/media/user/2TB/extractedTexts_multilang.json',
+            '/media/user/2TB/extractedTexts_CodeMix.json',
+            '/media/user/2TB/extractedTexts.json',
+            '/media/user/2TB/extractedTexts_OpenThoughts.json',
+            '/media/user/2TB/extractedTexts_FineBert.json',
+            '/media/user/2TB/extractedTexts_Math.json'
           ],
         'tokenizer.json',
         lazy_count=True

@@ -197,6 +197,7 @@ class DataGenerator:
         while True:
             X_batch = []
             Y_batch = []
+            mask_batch = []
             
             while len(X_batch) < batch_size:
                 tokenized = self._get_random_text()
@@ -209,10 +210,17 @@ class DataGenerator:
                 if input_seq is None:
                     continue
                 
+                mask = np.array([0.0 if token == 0 else 1.0 for token in target_seq], dtype=np.float32)
+                
                 X_batch.append(input_seq)
                 Y_batch.append(target_seq)
+                mask_batch.append(mask)
             
-            yield (np.array(X_batch, dtype=np.int32), np.array(Y_batch, dtype=np.int32))
+            yield (
+                np.array(X_batch, dtype=np.int32), 
+                np.array(Y_batch, dtype=np.int32),
+                np.array(mask_batch, dtype=np.float32)
+            )
 
     def generate_one_hot_batches(self, batch_size, max_sample_length):
         """
@@ -294,12 +302,15 @@ if __name__ == "__main__":
     # data_gen.preload_all_files()
     
     print("\n=== Testing generate_batches ===")
-    for i, (X, Y) in enumerate(data_gen.generate_batches(batch_size=2, max_sample_length=10)):
+    for i, (X, Y, mask) in enumerate(data_gen.generate_batches(batch_size=2, max_sample_length=10)):
         print(f"\nBatch {i+1}:")
         print("Input batch shape:", X.shape)
         print("Target batch shape:", Y.shape)
+        print("Mask batch shape:", mask.shape)
         print("Example input sequence:", X[0])
         print("Example target sequence:", Y[0])
+        print("Example mask:", mask[0])
+        print("Non-padding tokens:", int(mask[0].sum()))
         
-        if i >= 2:  # Show 3 batches
+        if i >= 2:
             break

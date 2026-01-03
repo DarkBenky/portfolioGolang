@@ -187,7 +187,7 @@ try:
     ds_maths_train = ds_maths[list(ds_maths.keys())[0]]
     l = len(ds_maths_train)
     count = 0
-    MAX_COUNT = 200_000
+    MAX_COUNT = 50_000
     
     for i, item in enumerate(ds_maths_train):
         if MAX_COUNT > 0 and count >= MAX_COUNT:
@@ -827,7 +827,7 @@ try:
     ds = load_dataset("OpenDataArena/ODA-Math-460k")
     ds = ds['train']
 
-    MAX_COUNT = 460_000
+    MAX_COUNT = 50_000
     for i, item in enumerate(ds):
         if MAX_COUNT > 0 and i >= MAX_COUNT:
             break

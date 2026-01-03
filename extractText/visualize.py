@@ -757,10 +757,10 @@ if __name__ == '__main__':
     visualizer.visualize_embeddings(tokens, method='pca', sample_size=visualizer.vocab_size, save_path=f'{output_dir}/embeddings_pca_3d.html', use_3d=True)
     
     print("\n7. Generating token similarities...")
-    visualizer.visualize_token_similarities(sample_text, top_k=10, save_path=f'{output_dir}/token_similarities.html')
+    visualizer.visualize_token_similarities(sample_text, top_k=24, save_path=f'{output_dir}/token_similarities.html')
     
-    print("\n8. Searching for 'python' tokens...")
-    visualizer.search_tokens('python', max_results=50, save_path=f'{output_dir}/token_search_python.html')
+    print("\n8. Searching for 'code' tokens...")
+    visualizer.search_tokens('code', max_results=50, save_path=f'{output_dir}/token_search_code.html')
     
     print("\n9. Searching for 'func' tokens...")
     visualizer.search_tokens('func', max_results=50, save_path=f'{output_dir}/token_search_func.html')
@@ -778,7 +778,7 @@ if __name__ == '__main__':
     )
     visualizer.visualize_loss_landscape(
         data_gen, 
-        num_samples=2000, 
+        num_samples=20, 
         grid_size=24, 
         alpha_range=0.5,
         save_path=f'{output_dir}/loss_landscape_3d.html'
