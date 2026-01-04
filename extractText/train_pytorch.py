@@ -227,8 +227,8 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 
 def train():
     CONTEXT_WINDOW = 4096
-    D_MODEL = 1536
-    NUM_HEADS = 24
+    D_MODEL = 2048
+    NUM_HEADS = 32
     NUM_LAYERS = 64
     BATCH_SIZE = 1
     GRAD_ACCUM_STEPS = 8
@@ -238,7 +238,7 @@ def train():
     WARMUP_STEPS = 2000
     EPOCHS = 10000
     FFN_DIM = int(D_MODEL * 8 / 3)
-    DROPOUT_RATE = 0.0
+    DROPOUT_RATE = 0.01
     WEIGHTS_PATH = 'best_model_pytorch.pt'
     LOAD_BEST_MODEL = True
     MAX_GRAD_NORM = 1.0

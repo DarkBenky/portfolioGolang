@@ -413,7 +413,7 @@ if __name__ == '__main__':
     NUM_HEADS = 18
     NUM_LAYERS = 48
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.00005
+    LEARNING_RATE = 0.0001
     EPOCHS = 10_000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
@@ -499,12 +499,39 @@ if __name__ == '__main__':
     optimizer = Adafactor(learning_rate=lr_schedule)
     optimizer = mixed_precision.LossScaleOptimizer(optimizer)
     
+    class PerplexityMetric(tf.keras.metrics.Metric):
+        def __init__(self, name='perplexity', **kwargs):
+            super().__init__(name=name, **kwargs)
+            self.total_loss = self.add_weight(name='total_loss', initializer='zeros')
+            self.count = self.add_weight(name='count', initializer='zeros')
+        
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
+                from_logits=True, reduction=tf.keras.losses.Reduction.NONE
+            )
+            losses = loss_fn(y_true, y_pred)
+            
+            if sample_weight is not None:
+                losses = losses * sample_weight
+            
+            self.total_loss.assign_add(tf.reduce_sum(losses))
+            self.count.assign_add(tf.cast(tf.size(losses), tf.float32))
+        
+        def result(self):
+            mean_loss = self.total_loss / self.count
+            return tf.exp(mean_loss)
+        
+        def reset_state(self):
+            self.total_loss.assign(0.0)
+            self.count.assign(0.0)
+    
     model.compile(
         optimizer=optimizer,
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         metrics=[
             tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-            tf.keras.metrics.SparseTopKCategoricalAccuracy(k=5, name='top5_accuracy')
+            tf.keras.metrics.SparseTopKCategoricalAccuracy(k=5, name='top5_accuracy'),
+            PerplexityMetric()
         ]
     )
     
@@ -526,13 +553,15 @@ if __name__ == '__main__':
             "learning_rate": float(lr_schedule(epoch * steps_per_epoch)),
             "loss": history.history['loss'][-1],
             "accuracy": history.history['accuracy'][-1],
-            "top5_accuracy": history.history['top5_accuracy'][-1]
+            "top5_accuracy": history.history['top5_accuracy'][-1],
+            "perplexity": history.history['perplexity'][-1]
         })
         
         current_loss = history.history['loss'][-1]
+        current_perplexity = history.history['perplexity'][-1]
         if current_loss < bestLoss:
             bestLoss = current_loss
             model.save_weights(WEIGHTS_PATH)
-            print(f"New best model saved with loss: {bestLoss:.4f}")
+            print(f"New best model saved with loss: {bestLoss:.4f}, perplexity: {current_perplexity:.2f}")
     
     wandb.finish()

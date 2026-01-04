@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -144,9 +145,15 @@ var (
 
 	sampleCache     []CachedSample
 	cacheMu         sync.RWMutex
-	cacheSize       = 8192
-	refillThreshold = 256
-	isRefilling     bool
+	cacheSize       = 256 * 64
+	refillThreshold = 256 * 16
+	isRefilling     int32
+
+	fileListCache  []string
+	fileListMu     sync.RWMutex
+	lastFileUpdate time.Time
+
+	refillChan = make(chan int, 10)
 )
 
 type CachedSample struct {
@@ -156,8 +163,9 @@ type CachedSample struct {
 
 func init() {
 	startTime = time.Now()
-	initializeCounters()
 	mathrand.Seed(time.Now().UnixNano())
+	initializeCounters()
+	updateFileList()
 
 	fmt.Println("Initializing sample cache...")
 	fillCache(cacheSize)
@@ -258,12 +266,31 @@ func health(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func loadRandomSample() (*CachedSample, error) {
+func updateFileList() {
 	files, err := filepath.Glob(filepath.Join(PATH_TO_SAVE, "*.bin"))
 	if err != nil {
-		return nil, err
+		return
 	}
 
+	fileListMu.Lock()
+	fileListCache = files
+	lastFileUpdate = time.Now()
+	fileListMu.Unlock()
+}
+
+func getFileList() []string {
+	fileListMu.RLock()
+	defer fileListMu.RUnlock()
+
+	if time.Since(lastFileUpdate) > 30*time.Second {
+		go updateFileList()
+	}
+
+	return fileListCache
+}
+
+func loadRandomSample() (*CachedSample, error) {
+	files := getFileList()
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no save files found")
 	}
@@ -291,36 +318,118 @@ func loadRandomSample() (*CachedSample, error) {
 }
 
 func fillCache(count int) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
-	for i := 0; i < count; i++ {
-		sample, err := loadRandomSample()
-		if err != nil {
-			continue
-		}
-		sampleCache = append(sampleCache, *sample)
+	files := getFileList()
+	if len(files) == 0 {
+		fmt.Println("No data files found")
+		return
 	}
+
+	filesNeeded := (count + SamplesPerFile - 1) / SamplesPerFile
+	if filesNeeded > len(files) {
+		filesNeeded = len(files)
+	}
+
+	type loadResult struct {
+		samples []CachedSample
+		fileIdx int
+	}
+
+	resultChan := make(chan loadResult, filesNeeded)
+	var wg sync.WaitGroup
+
+	workers := 8
+	if filesNeeded < workers {
+		workers = filesNeeded
+	}
+
+	filesToLoad := make([]string, 0, filesNeeded)
+	for i := 0; i < filesNeeded; i++ {
+		filesToLoad = append(filesToLoad, files[mathrand.Intn(len(files))])
+	}
+
+	fileIndex := 0
+	var indexMu sync.Mutex
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				indexMu.Lock()
+				if fileIndex >= len(filesToLoad) {
+					indexMu.Unlock()
+					return
+				}
+				idx := fileIndex
+				fileIndex++
+				indexMu.Unlock()
+
+				saveFile, err := readSaveFileFromDisc(filesToLoad[idx])
+				if err != nil {
+					continue
+				}
+
+				var fileSamples []CachedSample
+				for j := 0; j < SamplesPerFile; j++ {
+					sample := &saveFile.Samples[j]
+					if sample.NumberOfTokens < 2 {
+						continue
+					}
+
+					cachedSample := CachedSample{
+						TokenizedText: sample.TokenizedText,
+						Category:      sample.Category,
+					}
+					fileSamples = append(fileSamples, cachedSample)
+				}
+
+				resultChan <- loadResult{samples: fileSamples, fileIdx: idx}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var newSamples []CachedSample
+	filesLoaded := 0
+	for result := range resultChan {
+		newSamples = append(newSamples, result.samples...)
+		filesLoaded++
+	}
+
+	cacheMu.Lock()
+	sampleCache = append(sampleCache, newSamples...)
+	finalSize := len(sampleCache)
+	cacheMu.Unlock()
+
+	avgPerFile := 0
+	if filesLoaded > 0 {
+		avgPerFile = len(newSamples) / filesLoaded
+	}
+	fmt.Printf("Cache refill: %d files -> %d samples (%d avg/file, total: %d)\n", 
+		filesLoaded, len(newSamples), avgPerFile, finalSize)
 }
 
 func cacheRefillWorker() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	for needed := range refillChan {
+		if atomic.CompareAndSwapInt32(&isRefilling, 0, 1) {
+			cacheMu.RLock()
+			currentSize := len(sampleCache)
+			cacheMu.RUnlock()
 
-	for range ticker.C {
-		cacheMu.RLock()
-		currentSize := len(sampleCache)
-		cacheMu.RUnlock()
-
-		if currentSize < refillThreshold && !isRefilling {
-			isRefilling = true
-
-			samplesToAdd := cacheSize - currentSize
-			if samplesToAdd > 0 {
-				fillCache(samplesToAdd)
+			if currentSize < refillThreshold {
+				toAdd := cacheSize - currentSize
+				if toAdd > needed {
+					toAdd = needed
+				}
+				if toAdd > 0 {
+					fillCache(toAdd)
+				}
 			}
-
-			isRefilling = false
+			atomic.StoreInt32(&isRefilling, 0)
 		}
 	}
 }
@@ -338,6 +447,14 @@ func getSampleFromCache() (*CachedSample, error) {
 
 	sampleCache[idx] = sampleCache[len(sampleCache)-1]
 	sampleCache = sampleCache[:len(sampleCache)-1]
+
+	currentSize := len(sampleCache)
+	if currentSize < refillThreshold && currentSize > 0 {
+		select {
+		case refillChan <- cacheSize - currentSize:
+		default:
+		}
+	}
 
 	return &sample, nil
 }
@@ -387,7 +504,7 @@ func getBatch(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "batch_size and max_sample_length must be positive"})
 	}
 
-	var samples []BatchSample
+	samples := make([]BatchSample, 0, req.BatchSize)
 	var totalTokens uint64
 
 	for len(samples) < req.BatchSize {
@@ -435,7 +552,7 @@ func cacheStats(c echo.Context) error {
 		"cache_size":        currentSize,
 		"cache_capacity":    cacheSize,
 		"refill_threshold":  refillThreshold,
-		"is_refilling":      isRefilling,
+		"is_refilling":      atomic.LoadInt32(&isRefilling) == 1,
 		"cache_utilization": float64(currentSize) / float64(cacheSize) * 100,
 	})
 }
