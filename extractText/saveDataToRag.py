@@ -136,11 +136,11 @@ def query_rag(
 
 def process_am_deepseek_distilled_40m():
     splits = [
-        ['math_r1_1pass', MATH_TEXTS, 0],
+        # ['math_r1_1pass', MATH_TEXTS, 0],
+        ['code_r1_3pass', CODE_MIX_TEXTS, 0],
         ['if_r1_2pass', GENERIC_TEXTS, 0],
         ['if_r1_3pass', GENERIC_TEXTS, 0],
         ['code_r1_2pass', CODE_MIX_TEXTS, 0],
-        ['code_r1_3pass', CODE_MIX_TEXTS, 0],
         ['code_r1_4pass', CODE_MIX_TEXTS, 0],
         ['math_r1_2pass', MATH_TEXTS, 0],
         ['math_r1_3pass', MATH_TEXTS, 0],
