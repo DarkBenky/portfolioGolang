@@ -129,6 +129,28 @@ var (
 
 func init() {
 	startTime = time.Now()
+	initializeCounters()
+}
+
+func initializeCounters() {
+	files, err := filepath.Glob(filepath.Join(PATH_TO_SAVE, "*.bin"))
+	if err != nil {
+		return
+	}
+
+	fileCounter = len(files)
+
+	var totalSize int64
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+		totalSize += info.Size()
+	}
+
+	const tokenSize = 4
+	ProcessedTokens = uint64(totalSize / tokenSize)
 }
 
 func generateRandomID() string {

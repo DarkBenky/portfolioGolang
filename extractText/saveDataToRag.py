@@ -67,7 +67,7 @@ def embed_text_to_rag(
 
     embeddings = embedder.encode(
         chunks,
-        batch_size=16,
+        batch_size=4,
         normalize_embeddings=True,
         show_progress_bar=False
     )
