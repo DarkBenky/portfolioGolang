@@ -67,7 +67,7 @@ def embed_text_to_rag(
 
     embeddings = embedder.encode(
         chunks,
-        batch_size=8,
+        batch_size=16,
         normalize_embeddings=True,
         show_progress_bar=False
     )
@@ -136,10 +136,6 @@ def query_rag(
 
 def process_am_deepseek_distilled_40m():
     splits = [
-        ['code_1.5b_1pass', CODE_MIX_TEXTS, 7615],
-        ['code_1.5b_2pass', CODE_MIX_TEXTS, 0],
-        ['code_1.5b_3pass', CODE_MIX_TEXTS, 0],
-        ['code_1.5b_4pass', CODE_MIX_TEXTS, 0],
         ['code_7b_1pass', CODE_MIX_TEXTS, 0],
         ['code_7b_2pass', CODE_MIX_TEXTS, 0],
         ['code_7b_3pass', CODE_MIX_TEXTS, 0],
@@ -148,6 +144,10 @@ def process_am_deepseek_distilled_40m():
         ['code_r1_2pass', CODE_MIX_TEXTS, 0],
         ['code_r1_3pass', CODE_MIX_TEXTS, 0],
         ['code_r1_4pass', CODE_MIX_TEXTS, 0],
+        ['code_1.5b_1pass', CODE_MIX_TEXTS, 7615+3864],
+        ['code_1.5b_2pass', CODE_MIX_TEXTS, 0],
+        ['code_1.5b_3pass', CODE_MIX_TEXTS, 0],
+        ['code_1.5b_4pass', CODE_MIX_TEXTS, 0],
         ['if_1.5b_1pass', GENERIC_TEXTS, 0],
         ['if_1.5b_2pass', GENERIC_TEXTS, 0],
         ['if_1.5b_3pass', GENERIC_TEXTS, 0],

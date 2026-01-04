@@ -1,9 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"math/rand"
+	mathrand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,8 +111,8 @@ func getRandomSaveFile() (*SaveFile, error) {
 		return nil, fmt.Errorf("no save files found")
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	randomFile := files[rand.Intn(len(files))]
+	mathrand.Seed(time.Now().UnixNano())
+	randomFile := files[mathrand.Intn(len(files))]
 
 	return readSaveFileFromDisc(randomFile)
 }
@@ -128,6 +129,19 @@ var (
 
 func init() {
 	startTime = time.Now()
+}
+
+func generateRandomID() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, 16)
+	randomBytes := make([]byte, 16)
+	rand.Read(randomBytes)
+
+	for i := range result {
+		result[i] = charset[randomBytes[i]%byte(len(charset))]
+	}
+
+	return string(result)
 }
 
 func saveData(c echo.Context) error {
@@ -163,7 +177,8 @@ func saveData(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create directory"})
 		}
 
-		filePath := filepath.Join(PATH_TO_SAVE, fmt.Sprintf("data_%d.bin", fileCounter))
+		randomID := generateRandomID()
+		filePath := filepath.Join(PATH_TO_SAVE, fmt.Sprintf("data_%s.bin", randomID))
 		if err := writeSaveFileToDisc(&currentFile, filePath); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save file"})
 		}
