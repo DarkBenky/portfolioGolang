@@ -2,6 +2,7 @@ import json
 import random
 import numpy as np
 import os
+import requests
 from tokenizers import Tokenizer
 
 try:
@@ -264,6 +265,62 @@ class DataGenerator:
         for path in self.dataset_paths:
             self._load_file_to_cache(path)
         print("All files loaded into cache!")
+
+
+class GoDataGenerator:
+    def __init__(self, vocab_size, go_server_url="http://localhost:4567"):
+        self.vocab_size = vocab_size
+        self.go_server_url = go_server_url
+        self.session = requests.Session()
+        
+        print(f"GoDataGenerator initialized with vocab_size: {vocab_size}")
+        print(f"Go server URL: {go_server_url}")
+        
+        try:
+            health_response = self.session.get(f"{go_server_url}/health", timeout=5)
+            if health_response.status_code == 200:
+                print("Go server is healthy and ready!")
+            else:
+                print(f"Warning: Go server health check returned status {health_response.status_code}")
+        except Exception as e:
+            print(f"Warning: Could not connect to Go server: {e}")
+    
+    def generate_batches(self, batch_size, max_sample_length):
+        while True:
+            try:
+                response = self.session.post(
+                    f"{self.go_server_url}/get-batch",
+                    json={
+                        "batch_size": batch_size,
+                        "max_sample_length": max_sample_length
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code != 200:
+                    print(f"Error from Go server: {response.status_code} - {response.text}")
+                    continue
+                
+                data = response.json()
+                samples = data["samples"]
+                total_tokens = data["total_tokens"]
+                
+                X_batch = np.array([s["input_seq"] for s in samples], dtype=np.int32)
+                Y_batch = np.array([s["target_seq"] for s in samples], dtype=np.int32)
+                mask_batch = np.array([s["mask"] for s in samples], dtype=np.float32)
+                
+                yield (X_batch, Y_batch, mask_batch, total_tokens)
+                
+            except requests.exceptions.RequestException as e:
+                print(f"Request error: {e}")
+                import time
+                time.sleep(1)
+                continue
+            except Exception as e:
+                print(f"Unexpected error: {e}")
+                import time
+                time.sleep(1)
+                continue
 
 
 # Example usage:

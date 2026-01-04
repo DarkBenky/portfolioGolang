@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import IterableDataset, DataLoader
 import wandb
-from dataGen import DataGenerator
+from dataGen import DataGenerator, GoDataGenerator
 import math
 from einops import rearrange
 
@@ -200,13 +200,19 @@ class TokenDataset(IterableDataset):
         self.context_window = context_window
 
     def __iter__(self):
-        for X_batch, Y_batch, mask_batch in self.data_generator.generate_batches(
+        for batch_data in self.data_generator.generate_batches(
             self.batch_size, self.context_window
         ):
+            if len(batch_data) == 4:
+                X_batch, Y_batch, mask_batch, total_tokens = batch_data
+            else:
+                X_batch, Y_batch, mask_batch = batch_data
+                total_tokens = int(mask_batch.sum())
+            
             X_batch = torch.from_numpy(X_batch).long()
             Y_batch = torch.from_numpy(Y_batch).long()
             mask_batch = torch.from_numpy(mask_batch).float()
-            yield X_batch, Y_batch, mask_batch
+            yield X_batch, Y_batch, mask_batch, total_tokens
 
 
 def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, min_lr_ratio=0.1):
@@ -236,6 +242,8 @@ def train():
     WEIGHTS_PATH = 'best_model_pytorch.pt'
     LOAD_BEST_MODEL = True
     MAX_GRAD_NORM = 1.0
+    USE_GO_SERVER = True
+    GO_SERVER_URL = "http://localhost:4567"
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
@@ -243,6 +251,7 @@ def train():
     print(f"Using device: {device}")
     print(f"Using dtype: {dtype}")
     print(f"FlashAttention available: {FLASH_AVAILABLE}")
+    print(f"Using Go server for data: {USE_GO_SERVER}")
     
     wandb.init(
         project="portfolio-transformer-v2",
@@ -262,25 +271,33 @@ def train():
             "dropout_rate": DROPOUT_RATE,
             "dtype": str(dtype),
             "flash_attention": FLASH_AVAILABLE,
-            "improvements": "RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum",
-            "load_best_model": LOAD_BEST_MODEL
+            "improvements": "RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer",
+            "load_best_model": LOAD_BEST_MODEL,
+            "use_go_server": USE_GO_SERVER
         }
     )
     
-    data_gen = DataGenerator(
-        [
-            '/media/user/2TB/extractedTexts_multilang.json',
-            '/media/user/2TB/extractedTexts_CodeMix.json',
-            '/media/user/2TB/extractedTexts.json',
-            '/media/user/2TB/extractedTexts_OpenThoughts.json',
-            '/media/user/2TB/extractedTexts_FineBert.json',
-            '/media/user/2TB/extractedTexts_Math.json'
-        ],
-        'tokenizer.json',
-        lazy_count=True
-    )
-    data_gen.preload_all_files()
-    vocab_size = data_gen.vocab_size
+    if USE_GO_SERVER:
+        from tokenizers import Tokenizer
+        tokenizer = Tokenizer.from_file('tokenizer.json')
+        vocab_size = tokenizer.get_vocab_size()
+        data_gen = GoDataGenerator(vocab_size=vocab_size, go_server_url=GO_SERVER_URL)
+    else:
+        data_gen = DataGenerator(
+            [
+                '/media/user/2TB/extractedTexts_multilang.json',
+                '/media/user/2TB/extractedTexts_CodeMix.json',
+                '/media/user/2TB/extractedTexts.json',
+                '/media/user/2TB/extractedTexts_OpenThoughts.json',
+                '/media/user/2TB/extractedTexts_FineBert.json',
+                '/media/user/2TB/extractedTexts_Math.json'
+            ],
+            'tokenizer.json',
+            lazy_count=True
+        )
+        data_gen.preload_all_files()
+        vocab_size = data_gen.vocab_size
+    
     wandb.config.update({"vocab_size": vocab_size})
     
     model = CausalLanguageModel(
@@ -358,7 +375,7 @@ def train():
         
         optimizer.zero_grad()
         
-        for step, (X_batch, Y_batch, mask_batch) in enumerate(dataloader):
+        for step, (X_batch, Y_batch, mask_batch, batch_tokens) in enumerate(dataloader):
             if step >= steps_per_epoch:
                 break
             
@@ -388,7 +405,6 @@ def train():
                 scheduler.step()
             
             batch_samples = X_batch.size(0)
-            batch_tokens = int(mask_batch.sum().item())
             
             epoch_loss += loss.item() * GRAD_ACCUM_STEPS
             epoch_samples += batch_samples

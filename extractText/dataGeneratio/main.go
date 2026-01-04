@@ -42,6 +42,22 @@ type SaveFile struct {
 	Samples [SamplesPerFile]SaveDataSample
 }
 
+type BatchRequest struct {
+	BatchSize       int `json:"batch_size"`
+	MaxSampleLength int `json:"max_sample_length"`
+}
+
+type BatchSample struct {
+	InputSeq  []int32   `json:"input_seq"`
+	TargetSeq []int32   `json:"target_seq"`
+	Mask      []float32 `json:"mask"`
+}
+
+type BatchResponse struct {
+	Samples     []BatchSample `json:"samples"`
+	TotalTokens uint64        `json:"total_tokens"`
+}
+
 func writeSaveFileToDisc(saveFile *SaveFile, filePath string) error {
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -125,11 +141,29 @@ var (
 	fileCounter     int
 	requestCount    uint64
 	startTime       time.Time
+
+	sampleCache     []CachedSample
+	cacheMu         sync.RWMutex
+	cacheSize       = 8192
+	refillThreshold = 256
+	isRefilling     bool
 )
+
+type CachedSample struct {
+	TokenizedText []uint32
+	Category      uint8
+}
 
 func init() {
 	startTime = time.Now()
 	initializeCounters()
+	mathrand.Seed(time.Now().UnixNano())
+
+	fmt.Println("Initializing sample cache...")
+	fillCache(cacheSize)
+	fmt.Printf("Cache initialized with %d samples\n", len(sampleCache))
+
+	go cacheRefillWorker()
 }
 
 func initializeCounters() {
@@ -224,6 +258,188 @@ func health(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func loadRandomSample() (*CachedSample, error) {
+	files, err := filepath.Glob(filepath.Join(PATH_TO_SAVE, "*.bin"))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no save files found")
+	}
+
+	randomFile := files[mathrand.Intn(len(files))]
+	saveFile, err := readSaveFileFromDisc(randomFile)
+	if err != nil {
+		return nil, err
+	}
+
+	randomSampleIdx := mathrand.Intn(SamplesPerFile)
+	sample := &saveFile.Samples[randomSampleIdx]
+
+	if sample.NumberOfTokens < 2 {
+		return nil, fmt.Errorf("sample too short")
+	}
+
+	cachedSample := &CachedSample{
+		TokenizedText: make([]uint32, len(sample.TokenizedText)),
+		Category:      sample.Category,
+	}
+	copy(cachedSample.TokenizedText, sample.TokenizedText)
+
+	return cachedSample, nil
+}
+
+func fillCache(count int) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	for i := 0; i < count; i++ {
+		sample, err := loadRandomSample()
+		if err != nil {
+			continue
+		}
+		sampleCache = append(sampleCache, *sample)
+	}
+}
+
+func cacheRefillWorker() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cacheMu.RLock()
+		currentSize := len(sampleCache)
+		cacheMu.RUnlock()
+
+		if currentSize < refillThreshold && !isRefilling {
+			isRefilling = true
+
+			samplesToAdd := cacheSize - currentSize
+			if samplesToAdd > 0 {
+				fillCache(samplesToAdd)
+			}
+
+			isRefilling = false
+		}
+	}
+}
+
+func getSampleFromCache() (*CachedSample, error) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if len(sampleCache) == 0 {
+		return nil, fmt.Errorf("cache is empty")
+	}
+
+	idx := mathrand.Intn(len(sampleCache))
+	sample := sampleCache[idx]
+
+	sampleCache[idx] = sampleCache[len(sampleCache)-1]
+	sampleCache = sampleCache[:len(sampleCache)-1]
+
+	return &sample, nil
+}
+
+func prepareSequence(tokenized []uint32, maxSampleLength int) ([]int32, []int32, []float32, bool) {
+	if len(tokenized) < 2 {
+		return nil, nil, nil, false
+	}
+
+	var chunk []uint32
+	if len(tokenized) <= maxSampleLength+1 {
+		chunk = tokenized
+	} else {
+		startIdx := mathrand.Intn(len(tokenized) - maxSampleLength - 1)
+		chunk = tokenized[startIdx : startIdx+maxSampleLength+1]
+	}
+
+	inputSeq := make([]int32, maxSampleLength)
+	targetSeq := make([]int32, maxSampleLength)
+	mask := make([]float32, maxSampleLength)
+
+	chunkLen := len(chunk) - 1
+	padLen := maxSampleLength - chunkLen
+
+	for i := 0; i < padLen; i++ {
+		inputSeq[i] = 0
+		targetSeq[i] = 0
+		mask[i] = 0.0
+	}
+
+	for i := 0; i < chunkLen; i++ {
+		inputSeq[padLen+i] = int32(chunk[i])
+		targetSeq[padLen+i] = int32(chunk[i+1])
+		mask[padLen+i] = 1.0
+	}
+
+	return inputSeq, targetSeq, mask, true
+}
+
+func getBatch(c echo.Context) error {
+	var req BatchRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+
+	if req.BatchSize <= 0 || req.MaxSampleLength <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "batch_size and max_sample_length must be positive"})
+	}
+
+	var samples []BatchSample
+	var totalTokens uint64
+
+	for len(samples) < req.BatchSize {
+		cachedSample, err := getSampleFromCache()
+		if err != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+
+		inputSeq, targetSeq, mask, ok := prepareSequence(cachedSample.TokenizedText, req.MaxSampleLength)
+		if !ok {
+			continue
+		}
+
+		var nonPaddingTokens uint64
+		for _, m := range mask {
+			if m > 0.0 {
+				nonPaddingTokens++
+			}
+		}
+
+		samples = append(samples, BatchSample{
+			InputSeq:  inputSeq,
+			TargetSeq: targetSeq,
+			Mask:      mask,
+		})
+
+		totalTokens += nonPaddingTokens
+	}
+
+	response := BatchResponse{
+		Samples:     samples,
+		TotalTokens: totalTokens,
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+func cacheStats(c echo.Context) error {
+	cacheMu.RLock()
+	currentSize := len(sampleCache)
+	cacheMu.RUnlock()
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"cache_size":        currentSize,
+		"cache_capacity":    cacheSize,
+		"refill_threshold":  refillThreshold,
+		"is_refilling":      isRefilling,
+		"cache_utilization": float64(currentSize) / float64(cacheSize) * 100,
+	})
+}
+
 func main() {
 	e := echo.New()
 
@@ -233,6 +449,8 @@ func main() {
 
 	e.GET("/health", health)
 	e.POST("/save-data", saveData)
+	e.POST("/get-batch", getBatch)
+	e.GET("/cache-stats", cacheStats)
 
 	e.Logger.Fatal(e.Start(":4567"))
 }
