@@ -8,6 +8,7 @@ import os
 import torch
 import gc
 from pprint import pprint
+import json
 
 os.environ['HF_HOME'] = '/media/user/free/data'
 os.environ['HF_DATASETS_CACHE'] = '/media/user/free/data/huggingface_cache'
@@ -110,6 +111,25 @@ def remove_think_tags(text: str) -> str:
         return text[:start_think] + text[end_think:]
     return text
 
+PROGRESS_FILE = "dataset_progress.json"
+
+def load_progress():
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading progress file: {e}")
+            return {}
+    return {}
+
+def save_progress(progress_data):
+    try:
+        with open(PROGRESS_FILE, 'w') as f:
+            json.dump(progress_data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving progress: {e}")
+
 def query_rag(
     query: str,
     n_results: int = 5,
@@ -136,50 +156,58 @@ def query_rag(
 
 def process_am_deepseek_distilled_40m():
     splits = [
-        # ['math_r1_1pass', MATH_TEXTS, 0],
-        ['code_r1_3pass', CODE_MIX_TEXTS, 0],
-        ['if_r1_2pass', GENERIC_TEXTS, 0],
-        ['if_r1_3pass', GENERIC_TEXTS, 0],
-        ['code_r1_2pass', CODE_MIX_TEXTS, 0],
-        ['code_r1_4pass', CODE_MIX_TEXTS, 0],
-        ['math_r1_2pass', MATH_TEXTS, 0],
-        ['math_r1_3pass', MATH_TEXTS, 0],
-        ['math_r1_4pass', MATH_TEXTS, 0],
-        ['code_r1_1pass', CODE_MIX_TEXTS, 0],
-        ['code_7b_1pass', CODE_MIX_TEXTS, 0],
-        ['code_7b_2pass', CODE_MIX_TEXTS, 0],
-        ['code_7b_3pass', CODE_MIX_TEXTS, 0],
-        ['code_7b_4pass', CODE_MIX_TEXTS, 0],
-        ['if_7b_1pass', GENERIC_TEXTS, 0],
-        ['if_7b_2pass', GENERIC_TEXTS, 0],
-        ['if_7b_3pass', GENERIC_TEXTS, 0],
-        ['if_7b_4pass', GENERIC_TEXTS, 0],
-        ['if_r1_1pass', GENERIC_TEXTS, 0],
-        ['if_r1_4pass', GENERIC_TEXTS, 0],
-        # ['code_1.5b_1pass', CODE_MIX_TEXTS, 0],
-        # ['code_1.5b_2pass', CODE_MIX_TEXTS, 0],
-        # ['code_1.5b_3pass', CODE_MIX_TEXTS, 0],
-        # ['code_1.5b_4pass', CODE_MIX_TEXTS, 0],
-        # ['if_1.5b_1pass', GENERIC_TEXTS, 0],
-        # ['if_1.5b_2pass', GENERIC_TEXTS, 0],
-        # ['if_1.5b_3pass', GENERIC_TEXTS, 0],
-        # ['if_1.5b_4pass', GENERIC_TEXTS, 0],
-        # ['math_1.5b_1pass', MATH_TEXTS, 0],
-        # ['math_1.5b_2pass', MATH_TEXTS, 0],
-        # ['math_1.5b_3pass', MATH_TEXTS, 0],
-        # ['math_1.5b_4pass', MATH_TEXTS, 0],
-        ['math_7b_1pass', MATH_TEXTS, 0],
-        ['math_7b_2pass', MATH_TEXTS, 0],
-        ['math_7b_3pass', MATH_TEXTS, 0],
-        ['math_7b_4pass', MATH_TEXTS, 0],
+        # ['math_r1_1pass', MATH_TEXTS],
+        # ['code_r1_3pass', CODE_MIX_TEXTS],
+        ['if_r1_2pass', GENERIC_TEXTS],
+        ['if_r1_3pass', GENERIC_TEXTS],
+        ['code_r1_2pass', CODE_MIX_TEXTS],
+        ['code_r1_4pass', CODE_MIX_TEXTS],
+        ['math_r1_2pass', MATH_TEXTS],
+        ['math_r1_3pass', MATH_TEXTS],
+        ['math_r1_4pass', MATH_TEXTS],
+        ['code_r1_1pass', CODE_MIX_TEXTS],
+        ['code_7b_1pass', CODE_MIX_TEXTS],
+        ['code_7b_2pass', CODE_MIX_TEXTS],
+        ['code_7b_3pass', CODE_MIX_TEXTS],
+        ['code_7b_4pass', CODE_MIX_TEXTS],
+        ['if_7b_1pass', GENERIC_TEXTS],
+        ['if_7b_2pass', GENERIC_TEXTS],
+        ['if_7b_3pass', GENERIC_TEXTS],
+        ['if_7b_4pass', GENERIC_TEXTS],
+        ['if_r1_1pass', GENERIC_TEXTS],
+        ['if_r1_4pass', GENERIC_TEXTS],
+        # ['code_1.5b_1pass', CODE_MIX_TEXTS],
+        # ['code_1.5b_2pass', CODE_MIX_TEXTS],
+        # ['code_1.5b_3pass', CODE_MIX_TEXTS],
+        # ['code_1.5b_4pass', CODE_MIX_TEXTS],
+        # ['if_1.5b_1pass', GENERIC_TEXTS],
+        # ['if_1.5b_2pass', GENERIC_TEXTS],
+        # ['if_1.5b_3pass', GENERIC_TEXTS],
+        # ['if_1.5b_4pass', GENERIC_TEXTS],
+        # ['math_1.5b_1pass', MATH_TEXTS],
+        # ['math_1.5b_2pass', MATH_TEXTS],
+        # ['math_1.5b_3pass', MATH_TEXTS],
+        # ['math_1.5b_4pass', MATH_TEXTS],
+        ['math_7b_1pass', MATH_TEXTS],
+        ['math_7b_2pass', MATH_TEXTS],
+        ['math_7b_3pass', MATH_TEXTS],
+        ['math_7b_4pass', MATH_TEXTS],
     ]
     
     SAVE_PERIOD_TO_RAG = 16
+    SAVE_PROGRESS_INTERVAL = 8192
+
+    progress_data = load_progress()
 
     for split in splits:
         split_name = split[0]
         category = split[1]
-        offset = split[2]
+        offset = progress_data.get(split_name, 0)
+
+        print(f"\n{'='*60}")
+        print(f"Processing split: {split_name}")
+        print(f"Starting from offset: {offset}")
+        print(f"{'='*60}\n")
 
         dataset = load_dataset("a-m-team/AM-DeepSeek-Distilled-40M", name=split_name, split="train", streaming=True)
 
@@ -219,6 +247,15 @@ def process_am_deepseek_distilled_40m():
                         print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
             except Exception as e:
                 print(f"Error saving data: {e}")
+
+            if count % SAVE_PROGRESS_INTERVAL == 0:
+                progress_data[split_name] = count
+                save_progress(progress_data)
+                print(f"Progress saved: {split_name} at {count}")
+
+        progress_data[split_name] = count
+        save_progress(progress_data)
+        print(f"Split {split_name} completed at {count}")
 
 if __name__ == "__main__":
     process_am_deepseek_distilled_40m()
