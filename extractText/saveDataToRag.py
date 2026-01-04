@@ -136,10 +136,12 @@ def query_rag(
 
 def process_am_deepseek_distilled_40m():
     splits = [
+        ['math_r1_1pass', MATH_TEXTS, 0],
+        ['if_r1_2pass', GENERIC_TEXTS, 0],
+        ['if_r1_3pass', GENERIC_TEXTS, 0],
         ['code_r1_2pass', CODE_MIX_TEXTS, 0],
         ['code_r1_3pass', CODE_MIX_TEXTS, 0],
         ['code_r1_4pass', CODE_MIX_TEXTS, 0],
-        ['math_r1_1pass', MATH_TEXTS, 0],
         ['math_r1_2pass', MATH_TEXTS, 0],
         ['math_r1_3pass', MATH_TEXTS, 0],
         ['math_r1_4pass', MATH_TEXTS, 0],
@@ -153,27 +155,27 @@ def process_am_deepseek_distilled_40m():
         ['if_7b_3pass', GENERIC_TEXTS, 0],
         ['if_7b_4pass', GENERIC_TEXTS, 0],
         ['if_r1_1pass', GENERIC_TEXTS, 0],
-        ['if_r1_2pass', GENERIC_TEXTS, 0],
-        ['if_r1_3pass', GENERIC_TEXTS, 0],
         ['if_r1_4pass', GENERIC_TEXTS, 0],
-        ['code_1.5b_1pass', CODE_MIX_TEXTS, 0],
-        ['code_1.5b_2pass', CODE_MIX_TEXTS, 0],
-        ['code_1.5b_3pass', CODE_MIX_TEXTS, 0],
-        ['code_1.5b_4pass', CODE_MIX_TEXTS, 0],
-        ['if_1.5b_1pass', GENERIC_TEXTS, 0],
-        ['if_1.5b_2pass', GENERIC_TEXTS, 0],
-        ['if_1.5b_3pass', GENERIC_TEXTS, 0],
-        ['if_1.5b_4pass', GENERIC_TEXTS, 0],
-        ['math_1.5b_1pass', MATH_TEXTS, 0],
-        ['math_1.5b_2pass', MATH_TEXTS, 0],
-        ['math_1.5b_3pass', MATH_TEXTS, 0],
-        ['math_1.5b_4pass', MATH_TEXTS, 0],
+        # ['code_1.5b_1pass', CODE_MIX_TEXTS, 0],
+        # ['code_1.5b_2pass', CODE_MIX_TEXTS, 0],
+        # ['code_1.5b_3pass', CODE_MIX_TEXTS, 0],
+        # ['code_1.5b_4pass', CODE_MIX_TEXTS, 0],
+        # ['if_1.5b_1pass', GENERIC_TEXTS, 0],
+        # ['if_1.5b_2pass', GENERIC_TEXTS, 0],
+        # ['if_1.5b_3pass', GENERIC_TEXTS, 0],
+        # ['if_1.5b_4pass', GENERIC_TEXTS, 0],
+        # ['math_1.5b_1pass', MATH_TEXTS, 0],
+        # ['math_1.5b_2pass', MATH_TEXTS, 0],
+        # ['math_1.5b_3pass', MATH_TEXTS, 0],
+        # ['math_1.5b_4pass', MATH_TEXTS, 0],
         ['math_7b_1pass', MATH_TEXTS, 0],
         ['math_7b_2pass', MATH_TEXTS, 0],
         ['math_7b_3pass', MATH_TEXTS, 0],
         ['math_7b_4pass', MATH_TEXTS, 0],
     ]
     
+    SAVE_PERIOD_TO_RAG = 16
+
     for split in splits:
         split_name = split[0]
         category = split[1]
@@ -191,13 +193,14 @@ def process_am_deepseek_distilled_40m():
             answer = item['answer'] + END_TOKEN
             combined_text = f"### User:\n{question}\n\n### Assistant:\n{answer}"
 
-            combined_text_rag = remove_think_tags(combined_text)
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
 
-            result = embed_text_to_rag(
-                combined_text_rag,
-                chunk_size=1024,
-                overlap=128,
-            )
+                result = embed_text_to_rag(
+                    combined_text_rag,
+                    chunk_size=1024,
+                    overlap=128,
+                )
 
             try:
                 data = {
