@@ -413,7 +413,7 @@ if __name__ == '__main__':
     NUM_HEADS = 18
     NUM_LAYERS = 48
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.0001
+    LEARNING_RATE = 0.000125
     EPOCHS = 10_000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
