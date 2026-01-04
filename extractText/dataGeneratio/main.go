@@ -145,7 +145,7 @@ var (
 
 	sampleCache     []CachedSample
 	cacheMu         sync.RWMutex
-	cacheSize       = 256 * 64
+	cacheSize       = 256 * 512
 	refillThreshold = 256 * 16
 	isRefilling     int32
 
