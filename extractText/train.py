@@ -178,8 +178,8 @@
 #     wandb.finish()
 
 import os
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+# os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import tensorflow as tf
 from tensorflow.keras import mixed_precision
@@ -413,7 +413,7 @@ if __name__ == '__main__':
     NUM_HEADS = 18
     NUM_LAYERS = 48
     BATCH_SIZE = 1
-    LEARNING_RATE = 0.000125
+    LEARNING_RATE = 0.000195
     EPOCHS = 10_000
     FFN_DIM = D_MODEL * 4
     DROPOUT_RATE = 0.1
