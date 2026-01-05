@@ -24,7 +24,7 @@ const (
 	OPEN_THOUGHTS_TEXTS
 	FINE_BERT_TEXTS
 	SCIENCE_TEXTS // ArXiv and other scientific texts
-	PATH_TO_SAVE  = "/media/user/free/data/data"
+	PATH_TO_SAVE  = "/media/user/2TB/tokenizedData/data"
 )
 
 type TokenizedTexts struct {
