@@ -2,7 +2,7 @@
 
 - [X] Added - simplescaling/s1K · Datasets at Hugging Face https://share.google/MtANCUUrSavLVDTL9
 
-QuixiAI/dolphin-r1 · Datasets at Hugging Face https://share.google/PxaJDYDWh1lyBS80W
+- [X] Added - QuixiAI/dolphin-r1 · Datasets at Hugging Face https://share.google/PxaJDYDWh1lyBS80W
 
 FreedomIntelligence/medical-o1-reasoning-SFT · Datasets at Hugging Face https://share.google/G3vDNjsAETbQ4dGXR
 
@@ -28,26 +28,28 @@ https://huggingface.co/datasets/a-m-team/AM-Thinking-v1-Distilled
 
 https://huggingface.co/datasets/a-m-team/AM-Thinking-v1-RL-Dataset
 
-https://huggingface.co/datasets/mlfoundations-dev/oh-dcft-v3.1-claude-3-5-haiku-20241022
+- [X] - https://huggingface.co/datasets/mlfoundations-dev/oh-dcft-v3.1-claude-3-5-haiku-20241022
 
-LGizkde/cosmo-1B-claude_taxonomy220 · Datasets at Hugging Face https://share.google/CJoAdnaRdg2kqqiKS
+- [X] - Added - LGizkde/cosmo-1B-claude_taxonomy220 · Datasets at Hugging Face https://share.google/CJoAdnaRdg2kqqiKS
 
-https://huggingface.co/datasets/microsoft/wiki_qa
+- [X] - Added - https://huggingface.co/datasets/microsoft/wiki_qa
 
 - [X] - Added - https://huggingface.co/datasets/truthfulqa/truthful_qa?row=0
 
-https://huggingface.co/datasets/lucadiliello/triviaqa?row=4
+- [X] - Added - https://huggingface.co/datasets/lucadiliello/triviaqa?row=4
 
 - [X] - Added - https://huggingface.co/datasets/missvector/linux-commands
 
 https://huggingface.co/datasets/nyu-mll/glue
 
-https://huggingface.co/datasets/cais/mmlu
+- [X] - https://huggingface.co/datasets/cais/mmlu
 
 ExAi/Code-Golang-QA-2k · Datasets at Hugging Face https://share.google/iYuBZbgR5wMNyxFB5
 
 smcleod/golang-coder · Datasets at Hugging Face https://share.google/TiwtgVTK7cBRzmKMB
 
-Nan-Do/reason_code-search-net-python · Datasets at Hugging Face https://share.google/hHipkwk44byadNlUR
+- [X] Added - Nan-Do/reason_code-search-net-python · Datasets at Hugging Face https://share.google/hHipkwk44byadNlUR
 
 - [X] Added - suriyagunasekar/stackoverflow-with-meta-data · Datasets at Hugging Face https://share.google/WKuSnRaNJCd3GAbR8
+
+https://huggingface.co/datasets/QuixiAI/leet10k-alpaca
