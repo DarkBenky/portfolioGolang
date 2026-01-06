@@ -1,18 +1,18 @@
 ### Datasets to be added 
 
-simplescaling/s1K · Datasets at Hugging Face https://share.google/MtANCUUrSavLVDTL9
+- [X] Added - simplescaling/s1K · Datasets at Hugging Face https://share.google/MtANCUUrSavLVDTL9
 
 QuixiAI/dolphin-r1 · Datasets at Hugging Face https://share.google/PxaJDYDWh1lyBS80W
 
 FreedomIntelligence/medical-o1-reasoning-SFT · Datasets at Hugging Face https://share.google/G3vDNjsAETbQ4dGXR
 
-PrimeIntellect/SYNTHETIC-1 · Datasets at Hugging Face https://share.google/AJZuLBT2yuTH528UB
+- [X] Added - PrimeIntellect/SYNTHETIC-1 · Datasets at Hugging Face https://share.google/AJZuLBT2yuTH528UB
 
 glaiveai/reasoning-v1-20m · Datasets at Hugging Face https://share.google/5RfZ7UGBQKGHaIlGW
 
-facebook/natural_reasoning · Datasets at Hugging Face https://share.google/DaYRGqMCu4WZwahOv
+- [X] Added - facebook/natural_reasoning · Datasets at Hugging Face https://share.google/DaYRGqMCu4WZwahOv
 
-camel-ai/loong · Datasets at Hugging Face https://share.google/YsRocMdpwobm1dAZt
+- [X] Added - camel-ai/loong · Datasets at Hugging Face https://share.google/YsRocMdpwobm1dAZt
 
 nvidia/OpenCodeReasoning · Datasets at Hugging Face https://share.google/adruO9W6m1tutrwtf
 
@@ -34,11 +34,11 @@ LGizkde/cosmo-1B-claude_taxonomy220 · Datasets at Hugging Face https://share.go
 
 https://huggingface.co/datasets/microsoft/wiki_qa
 
-https://huggingface.co/datasets/truthfulqa/truthful_qa?row=0
+- [X] - Added - https://huggingface.co/datasets/truthfulqa/truthful_qa?row=0
 
 https://huggingface.co/datasets/lucadiliello/triviaqa?row=4
 
-https://huggingface.co/datasets/missvector/linux-commands
+- [X] - Added - https://huggingface.co/datasets/missvector/linux-commands
 
 https://huggingface.co/datasets/nyu-mll/glue
 
@@ -50,4 +50,4 @@ smcleod/golang-coder · Datasets at Hugging Face https://share.google/TiwtgVTK7c
 
 Nan-Do/reason_code-search-net-python · Datasets at Hugging Face https://share.google/hHipkwk44byadNlUR
 
-suriyagunasekar/stackoverflow-with-meta-data · Datasets at Hugging Face https://share.google/WKuSnRaNJCd3GAbR8
+- [X] Added - suriyagunasekar/stackoverflow-with-meta-data · Datasets at Hugging Face https://share.google/WKuSnRaNJCd3GAbR8

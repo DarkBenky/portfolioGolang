@@ -74,7 +74,7 @@ def embed_text_to_rag(
 
     embeddings = embedder.encode(
         chunks,
-        batch_size=4,
+        batch_size=1,
         normalize_embeddings=True,
         show_progress_bar=False
     )
@@ -170,6 +170,7 @@ def query_rag(
     # The model is trained to understand queries naturally
     query_embedding = embedder.encode(
         [query], 
+        batch_size=1,
         normalize_embeddings=True,
         show_progress_bar=False
     )
@@ -227,7 +228,7 @@ def process_am_deepseek_distilled_40m():
     ]
     
     SAVE_PERIOD_TO_RAG = 16
-    SAVE_PROGRESS_INTERVAL = 8192
+    SAVE_PROGRESS_INTERVAL = 512
 
     progress_data = load_progress()
 
@@ -304,7 +305,7 @@ def process_code_datasets():
     ]
     
     SAVE_PERIOD_TO_RAG = 16
-    SAVE_PROGRESS_INTERVAL = 4096
+    SAVE_PROGRESS_INTERVAL = 512
     
     progress_data = load_progress()
     
@@ -411,7 +412,7 @@ def process_math_datasets():
     ]
     
     SAVE_PERIOD_TO_RAG = 24
-    SAVE_PROGRESS_INTERVAL = 4096
+    SAVE_PROGRESS_INTERVAL = 512
     
     progress_data = load_progress()
     
@@ -500,7 +501,7 @@ def process_general_datasets():
     ]
     
     SAVE_PERIOD_TO_RAG = 32
-    SAVE_PROGRESS_INTERVAL = 8192
+    SAVE_PROGRESS_INTERVAL = 512
     
     progress_data = load_progress()
     
@@ -604,7 +605,7 @@ def process_the_stack_datasets():
     ]
     
     SAVE_PERIOD_TO_RAG = 16
-    SAVE_PROGRESS_INTERVAL = 4096
+    SAVE_PROGRESS_INTERVAL = 512
     
     progress_data = load_progress()
     
@@ -669,6 +670,396 @@ def process_the_stack_datasets():
         except Exception as e:
             print(f"Error loading the-stack ({lang}): {e}")
 
+def process_synthetic_1():
+    ds = load_dataset("PrimeIntellect/SYNTHETIC-1", split="train", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 512
+    progress_data = load_progress()
+    offset = progress_data.get('synthetic_1', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: SYNTHETIC-1")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(ds):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            prompt = item['prompt']
+            llm_response = item['llm_response']
+            gold_standard_solution = item['gold_standard_solution']
+            combined_text = f"### Prompt:\n{prompt}\n### Response:\n{llm_response}\n### Gold Standard Solution:\n{str(gold_standard_solution)}\n"
+            combined_text += END_TOKEN
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': GENERIC_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"synthetic_1/file_counter": result.get('file_counter', 0),
+                        f"synthetic_1/processed_tokens": result.get('processed_tokens', 0),
+                        f"synthetic_1/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"synthetic_1/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('synthetic_1', count)
+            print(f"Progress saved: synthetic_1 at {count}")
+
+    update_progress('synthetic_1', count)
+    print(f"Dataset synthetic_1 completed at {count}")
+
+def process_s1k():
+    ds = load_dataset("simplescaling/s1K", split="train", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 512
+    progress_data = load_progress()
+    offset = progress_data.get('s1k', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: s1K")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(ds):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            question = item['question']
+            solution = item['solution']
+            combined_text = f"### Question:\n{question}\n### Solution:\n{solution}{END_TOKEN}"
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': MATH_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"s1k/file_counter": result.get('file_counter', 0),
+                        f"s1k/processed_tokens": result.get('processed_tokens', 0),
+                        f"s1k/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"s1k/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('s1k', count)
+            print(f"Progress saved: s1k at {count}")    
+    update_progress('s1k', count)
+    print(f"Dataset s1k completed at {count}")
+
+def process_natural_reasoning():
+    ds = load_dataset("facebook/natural_reasoning", split="train", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 512
+    progress_data = load_progress()
+    offset = progress_data.get('natural_reasoning', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: natural_reasoning")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(ds):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            question = item['question']
+            dataset_response = item['responses'][0]['response']
+            reference_answer = item['reference_answer']
+            combined_text = f"### Question:\n{question}\n### Response:\n{dataset_response}\n### Reference Answer:\n{reference_answer}{END_TOKEN}"
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': GENERIC_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"natural_reasoning/file_counter": result.get('file_counter', 0),
+                        f"natural_reasoning/processed_tokens": result.get('processed_tokens', 0),
+                        f"natural_reasoning/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"natural_reasoning/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('natural_reasoning', count)
+            print(f"Progress saved: natural_reasoning at {count}")    
+    update_progress('natural_reasoning', count)
+    print(f"Dataset natural_reasoning completed at {count}")
+
+def process_long():
+    subjects = [
+        ['advanced_math', MATH_TEXTS],
+        ['advanced_physics', SCIENCE_TEXTS],
+        ['chemistry', SCIENCE_TEXTS],
+        ['computational_biology', SCIENCE_TEXTS],
+        ['finance', GENERIC_TEXTS],
+        ['games', GENERIC_TEXTS],
+        ['graph_discrete_math', MATH_TEXTS],
+        ['logic', MATH_TEXTS],
+        ['mathematical_programming', MATH_TEXTS],
+        ['medicine', SCIENCE_TEXTS],
+        ['programming', CODE_MIX_TEXTS],
+        ['security_and_safety', GENERIC_TEXTS]
+    ]
+    splits = ['train', 'test']
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 256
+    progress_data = load_progress()
+    for subject_config in subjects:
+        subject, category = subject_config
+        for split in splits:
+            progress_key = f"long_{subject}_{split}"
+            offset = progress_data.get(progress_key, 0)
+            print(f"\n{'='*60}")
+            print(f"Processing: long ({subject}) - {split}")
+            print(f"Starting from offset: {offset}")
+            print(f"{'='*60}\n")
+            try:
+                dataset = load_dataset("camel-ai/loong", subject, split=split, streaming=True)
+                count = 0
+                for item in iter(dataset):
+                    count += 1
+                    if count <= offset:
+                        continue
+                    try:
+                        question = item['question']
+                        rationale = item['rationale']
+                        final_answer = item['final_answer']
+                        combined_text = f"### Question:\n{question}\n### Rationale:\n{rationale}\n### Final Answer:\n{final_answer}{END_TOKEN}"
+                        if count % SAVE_PERIOD_TO_RAG == 0:
+                            combined_text_rag = remove_think_tags(combined_text)
+                            result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+                        data = {
+                            'text': combined_text,
+                            'tokenized_text': tokenizer.encode(combined_text).ids,
+                            'category': category
+                        }
+                        url = "http://localhost:4567/save-data"
+                        response = session.post(url, json=data, timeout=5)
+                        if response.status_code != 200:
+                            print(f"Failed to save data: {response.text}")
+                        else:
+                            result = response.json()
+                            if count % 500 == 0:
+                                pprint(result)
+                                if 'processed_tokens' in result:
+                                    print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                                wandb.log({
+                                    f"{progress_key}/file_counter": result.get('file_counter', 0),
+                                    f"{progress_key}/processed_tokens": result.get('processed_tokens', 0),
+                                    f"{progress_key}/requests_per_sec": result.get('requests_per_sec', 0),
+                                    f"{progress_key}/samples": count,
+                                })
+                        if count % SAVE_PROGRESS_INTERVAL == 0:
+                            update_progress(progress_key, count)
+                            print(f"Progress saved: {progress_key} at {count}")
+                    except Exception as e:
+                        print(f"Error processing item {count}: {e}")
+                        continue
+                update_progress(progress_key, count)
+                print(f"Dataset {progress_key} completed at {count}")
+            except Exception as e:
+                print(f"Error loading long ({subject}) - {split}: {e}")
+        
+def process_stackoverflow():
+    ds = load_dataset("suriyagunasekar/stackoverflow-with-meta-data", split="train", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 512
+    progress_data = load_progress()
+    offset = progress_data.get('stackoverflow', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: stackoverflow")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(ds):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            content = item['content']
+            combined_text = f"{content}{END_TOKEN}"
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': CODE_MIX_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")  
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"stackoverflow/file_counter": result.get('file_counter', 0),
+                        f"stackoverflow/processed_tokens": result.get('processed_tokens', 0),
+                        f"stackoverflow/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"stackoverflow/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('stackoverflow', count)
+            print(f"Progress saved: stackoverflow at {count}")    
+    update_progress('stackoverflow', count)
+    print(f"Dataset stackoverflow completed at {count}")
+
+def process_truthful_qa():
+    ds = load_dataset("truthfulqa/truthful_qa", "generation", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 256
+    progress_data = load_progress()
+    offset = progress_data.get('truthful_qa', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: truthful_qa")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(ds):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            qestion = item['question']
+            best_answer = item['best_answer']
+            combined_text = f"### Question:\n{qestion}\n### Response:\n{best_answer}{END_TOKEN}"
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': GENERIC_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")  
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"truthful_qa/file_counter": result.get('file_counter', 0),
+                        f"truthful_qa/processed_tokens": result.get('processed_tokens', 0),
+                        f"truthful_qa/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"truthful_qa/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('truthful_qa', count)
+            print(f"Progress saved: truthful_qa at {count}")    
+    update_progress('truthful_qa', count)
+    print(f"Dataset truthful_qa completed at {count}")
+
+def process_linux_commands():
+    dataset = load_dataset("missvector/linux-commands", split="train", streaming=True)
+    SAVE_PERIOD_TO_RAG = 32
+    SAVE_PROGRESS_INTERVAL = 256
+    progress_data = load_progress()
+    offset = progress_data.get('linux_commands', 0)
+    print(f"\n{'='*60}")
+    print(f"Processing: linux_commands")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    count = 0
+    for item in iter(dataset):
+        count += 1
+        if count <= offset:
+            continue
+        try:
+            prompt = item['eng']
+            command = item['completion']
+            combined_text = f"### Convert to Linux command:\n{prompt}\n### Command:\n{command}{END_TOKEN}"
+            if count % SAVE_PERIOD_TO_RAG == 0:
+                combined_text_rag = remove_think_tags(combined_text)
+                result = embed_text_to_rag(combined_text_rag, chunk_size=1024, overlap=128)
+            data = {
+                'text': combined_text,
+                'tokenized_text': tokenizer.encode(combined_text).ids,
+                'category': CODE_MIX_TEXTS
+            }
+            url = "http://localhost:4567/save-data"
+            response = session.post(url, json=data, timeout=5)
+            if response.status_code != 200:
+                print(f"Failed to save data: {response.text}")
+            else:
+                result = response.json()
+                if count % 500 == 0:
+                    pprint(result)
+                    if 'processed_tokens' in result:
+                        print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                    wandb.log({
+                        f"linux_commands/file_counter": result.get('file_counter', 0),
+                        f"linux_commands/processed_tokens": result.get('processed_tokens', 0),
+                        f"linux_commands/requests_per_sec": result.get('requests_per_sec', 0),
+                        f"linux_commands/samples": count,
+                    })
+        except Exception as e:
+            print(f"Error processing item {count}: {e}")
+            continue
+        if count % SAVE_PROGRESS_INTERVAL == 0:
+            update_progress('linux_commands', count)
+            print(f"Progress saved: linux_commands at {count}")
+    update_progress('linux_commands', count)
+    print(f"Dataset linux_commands completed at {count}")
+
 if __name__ == "__main__":
     wandb.init(
         project="portfolio-data-processing",
@@ -689,6 +1080,13 @@ if __name__ == "__main__":
             executor.submit(process_math_datasets): 'math',
             executor.submit(process_general_datasets): 'general',
             executor.submit(process_the_stack_datasets): 'stack',
+            executor.submit(process_synthetic_1): 'synthetic_1',
+            executor.submit(process_s1k): 's1k',
+            executor.submit(process_natural_reasoning): 'natural_reasoning',
+            executor.submit(process_long): 'long',
+            executor.submit(process_stackoverflow): 'stackoverflow',
+            executor.submit(process_truthful_qa): 'truthful_qa',
+            executor.submit(process_linux_commands): 'linux_commands',
         }
         
         for future in as_completed(futures):
