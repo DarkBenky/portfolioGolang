@@ -6,7 +6,7 @@ from torch.utils.data import IterableDataset, DataLoader
 import wandb
 from dataGen import DataGenerator, GoDataGenerator
 import math
-from einops import rearrange
+import time
 
 try:
     from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
@@ -54,11 +54,12 @@ class RotaryEmbedding(nn.Module):
         if seq_len is None:
             seq_len = x.shape[1]
         
-        if seq_len != self.seq_len_cached:
+        if seq_len != self.seq_len_cached or (self.cos_cached is not None and self.cos_cached.dtype != x.dtype):
             self.seq_len_cached = seq_len
-            t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
-            freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+            t = torch.arange(seq_len, device=x.device, dtype=x.dtype)
+            inv_freq = self.inv_freq.to(dtype=x.dtype, device=x.device)
+            freqs = torch.einsum("i,j->ij", t, inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1)
             self.cos_cached = emb.cos()[None, :, None, :]
             self.sin_cached = emb.sin()[None, :, None, :]
         
@@ -76,14 +77,20 @@ def apply_rotary_pos_emb(q, k, cos, sin):
 
 
 class FlashAttentionBlock(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.0, bias=False):
+    def __init__(self, d_model, num_heads, dropout=0.0, bias=False, num_kv_heads=None):
         super().__init__()
         assert d_model % num_heads == 0
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        assert num_heads % self.num_kv_heads == 0
+        self.num_queries_per_kv = num_heads // self.num_kv_heads
+        
         self.head_dim = d_model // num_heads
         
-        self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
+        self.q_proj = nn.Linear(d_model, num_heads * self.head_dim, bias=bias)
+        self.k_proj = nn.Linear(d_model, self.num_kv_heads * self.head_dim, bias=bias)
+        self.v_proj = nn.Linear(d_model, self.num_kv_heads * self.head_dim, bias=bias)
         self.proj = nn.Linear(d_model, d_model, bias=bias)
         self.dropout = dropout
         self.rotary = RotaryEmbedding(self.head_dim)
@@ -91,46 +98,52 @@ class FlashAttentionBlock(nn.Module):
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
         
-        qkv = self.qkv(x)
-        qkv = rearrange(qkv, 'b s (three h d) -> b s three h d', three=3, h=self.num_heads)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
         
-        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
+        v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
         
         cos, sin = self.rotary(x, seq_len)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
         
         if FLASH_AVAILABLE and x.dtype in [torch.float16, torch.bfloat16]:
-            qkv_for_flash = torch.stack([q, k, v], dim=2)
-            out = flash_attn_qkvpacked_func(
-                qkv_for_flash,
+            out = flash_attn_func(
+                q, k, v,
                 dropout_p=self.dropout if self.training else 0.0,
                 causal=True
             )
+            out = out.reshape(batch_size, seq_len, self.d_model)
         else:
+            if self.num_kv_heads != self.num_heads:
+                k = k.repeat_interleave(self.num_queries_per_kv, dim=2)
+                v = v.repeat_interleave(self.num_queries_per_kv, dim=2)
+            
             q = q.transpose(1, 2)
             k = k.transpose(1, 2)
             v = v.transpose(1, 2)
             
-            scale = 1.0 / math.sqrt(self.head_dim)
-            attn = torch.matmul(q, k.transpose(-2, -1)) * scale
+            from torch.nn.attention import SDPBackend, sdpa_kernel
+            with sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+                out = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=None,
+                    dropout_p=self.dropout if self.training else 0.0,
+                    is_causal=True
+                )
             
-            causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
-            attn = attn.masked_fill(causal_mask, float('-inf'))
-            
-            attn = F.softmax(attn, dim=-1)
-            attn = F.dropout(attn, p=self.dropout, training=self.training)
-            
-            out = torch.matmul(attn, v)
             out = out.transpose(1, 2)
+            out = out.reshape(batch_size, seq_len, self.d_model)
         
-        out = rearrange(out, 'b s h d -> b s (h d)')
         return self.proj(out)
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, num_heads, ff_dim, dropout=0.0, layer_idx=0, num_layers=1):
+    def __init__(self, d_model, num_heads, ff_dim, dropout=0.0, layer_idx=0, num_layers=1, num_kv_heads=None):
         super().__init__()
-        self.attention = FlashAttentionBlock(d_model, num_heads, dropout)
+        self.attention = FlashAttentionBlock(d_model, num_heads, dropout, num_kv_heads=num_kv_heads)
         self.feed_forward = SwiGLU(d_model, ff_dim, dropout)
         self.norm1 = RMSNorm(d_model)
         self.norm2 = RMSNorm(d_model)
@@ -150,16 +163,17 @@ class TransformerBlock(nn.Module):
 
 
 class CausalLanguageModel(nn.Module):
-    def __init__(self, vocab_size, context_window, d_model, num_heads, num_layers, ff_dim, dropout=0.0):
+    def __init__(self, vocab_size, context_window, d_model, num_heads, num_layers, ff_dim, dropout=0.0, num_kv_heads=None):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
+        self._gradient_checkpointing = False
         
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.dropout = nn.Dropout(dropout)
         
         self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, num_heads, ff_dim, dropout, i, num_layers)
+            TransformerBlock(d_model, num_heads, ff_dim, dropout, i, num_layers, num_kv_heads)
             for i in range(num_layers)
         ])
         
@@ -181,7 +195,10 @@ class CausalLanguageModel(nn.Module):
         x = self.dropout(x)
         
         for block in self.blocks:
-            x = block(x)
+            if self._gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
         
         x = self.final_norm(x)
         
@@ -191,6 +208,12 @@ class CausalLanguageModel(nn.Module):
 
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    
+    def gradient_checkpointing_enable(self):
+        self._gradient_checkpointing = True
+        
+    def gradient_checkpointing_disable(self):
+        self._gradient_checkpointing = False
 
 
 class TokenDataset(IterableDataset):
@@ -226,27 +249,29 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 
 
 def train():
-    CONTEXT_WINDOW = 4096
+    CONTEXT_WINDOW = 2048
     D_MODEL = 2048
     NUM_HEADS = 32
-    NUM_LAYERS = 64
+    NUM_KV_HEADS = 8
+    NUM_LAYERS = 18
     BATCH_SIZE = 1
-    GRAD_ACCUM_STEPS = 8
-    EFFECTIVE_BATCH_SIZE = BATCH_SIZE * GRAD_ACCUM_STEPS
     LEARNING_RATE = 3e-4
     WEIGHT_DECAY = 0.1
     WARMUP_STEPS = 2000
     EPOCHS = 10000
     FFN_DIM = int(D_MODEL * 8 / 3)
-    DROPOUT_RATE = 0.01
+    DROPOUT_RATE = 0.0
     WEIGHTS_PATH = 'best_model_pytorch.pt'
     LOAD_BEST_MODEL = True
     MAX_GRAD_NORM = 1.0
     USE_GO_SERVER = True
     GO_SERVER_URL = "http://localhost:4567"
+    USE_GRADIENT_CHECKPOINTING = True
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+    dtype = torch.bfloat16
+    
+    torch.set_default_dtype(torch.bfloat16)
     
     print(f"Using device: {device}")
     print(f"Using dtype: {dtype}")
@@ -259,10 +284,9 @@ def train():
             "context_window": CONTEXT_WINDOW,
             "d_model": D_MODEL,
             "num_heads": NUM_HEADS,
+            "num_kv_heads": NUM_KV_HEADS,
             "num_layers": NUM_LAYERS,
             "batch_size": BATCH_SIZE,
-            "grad_accum_steps": GRAD_ACCUM_STEPS,
-            "effective_batch_size": EFFECTIVE_BATCH_SIZE,
             "learning_rate": LEARNING_RATE,
             "weight_decay": WEIGHT_DECAY,
             "warmup_steps": WARMUP_STEPS,
@@ -271,9 +295,10 @@ def train():
             "dropout_rate": DROPOUT_RATE,
             "dtype": str(dtype),
             "flash_attention": FLASH_AVAILABLE,
-            "improvements": "RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer",
+            "improvements": "GQA + RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer + GradCheckpoint",
             "load_best_model": LOAD_BEST_MODEL,
-            "use_go_server": USE_GO_SERVER
+            "use_go_server": USE_GO_SERVER,
+            "use_gradient_checkpointing": USE_GRADIENT_CHECKPOINTING
         }
     )
     
@@ -307,10 +332,15 @@ def train():
         num_heads=NUM_HEADS,
         num_layers=NUM_LAYERS,
         ff_dim=FFN_DIM,
-        dropout=DROPOUT_RATE
+        dropout=DROPOUT_RATE,
+        num_kv_heads=NUM_KV_HEADS
     )
     
-    model = model.to(device)
+    model = model.to(device=device, dtype=dtype)
+    
+    if USE_GRADIENT_CHECKPOINTING:
+        model.gradient_checkpointing_enable()
+        print("Gradient checkpointing enabled")
     
     total_params = model.count_parameters()
     print(f"\nTotal parameters: {total_params:,}")
@@ -322,21 +352,29 @@ def train():
     total_tokens_trained = 0
     
     if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH):
-        print(f"\n{'='*60}")
-        print(f"LOADING MODEL from {WEIGHTS_PATH}")
-        print(f"{'='*60}\n")
-        
-        checkpoint = torch.load(WEIGHTS_PATH, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        best_loss = checkpoint.get('best_loss', float('inf'))
-        start_epoch = checkpoint.get('epoch', 0) + 1
-        total_samples_trained = checkpoint.get('total_samples', 0)
-        total_tokens_trained = checkpoint.get('total_tokens', 0)
-        
-        print(f"Resuming from epoch {start_epoch}")
-        print(f"Best loss so far: {best_loss:.4f}")
-        print(f"Total samples trained: {total_samples_trained:,}")
-        print(f"Total tokens trained: {total_tokens_trained:,}\n")
+        try:
+            print(f"\n{'='*60}")
+            print(f"LOADING MODEL from {WEIGHTS_PATH}")
+            print(f"{'='*60}\n")
+            
+            checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=False)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            best_loss = checkpoint.get('best_loss', float('inf'))
+            start_epoch = checkpoint.get('epoch', 0) + 1
+            total_samples_trained = checkpoint.get('total_samples', 0)
+            total_tokens_trained = checkpoint.get('total_tokens', 0)
+            
+            print(f"Resuming from epoch {start_epoch}")
+            print(f"Best loss so far: {best_loss:.4f}")
+            print(f"Total samples trained: {total_samples_trained:,}")
+            print(f"Total tokens trained: {total_tokens_trained:,}\n")
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}")
+            print(f"Starting training from scratch...\n")
+            start_epoch = 0
+            best_loss = float('inf')
+            total_samples_trained = 0
+            total_tokens_trained = 0
     
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -346,21 +384,25 @@ def train():
         fused=True if torch.cuda.is_available() else False
     )
     
-    steps_per_epoch = 1000 // BATCH_SIZE
+    steps_per_epoch = 16000 // BATCH_SIZE
     total_steps = EPOCHS * steps_per_epoch
     scheduler = get_cosine_schedule_with_warmup(optimizer, WARMUP_STEPS, total_steps)
     
-    if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH):
-        checkpoint = torch.load(WEIGHTS_PATH, map_location=device)
-        if 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if 'scheduler_state_dict' in checkpoint:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH) and start_epoch > 0:
+        try:
+            checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=False)
+            if 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scheduler_state_dict' in checkpoint:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        except Exception as e:
+            print(f"Failed to load optimizer/scheduler state: {e}")
+            print(f"Continuing with fresh optimizer/scheduler...\n")
     
     dataset = TokenDataset(data_gen, BATCH_SIZE, CONTEXT_WINDOW)
     dataloader = DataLoader(dataset, batch_size=None)
     
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == torch.float16))
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == torch.float16))
     
     model.train()
     
@@ -372,6 +414,10 @@ def train():
         epoch_loss = 0.0
         epoch_samples = 0
         epoch_tokens = 0
+        epoch_top1_correct = 0
+        epoch_top5_correct = 0
+        epoch_total_predictions = 0
+        epoch_start_time = time.time()
         
         optimizer.zero_grad()
         
@@ -383,7 +429,7 @@ def train():
             Y_batch = Y_batch.to(device)
             mask_batch = mask_batch.to(device)
             
-            with torch.cuda.amp.autocast(dtype=dtype):
+            with torch.amp.autocast('cuda', dtype=dtype):
                 logits = model(X_batch)
                 
                 loss = F.cross_entropy(
@@ -392,21 +438,36 @@ def train():
                     reduction='none'
                 )
                 loss = (loss * mask_batch.reshape(-1)).sum() / mask_batch.sum()
-                loss = loss / GRAD_ACCUM_STEPS
+                
+                with torch.no_grad():
+                    _, top1_preds = logits.max(dim=-1)
+                    _, top5_preds = logits.topk(5, dim=-1)
+                    
+                    y_flat = Y_batch.reshape(-1)
+                    mask_flat = mask_batch.reshape(-1).bool()
+                    top1_flat = top1_preds.reshape(-1)[mask_flat]
+                    top5_flat = top5_preds.reshape(-1, 5)[mask_flat]
+                    y_masked = y_flat[mask_flat]
+                    
+                    top1_correct = (top1_flat == y_masked).sum().item()
+                    top5_correct = (top5_flat == y_masked.unsqueeze(1)).any(dim=1).sum().item()
+                    total_preds = mask_flat.sum().item()
+                    
+                    epoch_top1_correct += top1_correct
+                    epoch_top5_correct += top5_correct
+                    epoch_total_predictions += total_preds
             
             scaler.scale(loss).backward()
-            
-            if (step + 1) % GRAD_ACCUM_STEPS == 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-                scheduler.step()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            scheduler.step()
             
             batch_samples = X_batch.size(0)
             
-            epoch_loss += loss.item() * GRAD_ACCUM_STEPS
+            epoch_loss += loss.item()
             epoch_samples += batch_samples
             epoch_tokens += batch_tokens
             total_samples_trained += batch_samples
@@ -414,18 +475,47 @@ def train():
             
             if (step + 1) % 100 == 0:
                 current_lr = scheduler.get_last_lr()[0]
-                perplexity = math.exp(min(loss.item() * GRAD_ACCUM_STEPS, 20))
+                perplexity = math.exp(min(loss.item(), 20))
+                elapsed_time = time.time() - epoch_start_time
+                steps_per_sec = (step + 1) / elapsed_time if elapsed_time > 0 else 0
+                top1_acc = 100.0 * top1_correct / total_preds if total_preds > 0 else 0
+                top5_acc = 100.0 * top5_correct / total_preds if total_preds > 0 else 0
+                epoch_top1_acc = 100.0 * epoch_top1_correct / epoch_total_predictions if epoch_total_predictions > 0 else 0
+                epoch_top5_acc = 100.0 * epoch_top5_correct / epoch_total_predictions if epoch_total_predictions > 0 else 0
                 
-                print(f"Step {step + 1}/{steps_per_epoch} | Loss: {loss.item() * GRAD_ACCUM_STEPS:.4f} | "
-                      f"PPL: {perplexity:.2f} | LR: {current_lr:.2e}")
+                wandb.log({
+                    "step_loss": loss.item(),
+                    "step_perplexity": perplexity,
+                    "step_top1_accuracy": top1_acc,
+                    "step_top5_accuracy": top5_acc,
+                    "epoch_top1_accuracy": epoch_top1_acc,
+                    "epoch_top5_accuracy": epoch_top5_acc,
+                    "steps_per_second": steps_per_sec,
+                    "learning_rate": current_lr,
+                    "samples_processed": total_samples_trained,
+                    "tokens_processed": total_tokens_trained,
+                    "epoch_progress": (step + 1) / steps_per_epoch,
+                    "global_step": epoch * steps_per_epoch + step + 1
+                })
+                
+                print(f"Step {step + 1}/{steps_per_epoch} | Loss: {loss.item():.4f} | "
+                      f"PPL: {perplexity:.2f} | Top1: {top1_acc:.2f}% | Top5: {top5_acc:.2f}% | "
+                      f"LR: {current_lr:.2e} | Steps/s: {steps_per_sec:.2f}")
         
         avg_loss = epoch_loss / steps_per_epoch
         avg_perplexity = math.exp(min(avg_loss, 20))
+        epoch_duration = time.time() - epoch_start_time
+        steps_per_sec = steps_per_epoch / epoch_duration
+        top1_acc = 100.0 * epoch_top1_correct / epoch_total_predictions if epoch_total_predictions > 0 else 0
+        top5_acc = 100.0 * epoch_top5_correct / epoch_total_predictions if epoch_total_predictions > 0 else 0
         
         wandb.log({
             "epoch": epoch + 1,
             "loss": avg_loss,
             "perplexity": avg_perplexity,
+            "top1_accuracy": top1_acc,
+            "top5_accuracy": top5_acc,
+            "steps_per_second": steps_per_sec,
             "learning_rate": scheduler.get_last_lr()[0],
             "samples_this_epoch": epoch_samples,
             "tokens_this_epoch": epoch_tokens,
@@ -436,10 +526,14 @@ def train():
         print(f"\nEpoch {epoch + 1} Summary:")
         print(f"Average Loss: {avg_loss:.4f}")
         print(f"Perplexity: {avg_perplexity:.2f}")
+        print(f"Top-1 Accuracy: {top1_acc:.2f}%")
+        print(f"Top-5 Accuracy: {top5_acc:.2f}%")
+        print(f"Steps/Second: {steps_per_sec:.2f}")
         print(f"Samples: {epoch_samples:,}")
         print(f"Tokens: {epoch_tokens:,}")
         print(f"Total samples trained: {total_samples_trained:,}")
         print(f"Total tokens trained: {total_tokens_trained:,}")
+        print(f"Epoch duration: {epoch_duration:.2f}s")
         
         if avg_loss < best_loss:
             best_loss = avg_loss
