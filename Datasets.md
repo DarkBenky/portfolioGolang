@@ -50,6 +50,45 @@ smcleod/golang-coder · Datasets at Hugging Face https://share.google/TiwtgVTK7c
 
 - [X] Added - Nan-Do/reason_code-search-net-python · Datasets at Hugging Face https://share.google/hHipkwk44byadNlUR
 
-- [X] Added - suriyagunasekar/stackoverflow-with-meta-data · Datasets at Hugging Face https://share.google/WKuSnRaNJCd3GAbR8
+- [X] Added - suriyagunasekar/stackoverflow-with-meta-data · Datasets at Hugging Face
+- [ ] https://share.google/WKuSnRaNJCd3GAbR8
 
 https://huggingface.co/datasets/QuixiAI/leet10k-alpaca
+
+Nan-Do/reason_code-search-net-python · Datasets at Hugging Face https://share.google/hHipkwk44byadNlUR
+
+https://huggingface.co/datasets/Lite-Coder/LiteCoder-SFT-Terminal-preview
+
+https://huggingface.co/datasets/Anthropic/hh-rlhf?row=4
+
+CShorten/ML-ArXiv-Papers · Datasets at Hugging Face https://share.google/j2dPCoikIfDDr5ofZ
+
+MegaScience/TextbookReasoning · Datasets at Hugging Face https://share.google/w6vQ6Ipv8w2PxWNYc
+
+open-phi/textbooks · Datasets at Hugging Face https://share.google/ilxkFNv20cInwS9mg
+
+SciPhi/textbooks-are-all-you-need-lite · Datasets at Hugging Face https://share.google/wERocL9yFJacledPu
+
+schuler/cosmopedia-v2-textbook-and-howto-8.3m · Datasets at Hugging Face https://share.google/6fmGN0QuriYM7v8A0
+
+amongglue/muse_textbooks · Datasets at Hugging Face https://share.google/3okycjqCBRLQ5FcV1
+
+Nbardy/science-theory-textbooks · Datasets at Hugging Face https://share.google/mUpR6GaXFcTRBtT2X
+
+crumb/textbook-codex · Datasets at Hugging Face https://share.google/bLBidozftbLz8SGBY
+
+burgerbee/philosophy_textbook · Datasets at Hugging Face https://share.google/3N0cs9FXTYFsveroX
+
+monology/pile-uncopyrighted · Datasets at Hugging Face https://share.google/0B0CGYMksrknOCYHX
+
+andstor/the_pile_github · Datasets at Hugging Face https://share.google/9QpMarDgZr8R1JFJB
+
+OpenDataArena/ODA-Mixture-100k · Datasets at Hugging Face https://share.google/jF9wi0vDvAJFqM1Ka
+
+https://huggingface.co/datasets/smcleod/golang-coder
+
+https://huggingface.co/datasets/microsoft/rStar-Coder
+
+https://huggingface.co/datasets/QuixiAI/dolphin-coder
+
+https://huggingface.co/datasets/allenai/ai2_arc
