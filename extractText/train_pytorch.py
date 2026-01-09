@@ -148,16 +148,15 @@ class TransformerBlock(nn.Module):
         self.norm1 = RMSNorm(d_model)
         self.norm2 = RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
-        self.scale = math.sqrt(num_layers)
 
     def forward(self, x):
         residual = x
         x = self.norm1(x)
-        x = residual + self.dropout(self.attention(x)) / self.scale
+        x = residual + self.dropout(self.attention(x))
         
         residual = x
         x = self.norm2(x)
-        x = residual + self.dropout(self.feed_forward(x)) / self.scale
+        x = residual + self.dropout(self.feed_forward(x))
         
         return x
 
@@ -248,25 +247,37 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
+def get_exp_decay_schedule(optimizer, num_warmup_steps, decay_steps, decay_rate=0.96, min_lr_ratio=0.1):
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        decay_progress = (current_step - num_warmup_steps) // decay_steps
+        return max(min_lr_ratio, decay_rate ** decay_progress)
+    
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
 def train():
     CONTEXT_WINDOW = 2048
     D_MODEL = 2048
     NUM_HEADS = 32
     NUM_KV_HEADS = 8
     NUM_LAYERS = 18
-    BATCH_SIZE = 1
-    LEARNING_RATE = 3e-4
+    BATCH_SIZE = 2
+    LEARNING_RATE = 1e-4
     WEIGHT_DECAY = 0.1
-    WARMUP_STEPS = 2000
+    WARMUP_STEPS = 0
     EPOCHS = 10000
     FFN_DIM = int(D_MODEL * 8 / 3)
     DROPOUT_RATE = 0.0
-    WEIGHTS_PATH = 'best_model_pytorch.pt'
+    WEIGHTS_PATH = 'best_model_pytorch_v2.pt'
     LOAD_BEST_MODEL = True
     MAX_GRAD_NORM = 1.0
     USE_GO_SERVER = True
     GO_SERVER_URL = "http://localhost:4567"
     USE_GRADIENT_CHECKPOINTING = True
+    USE_TORCH_COMPILE = False
+    COMPILE_MODE = "default"
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype = torch.bfloat16
@@ -278,8 +289,24 @@ def train():
     print(f"FlashAttention available: {FLASH_AVAILABLE}")
     print(f"Using Go server for data: {USE_GO_SERVER}")
     
+    wandb_run_id = "akgunoxc"
+    if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH):
+        try:
+            checkpoint = torch.load(WEIGHTS_PATH, map_location='cpu', weights_only=False)
+            saved_run_id = checkpoint.get('wandb_run_id', None)
+            if saved_run_id:
+                wandb_run_id = saved_run_id
+                print(f"Resuming wandb run from checkpoint: {wandb_run_id}")
+            else:
+                print(f"Using hardcoded wandb run: {wandb_run_id}")
+        except Exception as e:
+            print(f"Could not load wandb_run_id from checkpoint: {e}")
+            print(f"Using hardcoded wandb run: {wandb_run_id}")
+    
     wandb.init(
         project="portfolio-transformer-v2",
+        id=wandb_run_id,
+        resume="allow" if wandb_run_id else None,
         config={
             "context_window": CONTEXT_WINDOW,
             "d_model": D_MODEL,
@@ -295,10 +322,12 @@ def train():
             "dropout_rate": DROPOUT_RATE,
             "dtype": str(dtype),
             "flash_attention": FLASH_AVAILABLE,
-            "improvements": "GQA + RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer + GradCheckpoint",
+            "improvements": "GQA + RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer + GradCheckpoint + TorchCompile",
             "load_best_model": LOAD_BEST_MODEL,
             "use_go_server": USE_GO_SERVER,
-            "use_gradient_checkpointing": USE_GRADIENT_CHECKPOINTING
+            "use_gradient_checkpointing": USE_GRADIENT_CHECKPOINTING,
+            "use_torch_compile": USE_TORCH_COMPILE,
+            "compile_mode": COMPILE_MODE if USE_TORCH_COMPILE else None
         }
     )
     
@@ -358,7 +387,11 @@ def train():
             print(f"{'='*60}\n")
             
             checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=False)
-            model.load_state_dict(checkpoint['model_state_dict'])
+            
+            state_dict = checkpoint['model_state_dict']
+            state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+            
+            model.load_state_dict(state_dict, strict=False)
             best_loss = checkpoint.get('best_loss', float('inf'))
             start_epoch = checkpoint.get('epoch', 0) + 1
             total_samples_trained = checkpoint.get('total_samples', 0)
@@ -376,17 +409,37 @@ def train():
             total_samples_trained = 0
             total_tokens_trained = 0
     
+    if USE_TORCH_COMPILE:
+        print(f"\nCompiling model with mode='{COMPILE_MODE}'...")
+        print("This will take 5-10 minutes on first batch, then training will be faster.")
+        model = torch.compile(model, mode=COMPILE_MODE)
+        print("Model compilation setup complete!\n")
+    
+    decay_params = []
+    no_decay_params = []
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            if 'norm' in name.lower() or 'embedding' in name.lower():
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+    
+    print(f"Parameters with weight decay: {sum(p.numel() for p in decay_params):,}")
+    print(f"Parameters without weight decay: {sum(p.numel() for p in no_decay_params):,}")
+    
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        [
+            {'params': decay_params, 'weight_decay': WEIGHT_DECAY},
+            {'params': no_decay_params, 'weight_decay': 0.0}
+        ],
         lr=LEARNING_RATE,
         betas=(0.9, 0.95),
-        weight_decay=WEIGHT_DECAY,
         fused=True if torch.cuda.is_available() else False
     )
     
-    steps_per_epoch = 16000 // BATCH_SIZE
-    total_steps = EPOCHS * steps_per_epoch
-    scheduler = get_cosine_schedule_with_warmup(optimizer, WARMUP_STEPS, total_steps)
+    steps_per_epoch = 1000 // BATCH_SIZE
+    decay_every_n_steps = 2000
+    scheduler = get_exp_decay_schedule(optimizer, WARMUP_STEPS, decay_every_n_steps, decay_rate=0.96, min_lr_ratio=0.01)
     
     if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH) and start_epoch > 0:
         try:
@@ -421,6 +474,12 @@ def train():
         
         optimizer.zero_grad()
         
+        first_param = None
+        for param in model.parameters():
+            if param.requires_grad:
+                first_param = param.data.clone()
+                break
+        
         for step, (X_batch, Y_batch, mask_batch, batch_tokens) in enumerate(dataloader):
             if step >= steps_per_epoch:
                 break
@@ -428,6 +487,17 @@ def train():
             X_batch = X_batch.to(device)
             Y_batch = Y_batch.to(device)
             mask_batch = mask_batch.to(device)
+            
+            if step == 0:
+                print(f"\nFirst batch stats:")
+                print(f"  X_batch shape: {X_batch.shape}")
+                print(f"  Y_batch shape: {Y_batch.shape}")
+                print(f"  mask_batch shape: {mask_batch.shape}")
+                print(f"  mask_batch sum: {mask_batch.sum().item()}")
+                print(f"  mask_batch mean: {mask_batch.mean().item():.4f}")
+                print(f"  X_batch min/max: {X_batch.min().item()}/{X_batch.max().item()}")
+                print(f"  Y_batch min/max: {Y_batch.min().item()}/{Y_batch.max().item()}")
+                print(f"  batch_tokens: {batch_tokens}\n")
             
             with torch.amp.autocast('cuda', dtype=dtype):
                 logits = model(X_batch)
@@ -437,7 +507,13 @@ def train():
                     Y_batch.reshape(-1),
                     reduction='none'
                 )
-                loss = (loss * mask_batch.reshape(-1)).sum() / mask_batch.sum()
+                
+                mask_sum = mask_batch.sum()
+                if mask_sum < 1:
+                    print(f"WARNING: mask_sum={mask_sum}, skipping batch")
+                    continue
+                
+                loss = (loss * mask_batch.reshape(-1)).sum() / mask_sum.clamp(min=1.0)
                 
                 with torch.no_grad():
                     _, top1_preds = logits.max(dim=-1)
@@ -459,7 +535,7 @@ def train():
             
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -475,7 +551,17 @@ def train():
             
             if (step + 1) % 100 == 0:
                 current_lr = scheduler.get_last_lr()[0]
-                perplexity = math.exp(min(loss.item(), 20))
+                loss_val = loss.item()
+                perplexity = math.exp(min(loss_val, 20))
+                
+                if loss_val > 10:
+                    print(f"WARNING: Very high loss {loss_val:.2f} at step {step+1}, mask_sum={batch_tokens}")
+                
+                if grad_norm < 0.001:
+                    print(f"WARNING: Very small grad_norm {grad_norm:.6f} at step {step+1}")
+                elif grad_norm > MAX_GRAD_NORM * 0.9:
+                    print(f"WARNING: Gradient clipping active, grad_norm={grad_norm:.2f} at step {step+1}")
+                
                 elapsed_time = time.time() - epoch_start_time
                 steps_per_sec = (step + 1) / elapsed_time if elapsed_time > 0 else 0
                 top1_acc = 100.0 * top1_correct / total_preds if total_preds > 0 else 0
@@ -484,7 +570,7 @@ def train():
                 epoch_top5_acc = 100.0 * epoch_top5_correct / epoch_total_predictions if epoch_total_predictions > 0 else 0
                 
                 wandb.log({
-                    "step_loss": loss.item(),
+                    "step_loss": loss_val,
                     "step_perplexity": perplexity,
                     "step_top1_accuracy": top1_acc,
                     "step_top5_accuracy": top5_acc,
@@ -492,6 +578,7 @@ def train():
                     "epoch_top5_accuracy": epoch_top5_acc,
                     "steps_per_second": steps_per_sec,
                     "learning_rate": current_lr,
+                    "grad_norm": grad_norm,
                     "samples_processed": total_samples_trained,
                     "tokens_processed": total_tokens_trained,
                     "epoch_progress": (step + 1) / steps_per_epoch,
@@ -500,7 +587,16 @@ def train():
                 
                 print(f"Step {step + 1}/{steps_per_epoch} | Loss: {loss.item():.4f} | "
                       f"PPL: {perplexity:.2f} | Top1: {top1_acc:.2f}% | Top5: {top5_acc:.2f}% | "
-                      f"LR: {current_lr:.2e} | Steps/s: {steps_per_sec:.2f}")
+                      f"GradNorm: {grad_norm:.3f} | LR: {current_lr:.2e} | Steps/s: {steps_per_sec:.2f}")
+        
+        param_change = 0.0
+        if first_param is not None:
+            for param in model.parameters():
+                if param.requires_grad:
+                    param_change = (param.data - first_param).abs().max().item()
+                    break
+        
+        print(f"Max parameter change this epoch: {param_change:.6f}")
         
         avg_loss = epoch_loss / steps_per_epoch
         avg_perplexity = math.exp(min(avg_loss, 20))
@@ -537,15 +633,19 @@ def train():
         
         if avg_loss < best_loss:
             best_loss = avg_loss
+            
+            model_state = model._orig_mod.state_dict() if hasattr(model, '_orig_mod') else model.state_dict()
+            
             checkpoint = {
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': model_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'best_loss': best_loss,
                 'total_samples': total_samples_trained,
                 'total_tokens': total_tokens_trained,
-                'config': wandb.config.as_dict()
+                'config': wandb.config.as_dict(),
+                'wandb_run_id': wandb.run.id
             }
             torch.save(checkpoint, WEIGHTS_PATH)
             print(f"New best model saved with loss: {best_loss:.4f}")

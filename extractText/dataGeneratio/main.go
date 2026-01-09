@@ -154,11 +154,16 @@ var (
 	lastFileUpdate time.Time
 
 	refillChan = make(chan int, 10)
+
+	totalSamplesServed uint64
+	totalTokensServed  uint64
+	statsMu            sync.Mutex
 )
 
 type CachedSample struct {
 	TokenizedText []uint32
 	Category      uint8
+	TokenCount    uint64
 }
 
 func init() {
@@ -311,6 +316,7 @@ func loadRandomSample() (*CachedSample, error) {
 	cachedSample := &CachedSample{
 		TokenizedText: make([]uint32, len(sample.TokenizedText)),
 		Category:      sample.Category,
+		TokenCount:    sample.NumberOfTokens,
 	}
 	copy(cachedSample.TokenizedText, sample.TokenizedText)
 
@@ -379,6 +385,7 @@ func fillCache(count int) {
 					cachedSample := CachedSample{
 						TokenizedText: sample.TokenizedText,
 						Category:      sample.Category,
+						TokenCount:    sample.NumberOfTokens,
 					}
 					fileSamples = append(fileSamples, cachedSample)
 				}
@@ -409,7 +416,7 @@ func fillCache(count int) {
 	if filesLoaded > 0 {
 		avgPerFile = len(newSamples) / filesLoaded
 	}
-	fmt.Printf("Cache refill: %d files -> %d samples (%d avg/file, total: %d)\n", 
+	fmt.Printf("Cache refill: %d files -> %d samples (%d avg/file, total: %d)\n",
 		filesLoaded, len(newSamples), avgPerFile, finalSize)
 }
 
@@ -442,8 +449,36 @@ func getSampleFromCache() (*CachedSample, error) {
 		return nil, fmt.Errorf("cache is empty")
 	}
 
-	idx := mathrand.Intn(len(sampleCache))
+	var totalWeight uint64
+	for i := range sampleCache {
+		totalWeight += sampleCache[i].TokenCount
+	}
+
+	if totalWeight == 0 {
+		idx := mathrand.Intn(len(sampleCache))
+		sample := sampleCache[idx]
+		sampleCache[idx] = sampleCache[len(sampleCache)-1]
+		sampleCache = sampleCache[:len(sampleCache)-1]
+		return &sample, nil
+	}
+
+	randomWeight := uint64(mathrand.Int63n(int64(totalWeight)))
+	var idx int
+	var cumulativeWeight uint64
+	for i := range sampleCache {
+		cumulativeWeight += sampleCache[i].TokenCount
+		if randomWeight < cumulativeWeight {
+			idx = i
+			break
+		}
+	}
+
 	sample := sampleCache[idx]
+
+	statsMu.Lock()
+	totalSamplesServed++
+	totalTokensServed += sample.TokenCount
+	statsMu.Unlock()
 
 	sampleCache[idx] = sampleCache[len(sampleCache)-1]
 	sampleCache = sampleCache[:len(sampleCache)-1]
@@ -546,14 +581,73 @@ func getBatch(c echo.Context) error {
 func cacheStats(c echo.Context) error {
 	cacheMu.RLock()
 	currentSize := len(sampleCache)
+	var minTokens, maxTokens, totalTokens uint64
+	if currentSize > 0 {
+		minTokens = sampleCache[0].TokenCount
+		for i := range sampleCache {
+			tc := sampleCache[i].TokenCount
+			totalTokens += tc
+			if tc < minTokens {
+				minTokens = tc
+			}
+			if tc > maxTokens {
+				maxTokens = tc
+			}
+		}
+	}
+	cacheMu.RUnlock()
+
+	statsMu.Lock()
+	sampled := totalSamplesServed
+	servedTokens := totalTokensServed
+	statsMu.Unlock()
+
+	var avgCacheTokens, avgServedTokens, prioritizationRatio float64
+	if currentSize > 0 {
+		avgCacheTokens = float64(totalTokens) / float64(currentSize)
+	}
+	if sampled > 0 {
+		avgServedTokens = float64(servedTokens) / float64(sampled)
+	}
+	if avgCacheTokens > 0 {
+		prioritizationRatio = avgServedTokens / avgCacheTokens
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"cache_size":           currentSize,
+		"cache_capacity":       cacheSize,
+		"refill_threshold":     refillThreshold,
+		"is_refilling":         atomic.LoadInt32(&isRefilling) == 1,
+		"cache_utilization":    float64(currentSize) / float64(cacheSize) * 100,
+		"min_tokens_in_cache":  minTokens,
+		"max_tokens_in_cache":  maxTokens,
+		"avg_tokens_in_cache":  avgCacheTokens,
+		"total_samples_served": sampled,
+		"avg_tokens_served":    avgServedTokens,
+		"prioritization_ratio": prioritizationRatio,
+	})
+}
+
+func reloadCache(c echo.Context) error {
+	cacheMu.Lock()
+	oldSize := len(sampleCache)
+	sampleCache = nil
+	sampleCache = make([]CachedSample, 0, cacheSize)
+	cacheMu.Unlock()
+
+	updateFileList()
+
+	fillCache(cacheSize)
+
+	cacheMu.RLock()
+	newSize := len(sampleCache)
 	cacheMu.RUnlock()
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"cache_size":        currentSize,
-		"cache_capacity":    cacheSize,
-		"refill_threshold":  refillThreshold,
-		"is_refilling":      atomic.LoadInt32(&isRefilling) == 1,
-		"cache_utilization": float64(currentSize) / float64(cacheSize) * 100,
+		"status":    "cache_reloaded",
+		"old_size":  oldSize,
+		"new_size":  newSize,
+		"timestamp": time.Now().Unix(),
 	})
 }
 
@@ -568,6 +662,7 @@ func main() {
 	e.POST("/save-data", saveData)
 	e.POST("/get-batch", getBatch)
 	e.GET("/cache-stats", cacheStats)
+	e.GET("/reload-cache", reloadCache)
 
 	e.Logger.Fatal(e.Start(":4567"))
 }
