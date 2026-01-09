@@ -591,6 +591,118 @@ def process_general_datasets():
         except Exception as e:
             print(f"Error loading dataset {dataset_name}: {e}")
 
+def process_the_stack_language(lang, category, progress_key):
+    SAVE_PERIOD_TO_RAG = 16
+    SAVE_PROGRESS_INTERVAL = 512
+    
+    progress_data = load_progress()
+    offset = progress_data.get(progress_key, 0)
+    
+    print(f"\n{'='*60}")
+    print(f"Processing: the-stack ({lang})")
+    print(f"Starting from offset: {offset}")
+    print(f"{'='*60}\n")
+    
+    try:
+        dataset = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir=f"data/{lang}")
+        
+        count = 0
+        for item in iter(dataset):
+            count += 1
+            if count <= offset:
+                continue
+            
+            try:
+                code = item['content']
+                combined_text = f"{code}{END_TOKEN}"
+                
+                if count % SAVE_PERIOD_TO_RAG == 0:
+                    result = embed_text_to_rag(combined_text, chunk_size=1024, overlap=128)
+                
+                data = {
+                    'text': combined_text,
+                    'tokenized_text': tokenizer.encode(combined_text).ids,
+                    'category': category
+                }
+                url = "http://localhost:4567/save-data"
+                response = session.post(url, json=data, timeout=5)
+                if response.status_code != 200:
+                    print(f"Failed to save data: {response.text}")
+                else:
+                    result = response.json()
+                    if count % 500 == 0:
+                        pprint(result)
+                        if 'processed_tokens' in result:
+                            print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
+                        wandb.log({
+                            f"{progress_key}/file_counter": result.get('file_counter', 0),
+                            f"{progress_key}/processed_tokens": result.get('processed_tokens', 0),
+                            f"{progress_key}/requests_per_sec": result.get('requests_per_sec', 0),
+                            f"{progress_key}/samples": count,
+                        })
+                
+                if count % SAVE_PROGRESS_INTERVAL == 0:
+                    update_progress(progress_key, count)
+                    print(f"Progress saved: {progress_key} at {count}")
+            
+            except Exception as e:
+                print(f"Error processing item {count}: {e}")
+                continue
+        
+        update_progress(progress_key, count)
+        print(f"Dataset {progress_key} completed at {count}")
+    
+    except Exception as e:
+        print(f"Error loading the-stack ({lang}): {e}")
+
+def process_stack_python():
+    process_the_stack_language('python', CODE_MIX_TEXTS, 'stack_python')
+
+def process_stack_go():
+    process_the_stack_language('go', CODE_MIX_TEXTS, 'stack_go')
+
+def process_stack_c():
+    process_the_stack_language('c', CODE_MIX_TEXTS, 'stack_c')
+
+def process_stack_cpp():
+    process_the_stack_language('c++', CODE_MIX_TEXTS, 'stack_cpp')
+
+def process_stack_rust():
+    process_the_stack_language('rust', CODE_MIX_TEXTS, 'stack_rust')
+
+def process_stack_javascript():
+    process_the_stack_language('javascript', CODE_MIX_TEXTS, 'stack_js')
+
+def process_stack_typescript():
+    process_the_stack_language('typescript', CODE_MIX_TEXTS, 'stack_ts')
+
+def process_stack_sql():
+    process_the_stack_language('sql', CODE_MIX_TEXTS, 'stack_sql')
+
+def process_stack_assembly():
+    process_the_stack_language('assembly', CODE_MIX_TEXTS, 'stack_asm')
+
+def process_the_stack_datasets_parallel():
+    languages = [
+        process_stack_python,
+        process_stack_go,
+        process_stack_c,
+        process_stack_cpp,
+        process_stack_rust,
+        process_stack_javascript,
+        process_stack_typescript,
+        process_stack_sql,
+        process_stack_assembly,
+    ]
+    
+    with ProcessPoolExecutor(max_workers=min(len(languages), os.cpu_count())) as executor:
+        futures = [executor.submit(func) for func in languages]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error in parallel processing: {e}")
+
 def process_the_stack_datasets():
     languages = [
         ['python', CODE_MIX_TEXTS, 'stack_python'],
@@ -604,71 +716,9 @@ def process_the_stack_datasets():
         ['assembly', CODE_MIX_TEXTS, 'stack_asm'],
     ]
     
-    SAVE_PERIOD_TO_RAG = 16
-    SAVE_PROGRESS_INTERVAL = 512
-    
-    progress_data = load_progress()
-    
     for lang_config in languages:
         lang, category, progress_key = lang_config
-        offset = progress_data.get(progress_key, 0)
-        
-        print(f"\n{'='*60}")
-        print(f"Processing: the-stack ({lang})")
-        print(f"Starting from offset: {offset}")
-        print(f"{'='*60}\n")
-        
-        try:
-            dataset = load_dataset("bigcode/the-stack", streaming=True, split="train", data_dir=f"data/{lang}")
-            
-            count = 0
-            for item in iter(dataset):
-                count += 1
-                if count <= offset:
-                    continue
-                
-                try:
-                    code = item['content']
-                    combined_text = f"{code}{END_TOKEN}"
-                    
-                    if count % SAVE_PERIOD_TO_RAG == 0:
-                        result = embed_text_to_rag(combined_text, chunk_size=1024, overlap=128)
-                    
-                    data = {
-                        'text': combined_text,
-                        'tokenized_text': tokenizer.encode(combined_text).ids,
-                        'category': category
-                    }
-                    url = "http://localhost:4567/save-data"
-                    response = session.post(url, json=data, timeout=5)
-                    if response.status_code != 200:
-                        print(f"Failed to save data: {response.text}")
-                    else:
-                        result = response.json()
-                        if count % 500 == 0:
-                            pprint(result)
-                            if 'processed_tokens' in result:
-                                print(f"Processed: {format_tokens(result['processed_tokens'])} tokens")
-                            wandb.log({
-                                f"{progress_key}/file_counter": result.get('file_counter', 0),
-                                f"{progress_key}/processed_tokens": result.get('processed_tokens', 0),
-                                f"{progress_key}/requests_per_sec": result.get('requests_per_sec', 0),
-                                f"{progress_key}/samples": count,
-                            })
-                    
-                    if count % SAVE_PROGRESS_INTERVAL == 0:
-                        update_progress(progress_key, count)
-                        print(f"Progress saved: {progress_key} at {count}")
-                
-                except Exception as e:
-                    print(f"Error processing item {count}: {e}")
-                    continue
-            
-            update_progress(progress_key, count)
-            print(f"Dataset {progress_key} completed at {count}")
-        
-        except Exception as e:
-            print(f"Error loading the-stack ({lang}): {e}")
+        process_the_stack_language(lang, category, progress_key)
 
 def process_synthetic_1():
     ds = load_dataset("PrimeIntellect/SYNTHETIC-1", split="train", streaming=True)
@@ -2112,7 +2162,15 @@ if __name__ == "__main__":
             executor.submit(process_code_datasets): 'code',
             executor.submit(process_math_datasets): 'math',
             executor.submit(process_general_datasets): 'general',
-            executor.submit(process_the_stack_datasets): 'stack',
+            executor.submit(process_stack_python): 'stack_python',
+            executor.submit(process_stack_go): 'stack_go',
+            executor.submit(process_stack_c): 'stack_c',
+            executor.submit(process_stack_cpp): 'stack_cpp',
+            executor.submit(process_stack_rust): 'stack_rust',
+            executor.submit(process_stack_javascript): 'stack_js',
+            executor.submit(process_stack_typescript): 'stack_ts',
+            executor.submit(process_stack_sql): 'stack_sql',
+            executor.submit(process_stack_assembly): 'stack_asm',
             executor.submit(process_synthetic_1): 'synthetic_1',
             executor.submit(process_s1k): 's1k',
             executor.submit(process_natural_reasoning): 'natural_reasoning',
