@@ -449,30 +449,7 @@ func getSampleFromCache() (*CachedSample, error) {
 		return nil, fmt.Errorf("cache is empty")
 	}
 
-	var totalWeight uint64
-	for i := range sampleCache {
-		totalWeight += sampleCache[i].TokenCount
-	}
-
-	if totalWeight == 0 {
-		idx := mathrand.Intn(len(sampleCache))
-		sample := sampleCache[idx]
-		sampleCache[idx] = sampleCache[len(sampleCache)-1]
-		sampleCache = sampleCache[:len(sampleCache)-1]
-		return &sample, nil
-	}
-
-	randomWeight := uint64(mathrand.Int63n(int64(totalWeight)))
-	var idx int
-	var cumulativeWeight uint64
-	for i := range sampleCache {
-		cumulativeWeight += sampleCache[i].TokenCount
-		if randomWeight < cumulativeWeight {
-			idx = i
-			break
-		}
-	}
-
+	idx := mathrand.Intn(len(sampleCache))
 	sample := sampleCache[idx]
 
 	statsMu.Lock()
