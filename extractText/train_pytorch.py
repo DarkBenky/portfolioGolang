@@ -376,7 +376,7 @@ def train():
     print(f"Model size: ~{total_params * 2 / 1e9:.2f} GB (bfloat16)")
     
     start_epoch = 0
-    best_loss = float('inf')
+    best_loss = None
     total_samples_trained = 0
     total_tokens_trained = 0
     
@@ -392,20 +392,21 @@ def train():
             state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
             
             model.load_state_dict(state_dict, strict=False)
-            best_loss = checkpoint.get('best_loss', float('inf'))
+            
             start_epoch = checkpoint.get('epoch', 0) + 1
             total_samples_trained = checkpoint.get('total_samples', 0)
             total_tokens_trained = checkpoint.get('total_tokens', 0)
             
             print(f"Resuming from epoch {start_epoch}")
-            print(f"Best loss so far: {best_loss:.4f}")
+            print(f"Previous best loss from checkpoint: {checkpoint.get('best_loss', 'N/A')}")
+            print(f"Will establish new baseline from first epoch")
             print(f"Total samples trained: {total_samples_trained:,}")
             print(f"Total tokens trained: {total_tokens_trained:,}\n")
         except Exception as e:
             print(f"Failed to load checkpoint: {e}")
             print(f"Starting training from scratch...\n")
             start_epoch = 0
-            best_loss = float('inf')
+            best_loss = None
             total_samples_trained = 0
             total_tokens_trained = 0
     
@@ -631,6 +632,17 @@ def train():
         print(f"Total tokens trained: {total_tokens_trained:,}")
         print(f"Epoch duration: {epoch_duration:.2f}s")
         
+        if best_loss is None:
+            best_loss = avg_loss
+            print(f"\nEstablishing baseline: best_loss set to {best_loss:.4f}")
+            print(f"Future epochs will save if they beat this loss\n")
+            
+            wandb.log({
+                "baseline_established": True,
+                "baseline_loss": best_loss,
+                "baseline_epoch": epoch + 1
+            })
+        
         if avg_loss < best_loss:
             best_loss = avg_loss
             
@@ -649,6 +661,15 @@ def train():
             }
             torch.save(checkpoint, WEIGHTS_PATH)
             print(f"New best model saved with loss: {best_loss:.4f}")
+            
+            wandb.log({
+                "model_saved": True,
+                "saved_epoch": epoch + 1,
+                "saved_loss": best_loss,
+                "saved_perplexity": avg_perplexity,
+                "saved_top1_accuracy": top1_acc,
+                "saved_top5_accuracy": top5_acc
+            })
     
     wandb.finish()
 
