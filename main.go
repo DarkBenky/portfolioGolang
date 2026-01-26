@@ -10,7 +10,7 @@ import (
 	"io"
 	"log"
 
-	// inmem "main/inMem"
+	"main/bills"
 	"math"
 	"net/http"
 	"net/url"
@@ -32,11 +32,11 @@ import (
 
 // hashPasswordWithSalt creates a SHA-256 hash of password+salt to stay within bcrypt's 72-byte limit
 var (
-	SALT       string
-	JWT_SECRET string
-	BASE_URL   string
-	db         *DB
-	dbMutex    sync.RWMutex
+	SALT           string
+	JWT_SECRET     string
+	BASE_URL       string
+	db             *DB
+	dbMutex        sync.RWMutex
 	candleInterval int64 = 600 // 10 minutes
 )
 
@@ -2537,8 +2537,6 @@ func FillInBetweenPrices(Ticker string) error {
 		prevPrice := existingPrices[index-1]
 		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
 		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
-
-		
 
 		if currentDateInt-prevDateInt > candleInterval*2 {
 			fillsNeeded := (currentDateInt-prevDateInt)/candleInterval - 1
@@ -5644,6 +5642,126 @@ func topLosers(c echo.Context) error {
 	return c.JSON(http.StatusOK, losers)
 }
 
+func getExpenses(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	expenses, err := bills.GetExpensesByUserID(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get expenses"})
+	}
+
+	return c.JSON(http.StatusOK, expenses)
+}
+
+func addExpense(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	var expense bills.Expense
+	if err := c.Bind(&expense); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	expense.UserID = userID
+
+	if expense.Description == "" || expense.Amount <= 0 || expense.Category == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing or invalid required fields"})
+	}
+
+	if err := bills.AddExpense(expense); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to add expense"})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"message": "Expense added successfully"})
+}
+
+func updateExpense(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	var expense bills.Expense
+	if err := c.Bind(&expense); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	expense.UserID = userID
+
+	if expense.ID == 0 || expense.Description == "" || expense.Amount <= 0 || expense.Category == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing or invalid required fields"})
+	}
+
+	if err := bills.UpdateExpense(expense); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update expense"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Expense updated successfully"})
+}
+
+func deleteExpense(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	expenseID := c.QueryParam("id")
+	if expenseID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing expense ID"})
+	}
+
+	id, err := strconv.Atoi(expenseID)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid expense ID"})
+	}
+
+	if err := bills.DeleteExpense(id, userID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete expense"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Expense deleted successfully"})
+}
+
+func getExpensesByCategory(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	categoryStats, err := bills.GroupExpensesByCategory(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get category stats"})
+	}
+
+	return c.JSON(http.StatusOK, categoryStats)
+}
+
+func getExpensesByMonth(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	monthlyStats, err := bills.GroupExpensesByMonth(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get monthly stats"})
+	}
+
+	return c.JSON(http.StatusOK, monthlyStats)
+}
+
+func getExpensesBiweekly(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	biweeklyStats, err := bills.GroupExpensesBiweekly(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get biweekly stats"})
+	}
+
+	return c.JSON(http.StatusOK, biweeklyStats)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -5682,6 +5800,11 @@ func main() {
 	}
 
 	db = &DB{DB: sqlDB}
+
+	err = bills.InitBillDB(sqlDB)
+	if err != nil {
+		log.Fatal("Failed to initialize bills database:", err)
+	}
 
 	log.Println("Database initialized successfully")
 
@@ -5785,21 +5908,13 @@ func main() {
 	protected.GET("/asset/details", getLatestAssetDetailsEndpoint)
 	protected.GET("/asset/details/history", getAssetDetails)
 
-
-	2025/12/31 03:41:00 Error retrieving latest price for EQQB: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for ISPA: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for UQAB: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for 84X0: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for EXSA: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for IBC1: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for SXRT: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for IVDF: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for IUSZ: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for JEAA: sql: no rows in result set
-	2025/12/31 03:41:00 Error retrieving latest price for EDFS: sql: no rows in result set
-
-	It wants exchange on end of ticker for some reason now
-
+	protected.GET("/expenses", getExpenses)
+	protected.POST("/expenses", addExpense)
+	protected.PUT("/expenses", updateExpense)
+	protected.DELETE("/expenses", deleteExpense)
+	protected.GET("/expenses/stats/category", getExpensesByCategory)
+	protected.GET("/expenses/stats/monthly", getExpensesByMonth)
+	protected.GET("/expenses/stats/biweekly", getExpensesBiweekly)
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)

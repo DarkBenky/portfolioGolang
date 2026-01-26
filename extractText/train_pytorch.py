@@ -188,6 +188,32 @@ class CausalLanguageModel(nn.Module):
                     torch.nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Embedding):
                 torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    
+    def add_layers(self, num_new_layers, num_heads, ff_dim, dropout=0.0, num_kv_heads=None):
+        current_layers = len(self.blocks)
+        new_blocks = []
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        
+        for i in range(num_new_layers):
+            block = TransformerBlock(
+                self.d_model, num_heads, ff_dim, dropout, 
+                current_layers + i, current_layers + num_new_layers, num_kv_heads
+            )
+            
+            for module in block.modules():
+                if isinstance(module, nn.Linear):
+                    if 'proj' in str(type(module).__name__).lower() or hasattr(module, 'out_features'):
+                        torch.nn.init.zeros_(module.weight)
+                        if module.bias is not None:
+                            torch.nn.init.zeros_(module.bias)
+            
+            block = block.to(device=device, dtype=dtype)
+            new_blocks.append(block)
+        
+        self.blocks.extend(new_blocks)
+        print(f"Added {num_new_layers} new layers (initialized as passthrough)")
+        print(f"Total layers now: {len(self.blocks)}")
 
     def forward(self, x):
         x = self.token_embedding(x)
@@ -262,9 +288,10 @@ def train():
     D_MODEL = 2048
     NUM_HEADS = 32
     NUM_KV_HEADS = 8
-    NUM_LAYERS = 18
+    NUM_LAYERS = 21
+    ADD_NEW_LAYERS = 0
     BATCH_SIZE = 2
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 0.0002
     WEIGHT_DECAY = 0.1
     WARMUP_STEPS = 0
     EPOCHS = 10000
@@ -289,19 +316,23 @@ def train():
     print(f"FlashAttention available: {FLASH_AVAILABLE}")
     print(f"Using Go server for data: {USE_GO_SERVER}")
     
-    wandb_run_id = "akgunoxc"
+    wandb_run_id = "akgunoxc" if ADD_NEW_LAYERS == 0 else None
     if LOAD_BEST_MODEL and os.path.exists(WEIGHTS_PATH):
         try:
             checkpoint = torch.load(WEIGHTS_PATH, map_location='cpu', weights_only=False)
             saved_run_id = checkpoint.get('wandb_run_id', None)
-            if saved_run_id:
+            if saved_run_id and ADD_NEW_LAYERS == 0:
                 wandb_run_id = saved_run_id
                 print(f"Resuming wandb run from checkpoint: {wandb_run_id}")
             else:
-                print(f"Using hardcoded wandb run: {wandb_run_id}")
+                if ADD_NEW_LAYERS > 0:
+                    print(f"Starting NEW wandb run (adding {ADD_NEW_LAYERS} layers)")
+                else:
+                    print(f"Using hardcoded wandb run: {wandb_run_id}")
         except Exception as e:
             print(f"Could not load wandb_run_id from checkpoint: {e}")
-            print(f"Using hardcoded wandb run: {wandb_run_id}")
+            if ADD_NEW_LAYERS == 0:
+                print(f"Using hardcoded wandb run: {wandb_run_id}")
     
     wandb.init(
         project="portfolio-transformer-v2",
@@ -309,10 +340,8 @@ def train():
         resume="allow" if wandb_run_id else None,
         config={
             "context_window": CONTEXT_WINDOW,
-            "d_model": D_MODEL,
-            "num_heads": NUM_HEADS,
-            "num_kv_heads": NUM_KV_HEADS,
-            "num_layers": NUM_LAYERS,
+            "add_new_layers": ADD_NEW_LAYERS,
+            "total_layers": NUM_LAYERS + ADD_NEW_LAYERS,
             "batch_size": BATCH_SIZE,
             "learning_rate": LEARNING_RATE,
             "weight_decay": WEIGHT_DECAY,
@@ -322,7 +351,7 @@ def train():
             "dropout_rate": DROPOUT_RATE,
             "dtype": str(dtype),
             "flash_attention": FLASH_AVAILABLE,
-            "improvements": "GQA + RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer + GradCheckpoint + TorchCompile",
+            "improvements": "GQA + RMSNorm + SwiGLU + RoPE + FlashAttention2 + WeightTying + GradAccum + GoDataServer + GradCheckpoint + TorchCompile" + (" + ProgressiveLayerAdding" if ADD_NEW_LAYERS > 0 else ""),
             "load_best_model": LOAD_BEST_MODEL,
             "use_go_server": USE_GO_SERVER,
             "use_gradient_checkpointing": USE_GRADIENT_CHECKPOINTING,
@@ -389,7 +418,14 @@ def train():
             checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=False)
             
             state_dict = checkpoint['model_state_dict']
-            state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+            if ADD_NEW_LAYERS > 0:
+                print(f"\nAdding {ADD_NEW_LAYERS} new layers to existing {NUM_LAYERS} layers...")
+                model.add_layers(ADD_NEW_LAYERS, NUM_HEADS, FFN_DIM, DROPOUT_RATE, NUM_KV_HEADS)
+                print(f"Loading checkpoint with {NUM_LAYERS} layers into model with {NUM_LAYERS + ADD_NEW_LAYERS} layers")
+                model.load_state_dict(state_dict, strict=False)
+                print(f"New layers initialized as passthrough - they will learn gradually\n")
+            else:
+                state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
             
             model.load_state_dict(state_dict, strict=False)
             

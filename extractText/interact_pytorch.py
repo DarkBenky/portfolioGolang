@@ -229,7 +229,7 @@ def main():
     
     while True:
         try:
-            prompt = input("\n### Prompt:\n").strip()
+            prompt = input("\nPrompt: ").strip()
             
             if prompt.lower() in ['quit', 'exit']:
                 print("Goodbye!")
@@ -309,14 +309,12 @@ def main():
             if not prompt:
                 continue
             
-            formatted_prompt = f"### Prompt:\n{prompt}\n### Response:\n"
-            
             if streaming_mode:
-                print("### Response:\n", end='', flush=True)
+                print("\n", end='', flush=True)
                 start_time = time.time()
                 token_count = 0
 
-                for token_text in generator.generate_streaming(formatted_prompt, max_length=max_length, temperature=temperature, top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty):
+                for token_text in generator.generate_streaming(prompt, max_length=max_length, temperature=temperature, top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty):
                     print(token_text, end=' ', flush=True)
                     token_count += 1
                 elapsed = time.time() - start_time
@@ -324,7 +322,7 @@ def main():
                 print(f"\n\n[Generated {token_count} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tokens/sec)]")
             else:
                 response, num_tokens, tokens_per_sec = generator.generate(
-                    formatted_prompt, 
+                    prompt, 
                     max_length=max_length, 
                     temperature=temperature, 
                     top_k=top_k,
@@ -332,11 +330,8 @@ def main():
                     repetition_penalty=repetition_penalty
                 )
                 
-                print("### Response:")
+                print("\nGeneration:")
                 print(response)
-                print(f"\n[Generated {num_tokens} tokens ({tokens_per_sec:.1f} tokens/sec)]")
-                
-                print("\nAssistant:", response)
                 print(f"\n[Generated {num_tokens} tokens ({tokens_per_sec:.1f} tokens/sec)]")
             
         except KeyboardInterrupt:
