@@ -270,6 +270,13 @@
               :active="activeView === 'tradingView'"
               @click="activeView = 'tradingView'"
             />
+            <v-list-item
+              prepend-icon="mdi-receipt"
+              title="Expenses"
+              value="expenses"
+              :active="activeView === 'expenses'"
+              @click="activeView = 'expenses'"
+            />
           </v-list>
         </v-navigation-drawer>
 
@@ -1073,6 +1080,9 @@
         <v-container v-if="activeView == 'tradingView'">
           view were you can see individual stock and etfs and make technical analysis
         </v-container>
+        <v-container v-if="activeView === 'expenses'" fluid class="pa-0">
+          <ExpensesView />
+        </v-container>
       </v-main>
     </template>
   </v-app>
@@ -1080,6 +1090,7 @@
 
 <script>
 import LoginRegister from './components/loginRegister.vue'
+import ExpensesView from './components/expensesView.vue'
 import { API_BASE_URL, PYTHON_API_URL } from './config'
 import CandleChart from './components/candleChart.vue'
 import BacktestChart from './components/backtestChart.vue'
@@ -1092,6 +1103,7 @@ export default {
 
   components: {
     LoginRegister,
+    ExpensesView,
     CandleChart,
     BacktestChart,
     HoldingView,
