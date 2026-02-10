@@ -2,7 +2,6 @@ import yfinance as yf
 import flask
 from functools import lru_cache
 from getAssets import get_etf_data
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import re
@@ -14,6 +13,7 @@ from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 from datetime import datetime, timezone
 from collections import deque
 from flask_cors import CORS
+import atexit
 
 app = flask.Flask(__name__)
 
@@ -24,7 +24,11 @@ model = creteSentimentAnalyzer()
 
 executor = ThreadPoolExecutor(max_workers=10)
 
-# Simple in-memory log storage (last 100 requests)
+def cleanup_executor():
+    executor.shutdown(wait=True, cancel_futures=False)
+
+atexit.register(cleanup_executor)
+
 request_logs = deque(maxlen=512)
 
 @app.before_request
@@ -265,58 +269,50 @@ def convert_ticker_to_isin(ticker):
 # curl "http://localhost:5123/api/search?identifier=AAPL"
 # curl "http://localhost:5123/api/search?identifier=US0378331005&search_type=isin"
 @app.route('/api/search', methods=['GET'])
-async def api_search():
-    """Async route with thread pool execution"""
+def api_search():
     identifier = flask.request.args.get('identifier', '')
     search_type = flask.request.args.get('search_type', 'ticker')
     
     if not identifier:
         return flask.jsonify({'error': 'Identifier parameter is required.'}), 400
     
-    # Run blocking function in thread pool for true concurrency
-    loop = asyncio.get_event_loop()
-    results = await loop.run_in_executor(executor, search_ticker_info, identifier, search_type)
+    results = search_ticker_info(identifier, search_type)
     return flask.jsonify(results)
 
 # curl "http://127.0.0.1:5123/api/etf_data?ticker=VWCE.DE&isin=IE00BK5BQT80&etf_name=Vanguard%20FTSE%20All-World"
 @app.route('/api/etf_data', methods=['GET'])
-async def api_etf_data():
-    """Async route for ETF data with thread pool execution"""
+def api_etf_data():
     ticker = flask.request.args.get('ticker', '')
     isin = flask.request.args.get('isin', '')
     etf_name = flask.request.args.get('etf_name', '')
     
-    # Run blocking function in thread pool for true concurrency
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(executor, get_etf_data, ticker, isin, etf_name)
+    future = executor.submit(get_etf_data, ticker, isin, etf_name)
+    data = future.result()
     return flask.jsonify(data.to_dict())
 
 # curl "http://127.0.0.1:5123/api/fetch_news?ticker=AAPL&num_articles=5"
 @app.route('/api/fetch_news', methods=['GET'])
-async def fetch_news():
-    """Async route for fetching news articles with sentiment analysis"""
+def fetch_news():
     ticker = flask.request.args.get('ticker', '')
     num_articles = int(flask.request.args.get('num_articles', '3'))
     
-    # Run blocking function in thread pool for true concurrency
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(executor, getNews, ticker, num_articles, model)
+    future = executor.submit(getNews, ticker, num_articles, model)
+    data = future.result()
     return flask.jsonify(data)
 
 # curl "http://localhost:5123/api/get_price?ticker=AAPL&last_updates_unix_timestamp=1700000000&interval=1m"
 @app.route('/api/get_price', methods=['GET'])
-async def api_get_price():
+def api_get_price():
     ticker = flask.request.args.get('ticker', '')
     last_updates_unix_timestamp = int(flask.request.args.get('last_updates_unix_timestamp', '0'))
     interval = flask.request.args.get('interval', '1m')
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(executor, getPrice, ticker, last_updates_unix_timestamp, interval)
+    future = executor.submit(getPrice, ticker, last_updates_unix_timestamp, interval)
+    data = future.result()
     return flask.jsonify(data)
 
 # curl -X POST "http://localhost:5123/api/summarize_ticker" -H "Content-Type: application/json" -d '{"ticker": "AAPL", "date": "2025-12-04", "news_list": ["news1", "news2"], "sentiment_list": [0.5, -0.2]}'
 @app.route('/api/summarize_ticker', methods=['POST'])
-async def api_summarize_ticker():
-    """Generate daily summary for a single ticker"""
+def api_summarize_ticker():
     data = flask.request.get_json()
     ticker = data.get('ticker', '')
     date = data.get('date', '')
@@ -328,9 +324,7 @@ async def api_summarize_ticker():
     if not ticker or not news_list:
         return flask.jsonify({'error': 'ticker and news_list are required'}), 400
     
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        executor, 
+    future = executor.submit(
         summarize_daily_news, 
         news_list, 
         sentiment_list, 
@@ -339,12 +333,12 @@ async def api_summarize_ticker():
         date,
         full_text_list
     )
+    result = future.result()
     return flask.jsonify(result)
 
 # curl -X POST "http://localhost:5123/api/summarize_portfolio" -H "Content-Type: application/json" -d '{"user_id": "123", "date": "2025-12-04", "news_list": ["news1", "news2"], "sentiment_list": [0.5, -0.2], "tickers_list": ["AAPL", "TSLA"]}'
 @app.route('/api/summarize_portfolio', methods=['POST'])
-async def api_summarize_portfolio():
-    """Generate daily summary for entire portfolio"""
+def api_summarize_portfolio():
     data = flask.request.get_json()
     user_id = data.get('user_id', '')
     date = data.get('date', '')
@@ -357,9 +351,7 @@ async def api_summarize_portfolio():
     if not news_list:
         return flask.jsonify({'error': 'news_list is required'}), 400
     
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        executor, 
+    future = executor.submit(
         summarize_daily_portfolio_news, 
         news_list, 
         sentiment_list,
@@ -369,6 +361,7 @@ async def api_summarize_portfolio():
         date,
         full_text_list
     )
+    result = future.result()
     return flask.jsonify(result)
 
 @lru_cache(maxsize=2048)
@@ -400,15 +393,13 @@ def convert_isin_to_ticker(isin):
 
 # curl "http://localhost:5123/api/isin_to_ticker?isin=US0378331005"
 @app.route('/api/isin_to_ticker', methods=['GET'])
-async def api_isin_to_ticker():
-    """Convert ISIN to ticker symbol"""
+def api_isin_to_ticker():
     isin = flask.request.args.get('isin', '')
     
     if not isin:
         return flask.jsonify({'error': 'ISIN parameter is required'}), 400
     
-    loop = asyncio.get_event_loop()
-    ticker = await loop.run_in_executor(executor, convert_isin_to_ticker, isin)
+    ticker = convert_isin_to_ticker(isin)
     
     if ticker:
         return flask.jsonify({'isin': isin, 'ticker': ticker})
@@ -416,15 +407,13 @@ async def api_isin_to_ticker():
         return flask.jsonify({'error': 'Could not convert ISIN to ticker'}), 404
     
 @app.route('/api/ticker_to_isin', methods=['GET'])
-async def api_ticker_to_isin():
-    """Convert ticker symbol to ISIN"""
+def api_ticker_to_isin():
     ticker = flask.request.args.get('ticker', '')
     
     if not ticker:
         return flask.jsonify({'error': 'Ticker parameter is required'}), 400
     
-    loop = asyncio.get_event_loop()
-    isin = await loop.run_in_executor(executor, convert_ticker_to_isin, ticker)
+    isin = convert_ticker_to_isin(ticker)
     
     if isin:
         return flask.jsonify({'ticker': ticker, 'isin': isin})
@@ -433,10 +422,10 @@ async def api_ticker_to_isin():
 
 # curl "http://localhost:5123/api/stock/US0378331005"
 @app.route('/api/stock/<isin>', methods=['GET'])
-async def api_stock_data(isin):
-    loop = asyncio.get_event_loop()
+def api_stock_data(isin):
     try:
-        result = await loop.run_in_executor(executor, get_stock_data, isin)
+        future = executor.submit(get_stock_data, isin)
+        result = future.result()
         if result:
             return flask.jsonify({
                 'isin': isin,
@@ -448,10 +437,10 @@ async def api_stock_data(isin):
         return flask.jsonify({'error': str(e)}), 500
     
 @app.route('/api/stock/history/<ticker>', methods=['GET'])
-async def api_stock_history(ticker):
-    loop = asyncio.get_event_loop()
+def api_stock_history(ticker):
     try:
-        result = await loop.run_in_executor(executor, getPriceDataOld, ticker)
+        future = executor.submit(getPriceDataOld, ticker)
+        result = future.result()
         if result:
             return flask.jsonify({
                 'ticker': ticker,
@@ -462,19 +451,18 @@ async def api_stock_history(ticker):
         return flask.jsonify({'error': str(e)}), 500
     
 @app.route('/api/convert_currency', methods=['GET'])
-async def api_convert_currency():
+def api_convert_currency():
     amount = float(flask.request.args.get('amount', '0'))
     from_currency = flask.request.args.get('from_currency', 'USD')
     to_currency = flask.request.args.get('to_currency', 'USD')
     
-    loop = asyncio.get_event_loop()
-    converted_amount = await loop.run_in_executor(
-        executor, 
+    future = executor.submit(
         convertCurrency, 
         amount, 
         from_currency, 
         to_currency
     )
+    converted_amount = future.result()
     
     return flask.jsonify({
         'amount': amount,
