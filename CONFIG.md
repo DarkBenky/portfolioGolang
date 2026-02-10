@@ -59,6 +59,10 @@ VITE_BACKEND_PORT=8085
 
 ### Backend (Python)
 ```bash
+./start_python_server.sh
+```
+or manually:
+```bash
 python getData.py
 ```
 
