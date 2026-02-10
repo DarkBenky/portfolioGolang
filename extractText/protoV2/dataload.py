@@ -2,34 +2,37 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 from datasets import load_dataset
 
-from extractText.saveDataToRag import load_progress
-
-MODEL_NAME = "meta-llama/Llama-2-7b-hf"
+MODEL_NAME = "Qwen/Qwen2-1.5B"
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+EMBED_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = AutoModel.from_pretrained(MODEL_NAME)
-
-embed_layer = model.model.embed_tokens
+model.eval()
+model.to(EMBED_DEVICE)
+embed_layer = model.get_input_embeddings()
+EMBED_DIM = embed_layer.embedding_dim
 PAD_ID = tokenizer.pad_token_id or 0
+
+def get_embedding_weight():
+    return embed_layer.weight.detach()
 
 def text_to_padded_embeddings(text, window_size):
     tokens = tokenizer(text, return_tensors="pt")["input_ids"][0]
 
-    # Truncate if too long
     tokens = tokens[:window_size]
 
     seq_len = tokens.shape[0]
 
-    # Pad if too short
     if seq_len < window_size:
         pad = torch.full(
             (window_size - seq_len,),
             PAD_ID,
-            dtype=torch.long
+            dtype=torch.long,
+            device=tokens.device
         )
         tokens = torch.cat([tokens, pad], dim=0)
 
-    # Convert to embeddings
+    tokens = tokens.to(EMBED_DEVICE)
     with torch.no_grad():
         embeds = embed_layer(tokens)
 
@@ -39,7 +42,6 @@ def build_training_pair(text, window_size):
     embeds, tokens = text_to_padded_embeddings(text, window_size)
 
     target_tokens = tokens.clone()
-
     target_tokens[:-1] = tokens[1:]
     target_tokens[-1] = PAD_ID
 
@@ -72,6 +74,8 @@ def process_nextcoder_sample(min_words=50, max_words=500):
                 sampled_words = words
             
             sampled_text = ' '.join(sampled_words)
+            if tokenizer.eos_token:
+                sampled_text = sampled_text + tokenizer.eos_token
             
             yield sampled_text
         
