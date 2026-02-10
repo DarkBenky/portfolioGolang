@@ -10,7 +10,7 @@ CONTEXT_SIZE = 512
 LEARNING_RATE = 3e-4
 MODEL_CONFIG = {
     "d_model": 1024,
-    "n_layers": 24,
+    "n_layers": 32,
     "n_heads": 16,
     "ffn_mult": 4,
     "dropout": 0.1
@@ -69,7 +69,8 @@ if __name__ == "__main__":
         target_tokens = torch.stack(targets_list, dim=0).to(device)
         batch_texts = []
 
-        if batch_step > 200:
+        if batch_step > 1000:
+            exit()
             break
 
         optimizer.zero_grad(set_to_none=True)
