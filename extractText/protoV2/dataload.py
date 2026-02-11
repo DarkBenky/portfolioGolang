@@ -133,23 +133,22 @@ def iter_leetcode():
 def process_training_sample(min_words=16, max_words=500):
     import random
     dataset_iters = deque([
-        iter_nextcoder,
-        iter_openthoughts,
-        lambda: iter_codeforces("solutions_py"),
-        lambda: iter_codeforces("solutions"),
-        iter_openmath,
-        iter_leetcode
+        ("nextcoder", iter_nextcoder()),
+        ("openthoughts", iter_openthoughts()),
+        ("codeforces_py", iter_codeforces("solutions_py")),
+        ("codeforces", iter_codeforces("solutions")),
+        ("openmath", iter_openmath()),
+        ("leetcode", iter_leetcode())
     ])
 
     while dataset_iters:
-        iterator = dataset_iters.popleft()
-        if callable(iterator):
-            iterator = iterator()
+        dataset_name, iterator = dataset_iters.popleft()
         try:
             combined_text = next(iterator)
         except StopIteration:
+            print(f"Dataset iterator exhausted for {dataset_name}, removing from rotation.")
             continue
-        dataset_iters.append(iterator)
+        dataset_iters.append((dataset_name, iterator))
         try:
             words = combined_text.split()
             total_words = len(words)
