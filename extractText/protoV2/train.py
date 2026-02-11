@@ -77,16 +77,17 @@ if __name__ == "__main__":
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_tokens.view(-1), ignore_index=PAD_ID)
         loss.backward()
         optimizer.step()
+        loss_value = loss.item()
         perplexity = torch.exp(loss).item()
-        if loss.item() < best_loss:
-            best_loss = loss.item()
+        if loss_value < best_loss:
+            best_loss = loss_value
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "loss": best_loss,
                 "step": batch_step
             }, "best_model.pt")
         wandb.log({
-            "loss": loss.item(),
+            "loss": loss_value,
             "perplexity": perplexity
         }, step=batch_step)
 
