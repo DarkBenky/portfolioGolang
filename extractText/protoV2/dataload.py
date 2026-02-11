@@ -53,7 +53,8 @@ def load_streaming_dataset(name, split=None, subset=None):
         if split:
             return load_dataset(name, split=split, streaming=True)
         return load_dataset(name, streaming=True)
-    except Exception:
+    except Exception as e:
+        print(f"Falling back to non-streaming for {name}: {e}")
         if subset:
             dataset = load_dataset(name, subset)
         else:
@@ -144,7 +145,8 @@ def process_training_sample(min_words=16, max_words=500):
             combined_text = next(iterator)
         except StopIteration:
             continue
-        dataset_iters.append(iterator)
+        else:
+            dataset_iters.append(iterator)
         try:
             words = combined_text.split()
             total_words = len(words)
