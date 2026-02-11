@@ -139,8 +139,7 @@ def process_training_sample(min_words=16, max_words=500):
     dataset_index = 0
 
     while dataset_iters:
-        if dataset_index >= len(dataset_iters):
-            dataset_index = 0
+        dataset_index = dataset_index % len(dataset_iters)
         iterator = dataset_iters[dataset_index]
         try:
             combined_text = next(iterator)

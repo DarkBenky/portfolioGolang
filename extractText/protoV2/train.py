@@ -52,7 +52,7 @@ if __name__ == "__main__":
     batch_texts = []
     batch_step = 0
     best_loss = float("inf")
-    for text in process_training_sample(min_words=16, max_words=CONTEXT_SIZE):
+    for text in process_training_sample(max_words=CONTEXT_SIZE):
         batch_texts.append(text)
         if len(batch_texts) < BATCH_SIZE:
             continue
