@@ -1,4 +1,5 @@
 import torch
+from collections import deque
 from transformers import AutoTokenizer, AutoModel
 from datasets import load_dataset
 
@@ -128,25 +129,22 @@ def iter_leetcode():
 
 def process_training_sample(min_words=16, max_words=500):
     import random
-    dataset_iters = [
+    dataset_iters = deque([
         iter_nextcoder(),
         iter_openthoughts(),
         iter_codeforces("solutions_py"),
         iter_codeforces("solutions"),
         iter_openmath(),
         iter_leetcode()
-    ]
-    dataset_index = 0
+    ])
 
     while dataset_iters:
-        dataset_index = dataset_index % len(dataset_iters)
-        iterator = dataset_iters[dataset_index]
+        iterator = dataset_iters.popleft()
         try:
             combined_text = next(iterator)
         except StopIteration:
-            dataset_iters.pop(dataset_index)
             continue
-        dataset_index += 1
+        dataset_iters.append(iterator)
         try:
             words = combined_text.split()
             total_words = len(words)
