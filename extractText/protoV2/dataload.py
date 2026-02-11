@@ -61,6 +61,8 @@ def load_streaming_dataset(name, split=None, subset=None):
             dataset = load_dataset(name)
         if split and split in dataset:
             return dataset[split]
+        if split:
+            print(f"Split {split} not found for {name} (subset={subset}), using {list(dataset.keys())[0]}")
         return dataset[list(dataset.keys())[0]]
 
 def iter_nextcoder():
@@ -131,16 +133,18 @@ def iter_leetcode():
 def process_training_sample(min_words=16, max_words=500):
     import random
     dataset_iters = deque([
-        iter_nextcoder(),
-        iter_openthoughts(),
-        iter_codeforces("solutions_py"),
-        iter_codeforces("solutions"),
-        iter_openmath(),
-        iter_leetcode()
+        iter_nextcoder,
+        iter_openthoughts,
+        lambda: iter_codeforces("solutions_py"),
+        lambda: iter_codeforces("solutions"),
+        iter_openmath,
+        iter_leetcode
     ])
 
     while dataset_iters:
         iterator = dataset_iters.popleft()
+        if callable(iterator):
+            iterator = iterator()
         try:
             combined_text = next(iterator)
         except StopIteration:
