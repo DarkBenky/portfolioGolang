@@ -141,12 +141,9 @@ def process_training_sample(min_words=16, max_words=500):
 
     while dataset_iters:
         iterator = dataset_iters.popleft()
-        combined_text = None
         try:
             combined_text = next(iterator)
         except StopIteration:
-            pass
-        if combined_text is None:
             continue
         dataset_iters.append(iterator)
         try:
