@@ -2,14 +2,14 @@ import torch
 import torch.nn.functional as F
 import wandb
 import html
-from dataload import build_training_pair, process_nextcoder_sample, get_embedding_weight, EMBED_DIM, tokenizer
+from dataload import build_training_pair, process_training_sample, get_embedding_weight, EMBED_DIM, PAD_ID, tokenizer
 from model import SmallTransformerLM
 
 BATCH_SIZE = 1
 CONTEXT_SIZE = 512
+MIN_WORDS = 16
 LEARNING_RATE = 3e-4
 MODEL_CONFIG = {
-    "d_model": 1024,
     "n_layers": 32,
     "n_heads": 16,
     "ffn_mult": 4,
@@ -22,14 +22,13 @@ if __name__ == "__main__":
         "context_size": CONTEXT_SIZE,
         "batch_size": BATCH_SIZE,
         "learning_rate": LEARNING_RATE,
+        "embedding_dim": EMBED_DIM,
         **MODEL_CONFIG
     })
     embedding_weight = get_embedding_weight()
     model = SmallTransformerLM(
-        embed_dim=EMBED_DIM,
         vocab_size=embedding_weight.size(0),
         embedding_weight=embedding_weight,
-        d_model=MODEL_CONFIG["d_model"],
         n_layers=MODEL_CONFIG["n_layers"],
         n_heads=MODEL_CONFIG["n_heads"],
         ffn_mult=MODEL_CONFIG["ffn_mult"],
@@ -43,7 +42,7 @@ if __name__ == "__main__":
     wandb.log({
         "model/parameters": model_parameters,
         "model/parameters_m": model_parameters_m,
-        "model/d_model": MODEL_CONFIG["d_model"],
+        "model/d_model": EMBED_DIM,
         "model/n_layers": MODEL_CONFIG["n_layers"],
         "model/n_heads": MODEL_CONFIG["n_heads"],
         "model/ffn_mult": MODEL_CONFIG["ffn_mult"],
@@ -53,19 +52,20 @@ if __name__ == "__main__":
 
     batch_texts = []
     batch_step = 0
-    for text in process_nextcoder_sample(min_words=16, max_words=CONTEXT_SIZE):
+    best_loss = float("inf")
+    for text in process_training_sample(min_words=MIN_WORDS, max_words=CONTEXT_SIZE):
         batch_texts.append(text)
         if len(batch_texts) < BATCH_SIZE:
             continue
 
         batch_step += 1
-        embeds_list = []
+        input_ids_list = []
         targets_list = []
         for item_text in batch_texts:
-            embeds, target_tokens = build_training_pair(item_text, CONTEXT_SIZE)
-            embeds_list.append(embeds)
+            input_ids, target_tokens = build_training_pair(item_text, CONTEXT_SIZE)
+            input_ids_list.append(input_ids)
             targets_list.append(target_tokens)
-        embeds = torch.stack(embeds_list, dim=0).to(device)
+        input_ids = torch.stack(input_ids_list, dim=0).to(device)
         target_tokens = torch.stack(targets_list, dim=0).to(device)
         batch_texts = []
 
@@ -74,22 +74,30 @@ if __name__ == "__main__":
             break
 
         optimizer.zero_grad(set_to_none=True)
-        logits = model(embeds)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_tokens.view(-1))
+        logits = model(input_ids)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_tokens.view(-1), ignore_index=PAD_ID)
         loss.backward()
         optimizer.step()
+        loss_value = loss.item()
         perplexity = torch.exp(loss).item()
+        if loss_value < best_loss:
+            best_loss = loss_value
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "loss": best_loss,
+                "step": batch_step
+            }, "best_model.pt")
         wandb.log({
-            "loss": loss.item(),
+            "loss": loss_value,
             "perplexity": perplexity
         }, step=batch_step)
 
         if batch_step % 2 == 0:
-            seq_len = embeds.size(1)
+            seq_len = input_ids.size(1)
             gen_len = min(64, seq_len)
-            input_embeds = embeds[:1, :gen_len, :]
+            preview_input_ids = input_ids[:1, :gen_len]
             with torch.no_grad():
-                gen_logits = model(input_embeds)
+                gen_logits = model(preview_input_ids)
                 gen_ids = torch.argmax(gen_logits, dim=-1)[0]
             original_ids = target_tokens[0, :gen_len]
             original_text = tokenizer.decode(original_ids.tolist(), skip_special_tokens=False)
