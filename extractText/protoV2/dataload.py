@@ -61,9 +61,10 @@ def load_streaming_dataset(name, split=None, subset=None):
             dataset = load_dataset(name)
         if split and split in dataset:
             return dataset[split]
+        fallback_split = list(dataset.keys())[0]
         if split:
-            print(f"Split {split} not found for {name} (subset={subset}), using {list(dataset.keys())[0]}")
-        return dataset[list(dataset.keys())[0]]
+            print(f"Split {split} not found for {name} (subset={subset}), using '{fallback_split}' instead")
+        return dataset[fallback_split]
 
 def iter_nextcoder():
     dataset = load_streaming_dataset("microsoft/NextCoderDataset", split="train")
@@ -146,7 +147,7 @@ def process_training_sample(min_words=16, max_words=500):
         try:
             combined_text = next(iterator)
         except StopIteration:
-            print(f"Dataset iterator exhausted for {dataset_name}, removing from rotation.")
+            print(f"Dataset iterator exhausted for {dataset_name}, removed from rotation.")
             continue
         dataset_iters.append((dataset_name, iterator))
         try:
