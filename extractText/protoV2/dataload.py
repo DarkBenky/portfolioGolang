@@ -54,7 +54,7 @@ def load_streaming_dataset(name, split=None, subset=None):
             return load_dataset(name, split=split, streaming=True)
         return load_dataset(name, streaming=True)
     except Exception as e:
-        print(f"Falling back to non-streaming for {name}: {e}")
+        print(f"Falling back to non-streaming for {name} (subset={subset}, split={split}): {e}")
         if subset:
             dataset = load_dataset(name, subset)
         else:
