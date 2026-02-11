@@ -16,7 +16,7 @@ PAD_ID = tokenizer.pad_token_id or 0
 def get_embedding_weight():
     return embed_layer.weight.detach()
 
-def text_to_padded_embeddings(text, window_size):
+def text_to_padded_tokens(text, window_size):
     tokens = tokenizer(text, return_tensors="pt")["input_ids"][0]
 
     tokens = tokens[:window_size]
@@ -32,20 +32,16 @@ def text_to_padded_embeddings(text, window_size):
         )
         tokens = torch.cat([tokens, pad], dim=0)
 
-    tokens = tokens.to(EMBED_DEVICE)
-    with torch.no_grad():
-        embeds = embed_layer(tokens)
-
-    return embeds, tokens
+    return tokens
 
 def build_training_pair(text, window_size):
-    embeds, tokens = text_to_padded_embeddings(text, window_size)
+    tokens = text_to_padded_tokens(text, window_size)
 
     target_tokens = tokens.clone()
     target_tokens[:-1] = tokens[1:]
     target_tokens[-1] = PAD_ID
 
-    return embeds, target_tokens
+    return tokens, target_tokens
 
 def process_nextcoder_sample(min_words=50, max_words=500):
     import random

@@ -17,6 +17,7 @@ extractText/corpus.txt
 extractText/*.txt
 extractText/*.csv
 *.gob.json
+*.gob
 .db_backups/
 *.pt
 dataGeneration
