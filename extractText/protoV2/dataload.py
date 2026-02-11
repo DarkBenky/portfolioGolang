@@ -126,7 +126,7 @@ def iter_leetcode():
         if combined_text.strip():
             yield combined_text
 
-def process_training_sample(min_words=50, max_words=500):
+def process_training_sample(min_words=16, max_words=500):
     import random
     dataset_iters = [
         iter_nextcoder(),
@@ -144,10 +144,10 @@ def process_training_sample(min_words=50, max_words=500):
         iterator = dataset_iters[dataset_index]
         try:
             combined_text = next(iterator)
-            dataset_index += 1
         except StopIteration:
             dataset_iters.pop(dataset_index)
             continue
+        dataset_index += 1
         try:
             words = combined_text.split()
             total_words = len(words)
