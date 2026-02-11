@@ -131,6 +131,13 @@ def iter_leetcode():
         if combined_text.strip():
             yield combined_text
 
+def iter_pile_github():
+    dataset = load_streaming_dataset("andstor/the_pile_github", subset="all", split="train")
+    for item in iter(dataset):
+        text = item.get('text', '')
+        if text.strip():
+            yield text
+
 def process_training_sample(min_words=16, max_words=500):
     import random
     dataset_iters = deque([
@@ -139,7 +146,8 @@ def process_training_sample(min_words=16, max_words=500):
         ("codeforces_py", iter_codeforces("solutions_py")),
         ("codeforces", iter_codeforces("solutions")),
         ("openmath", iter_openmath()),
-        ("leetcode", iter_leetcode())
+        ("leetcode", iter_leetcode()),
+        ("pile_github", iter_pile_github())
     ])
 
     while dataset_iters:
