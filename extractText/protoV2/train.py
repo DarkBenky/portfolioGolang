@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import wandb
 import html
-from dataload import build_training_pair, process_nextcoder_sample, get_embedding_weight, EMBED_DIM, PAD_ID, tokenizer
+from dataload import build_training_pair, process_training_sample, get_embedding_weight, EMBED_DIM, PAD_ID, tokenizer
 from model import SmallTransformerLM
 
 BATCH_SIZE = 1
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     batch_texts = []
     batch_step = 0
     best_loss = float("inf")
-    for text in process_nextcoder_sample(min_words=16, max_words=CONTEXT_SIZE):
+    for text in process_training_sample(min_words=16, max_words=CONTEXT_SIZE):
         batch_texts.append(text)
         if len(batch_texts) < BATCH_SIZE:
             continue
