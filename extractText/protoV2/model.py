@@ -23,29 +23,24 @@ class TransformerBlock(nn.Module):
         return x
 
 class SmallTransformerLM(nn.Module):
-    def __init__(self, embed_dim, vocab_size, embedding_weight, d_model=1024, n_layers=24, n_heads=16, ffn_mult=4, dropout=0.1):
+    def __init__(self, vocab_size, embedding_weight, n_layers=24, n_heads=16, ffn_mult=4, dropout=0.1):
         super().__init__()
         self.vocab_size = vocab_size
-        self.d_model = d_model
-        self.embed_dim = embed_dim
-        self.adapter = nn.Linear(embed_dim, d_model)
+        self.d_model = embedding_weight.size(1)
+        self.token_embed = nn.Embedding.from_pretrained(embedding_weight, freeze=True)
         self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, ffn_mult, dropout) for _ in range(n_layers)
+            TransformerBlock(self.d_model, n_heads, ffn_mult, dropout) for _ in range(n_layers)
         ])
-        self.ln_f = nn.LayerNorm(d_model)
-        self.out_proj = nn.Linear(d_model, embed_dim, bias=False)
-        self.register_buffer("embedding_weight", embedding_weight, persistent=False)
+        self.ln_f = nn.LayerNorm(self.d_model)
 
-    def forward(self, input_embeds):
-        x = input_embeds
-        x = self.adapter(x)
-        seq_len = input_embeds.size(1)
-        attn_mask = torch.triu(torch.ones(seq_len, seq_len, device=input_embeds.device), diagonal=1).bool()
+    def forward(self, input_ids):
+        x = self.token_embed(input_ids)
+        seq_len = input_ids.size(1)
+        attn_mask = torch.triu(torch.ones(seq_len, seq_len, device=input_ids.device), diagonal=1).bool()
         for block in self.blocks:
             x = block(x, attn_mask)
         x = self.ln_f(x)
-        x = self.out_proj(x)
-        logits = torch.matmul(x, self.embedding_weight.t())
+        logits = torch.matmul(x, self.token_embed.weight.t())
         return logits
 
     def count_parameters(self):
