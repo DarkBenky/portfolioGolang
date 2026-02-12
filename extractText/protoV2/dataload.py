@@ -1,6 +1,10 @@
 import torch
 from collections import deque
 from transformers import AutoTokenizer, AutoModel
+import os
+os.environ['HF_HOME'] = '/media/user/2TB'
+os.environ['HF_DATASETS_CACHE'] = '/media/user/2TB/huggingface_cache'
+
 from datasets import load_dataset
 
 MODEL_NAME = "Qwen/Qwen2-1.5B"
@@ -44,17 +48,20 @@ def build_training_pair(text, window_size):
 
     return tokens, target_tokens
 
-def load_streaming_dataset(name, split=None, subset=None):
+def load_streaming_dataset(name, split=None, subset=None, require_streaming=True):
     try:
+        kwargs = {"streaming": True}
         if subset and split:
-            return load_dataset(name, subset, split=split, streaming=True)
+            return load_dataset(name, subset, split=split, **kwargs)
         if subset:
-            return load_dataset(name, subset, streaming=True)
+            return load_dataset(name, subset, **kwargs)
         if split:
-            return load_dataset(name, split=split, streaming=True)
-        return load_dataset(name, streaming=True)
+            return load_dataset(name, split=split, **kwargs)
+        return load_dataset(name, **kwargs)
     except Exception as e:
-        print(f"Falling back to non-streaming for {name} (subset={subset}, split={split}): {e}")
+        if require_streaming:
+            print(f"Streaming failed for {name} (subset={subset}, split={split}): {e}")
+            return None
         if subset:
             dataset = load_dataset(name, subset)
         else:
@@ -63,11 +70,13 @@ def load_streaming_dataset(name, split=None, subset=None):
             return dataset[split]
         fallback_split = list(dataset.keys())[0]
         if split:
-            print(f"Split {split} not found for {name} (subset={subset}), using '{fallback_split}' instead")
+            print(f"Split {split} not found for {name} (subset={subset}), using {fallback_split} instead")
         return dataset[fallback_split]
 
 def iter_nextcoder():
     dataset = load_streaming_dataset("microsoft/NextCoderDataset", split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         prompt = item.get('prompt', '')
         completion = item.get('completion', '')
@@ -77,6 +86,8 @@ def iter_nextcoder():
 
 def iter_openthoughts():
     dataset = load_streaming_dataset("open-thoughts/OpenThoughts3-1.2M", split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         conversations = item.get('conversations') or []
         if not conversations:
@@ -95,6 +106,8 @@ def iter_openthoughts():
 
 def iter_codeforces(subset):
     dataset = load_streaming_dataset("open-r1/codeforces-cots", subset=subset, split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         messages = item.get('messages') or []
         parts = []
@@ -115,6 +128,8 @@ def iter_codeforces(subset):
 
 def iter_openmath():
     dataset = load_streaming_dataset("nvidia/OpenMathReasoning", split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         problem = item.get('problem', '')
         solution = item.get('generated_solution', '')
@@ -124,6 +139,8 @@ def iter_openmath():
 
 def iter_leetcode():
     dataset = load_streaming_dataset("newfacade/LeetCodeDataset", split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         query = item.get('query', '')
         response = item.get('response', '')
@@ -133,6 +150,8 @@ def iter_leetcode():
 
 def iter_pile_github():
     dataset = load_streaming_dataset("andstor/the_pile_github", subset="all", split="train")
+    if dataset is None:
+        return
     for item in iter(dataset):
         text = item.get('text', '')
         if text.strip():

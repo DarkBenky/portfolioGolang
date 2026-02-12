@@ -5,23 +5,28 @@ import html
 from dataload import build_training_pair, process_training_sample, get_embedding_weight, EMBED_DIM, PAD_ID, tokenizer
 from model import SmallTransformerLM
 
-BATCH_SIZE = 1
-CONTEXT_SIZE = 512
+BATCH_SIZE = 2
+CONTEXT_SIZE = 1024
 MIN_WORDS = 16
 LEARNING_RATE = 3e-4
+GRAD_ACCUM_STEPS = 1
 MODEL_CONFIG = {
-    "n_layers": 32,
-    "n_heads": 16,
+    "n_layers": 12,
+    "n_heads": 8,
     "ffn_mult": 4,
-    "dropout": 0.1
+    "dropout": 0.1,
+    "use_checkpointing": True
 }
 
 if __name__ == "__main__":
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     wandb.init(project="protoV2", config={
         "context_size": CONTEXT_SIZE,
         "batch_size": BATCH_SIZE,
         "learning_rate": LEARNING_RATE,
+        "grad_accum_steps": GRAD_ACCUM_STEPS,
         "embedding_dim": EMBED_DIM,
         **MODEL_CONFIG
     })
@@ -32,7 +37,8 @@ if __name__ == "__main__":
         n_layers=MODEL_CONFIG["n_layers"],
         n_heads=MODEL_CONFIG["n_heads"],
         ffn_mult=MODEL_CONFIG["ffn_mult"],
-        dropout=MODEL_CONFIG["dropout"]
+        dropout=MODEL_CONFIG["dropout"],
+        use_checkpointing=MODEL_CONFIG["use_checkpointing"]
     ).to(device)
 
     model_parameters = model.count_parameters()
@@ -53,6 +59,8 @@ if __name__ == "__main__":
     batch_texts = []
     batch_step = 0
     best_loss = float("inf")
+    use_amp = device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     for text in process_training_sample(min_words=MIN_WORDS, max_words=CONTEXT_SIZE):
         batch_texts.append(text)
         if len(batch_texts) < BATCH_SIZE:
@@ -69,16 +77,20 @@ if __name__ == "__main__":
         target_tokens = torch.stack(targets_list, dim=0).to(device)
         batch_texts = []
 
-        if batch_step > 1000:
-            exit()
-            break
+        # if batch_step > 1000:
+        #     exit()
+        #     break
 
         optimizer.zero_grad(set_to_none=True)
-        logits = model(input_ids)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_tokens.view(-1), ignore_index=PAD_ID)
-        loss.backward()
-        optimizer.step()
-        loss_value = loss.item()
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            logits = model(input_ids)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_tokens.view(-1), ignore_index=PAD_ID)
+        scaler.scale(loss).backward()
+        if batch_step % GRAD_ACCUM_STEPS == 0:
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+        loss_value = loss.item() * GRAD_ACCUM_STEPS
         perplexity = torch.exp(loss).item()
         if loss_value < best_loss:
             best_loss = loss_value
