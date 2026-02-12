@@ -1098,6 +1098,18 @@ import HoldingView from './components/holdingView.vue'
 import SentimentCard from './components/sentimentCard.vue'
 import NewsFeed from './components/newsFeed.vue'
 
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const paddedPayload = payload + '='.repeat((4 - (payload.length % 4)) % 4)
+    return JSON.parse(atob(paddedPayload))
+  } catch {
+    return null
+  }
+}
+
 export default {
   name: 'App',
 
@@ -1390,7 +1402,7 @@ export default {
       this.homeCurrency = savedCurrency
     }
     
-    if (token) {
+    if (token && !this.isTokenExpired(token)) {
       this.isAuthenticated = true
       this.userEmail = email || ''
       setTimeout(() => {
@@ -1405,6 +1417,11 @@ export default {
           this.fetchPortfolioNews()
         }
       }, 100)
+    } else if (token) {
+      this.deleteCookie('auth_token')
+      this.deleteCookie('user_email')
+      this.isAuthenticated = false
+      this.userEmail = ''
     }
 
     window.addEventListener('resize', this.updateChartWidth)
@@ -1415,6 +1432,14 @@ export default {
   },
 
   methods: {
+    isTokenExpired(token) {
+      const payload = decodeJwtPayload(token)
+      if (!payload || typeof payload.exp !== 'number') {
+        return true
+      }
+      return Date.now() >= payload.exp * 1000
+    },
+
     async getPortfolioAllocation() {
       try {
         const token = this.getCookie('auth_token')

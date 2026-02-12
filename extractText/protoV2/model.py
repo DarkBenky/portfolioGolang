@@ -23,7 +23,7 @@ class TransformerBlock(nn.Module):
         return x
 
 class SmallTransformerLM(nn.Module):
-    def __init__(self, vocab_size, embedding_weight, n_layers=24, n_heads=16, ffn_mult=4, dropout=0.1):
+    def __init__(self, vocab_size, embedding_weight, n_layers=24, n_heads=16, ffn_mult=4, dropout=0.1, use_checkpointing=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = embedding_weight.size(1)
@@ -32,13 +32,18 @@ class SmallTransformerLM(nn.Module):
             TransformerBlock(self.d_model, n_heads, ffn_mult, dropout) for _ in range(n_layers)
         ])
         self.ln_f = nn.LayerNorm(self.d_model)
+        self.use_checkpointing = use_checkpointing
 
     def forward(self, input_ids):
         x = self.token_embed(input_ids)
         seq_len = input_ids.size(1)
         attn_mask = torch.triu(torch.ones(seq_len, seq_len, device=input_ids.device), diagonal=1).bool()
-        for block in self.blocks:
-            x = block(x, attn_mask)
+        if self.use_checkpointing and self.training:
+            for block in self.blocks:
+                x = torch.utils.checkpoint.checkpoint(block, x, attn_mask)
+        else:
+            for block in self.blocks:
+                x = block(x, attn_mask)
         x = self.ln_f(x)
         logits = torch.matmul(x, self.token_embed.weight.t())
         return logits

@@ -34,6 +34,7 @@ import (
 var (
 	SALT           string
 	JWT_SECRET     string
+	JWT_EXPIRY     = 90 * 24 * time.Hour
 	BASE_URL       string
 	db             *DB
 	dbMutex        sync.RWMutex
@@ -2365,7 +2366,7 @@ func generateJWT(userID, email string) (string, error) {
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(JWT_EXPIRY)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
@@ -5770,6 +5771,14 @@ func main() {
 
 	SALT = os.Getenv("SALT")
 	JWT_SECRET = os.Getenv("JWT_SECRET")
+	jwtExpiryHoursStr := os.Getenv("JWT_EXPIRY_HOURS")
+	if jwtExpiryHoursStr != "" {
+		jwtExpiryHours, parseErr := strconv.Atoi(jwtExpiryHoursStr)
+		if parseErr != nil || jwtExpiryHours <= 0 {
+			log.Fatal("JWT_EXPIRY_HOURS must be a positive integer")
+		}
+		JWT_EXPIRY = time.Duration(jwtExpiryHours) * time.Hour
+	}
 
 	devMode := os.Getenv("DEV_MODE")
 	pythonPort := os.Getenv("BACKEND_PYTHON_PORT")
