@@ -957,9 +957,24 @@
           <v-row>
             <v-col cols="12">
               <v-card>
-                <v-card-title class="d-flex align-center justify-space-between">
+                <v-card-title class="d-flex align-center justify-space-between flex-wrap gap-2">
                   <span>Portfolio vs Benchmark Comparison</span>
-                  <div class="d-flex gap-3">
+                  <div class="d-flex align-center gap-2 flex-wrap">
+                    <v-btn
+                      :color="showPortfolioCustomizer ? 'primary' : undefined"
+                      variant="outlined"
+                      size="small"
+                      prepend-icon="mdi-tune"
+                      @click="showPortfolioCustomizer = !showPortfolioCustomizer"
+                    >
+                      Customize
+                      <v-chip
+                        v-if="customPortfolioTickers && customPortfolioTickers.length > 0"
+                        size="x-small"
+                        color="primary"
+                        class="ml-1"
+                      >{{ customPortfolioTickers.length }}</v-chip>
+                    </v-btn>
                     <v-select
                       v-model="backtestBenchmark"
                       :items="benchmarkOptions"
@@ -982,6 +997,37 @@
                     ></v-select>
                   </div>
                 </v-card-title>
+
+                <!-- Portfolio customizer panel -->
+                <v-expand-transition>
+                  <div v-if="showPortfolioCustomizer && portfolioHoldings && portfolioHoldings.length > 0">
+                    <v-divider />
+                    <v-card-text class="py-2">
+                      <div class="text-caption text-grey font-weight-medium mb-2">
+                        SELECT HOLDINGS FOR BACKTEST
+                        <v-btn
+                          size="x-small"
+                          variant="text"
+                          class="ml-2"
+                          @click="customPortfolioTickers = null; fetchBacktest()"
+                        >Reset to all</v-btn>
+                      </div>
+                      <div class="d-flex flex-wrap gap-1">
+                        <v-chip
+                          v-for="h in portfolioHoldings"
+                          :key="h.id_holding"
+                          :color="!customPortfolioTickers || customPortfolioTickers.includes(h.ticker) ? 'primary' : undefined"
+                          :variant="!customPortfolioTickers || customPortfolioTickers.includes(h.ticker) ? 'tonal' : 'outlined'"
+                          size="small"
+                          label
+                          clickable
+                          @click="toggleCustomTicker(h.ticker)"
+                        >{{ h.ticker }}</v-chip>
+                      </div>
+                    </v-card-text>
+                  </div>
+                </v-expand-transition>
+
                 <v-card-text>
                   <v-progress-linear v-if="backtestLoading" indeterminate color="primary"></v-progress-linear>
                   
@@ -998,7 +1044,7 @@
                       :height="500"
                     />
 
-                    <v-row>
+                    <v-row class="mt-2">
                       <v-col cols="12" md="6">
                         <v-card variant="outlined">
                           <v-card-title class="text-h6">Portfolio Metrics</v-card-title>
@@ -1028,6 +1074,18 @@
                                 <v-list-item-title>Sortino Ratio</v-list-item-title>
                                 <template v-slot:append>
                                   <span class="font-weight-bold">{{ backtestData.sortino_ratio_portfolio }}</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Annualized Volatility</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.volatility_portfolio }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Calmar Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.calmar_ratio_portfolio }}</span>
                                 </template>
                               </v-list-item>
                             </v-list>
@@ -1066,6 +1124,18 @@
                                   <span class="font-weight-bold">{{ backtestData.sortino_ratio_benchmark }}</span>
                                 </template>
                               </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Annualized Volatility</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.volatility_benchmark }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Calmar Ratio</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.calmar_ratio_benchmark }}</span>
+                                </template>
+                              </v-list-item>
                             </v-list>
                           </v-card-text>
                         </v-card>
@@ -1077,8 +1147,8 @@
             </v-col>
           </v-row>
         </v-container>
-        <v-container v-if="activeView == 'tradingView'">
-          view were you can see individual stock and etfs and make technical analysis
+        <v-container v-if="activeView == 'tradingView'" class="pa-0" fluid style="height: calc(100vh - 64px);">
+          <TradingViewer />
         </v-container>
         <v-container v-if="activeView === 'expenses'" fluid class="pa-0">
           <ExpensesView />
@@ -1097,6 +1167,7 @@ import BacktestChart from './components/backtestChart.vue'
 import HoldingView from './components/holdingView.vue'
 import SentimentCard from './components/sentimentCard.vue'
 import NewsFeed from './components/newsFeed.vue'
+import TradingViewer from './components/tradingViewer.vue'
 
 function decodeJwtPayload(token) {
   try {
@@ -1120,7 +1191,8 @@ export default {
     BacktestChart,
     HoldingView,
     SentimentCard,
-    NewsFeed
+    NewsFeed,
+    TradingViewer
   },
 
   data() {
@@ -1200,6 +1272,8 @@ export default {
       backtestError: '',
       backtestBenchmark: 'SPY',
       backtestPeriod: '1Y',
+      showPortfolioCustomizer: false,
+      customPortfolioTickers: null,
       benchmarkOptions: [
         { title: 'S&P 500', value: 'SPY' },
         { title: 'NASDAQ 100', value: 'QQQ' },
@@ -1872,7 +1946,10 @@ export default {
         const startDateStr = startDate.toISOString().split('T')[0]
         const endDateStr = endDate.toISOString().split('T')[0]
 
-        const url = `${API_BASE_URL}/api/portfolio/backtest?start_date=${startDateStr}&end_date=${endDateStr}&benchmark=${this.backtestBenchmark}`
+        let url = `${API_BASE_URL}/api/portfolio/backtest?start_date=${startDateStr}&end_date=${endDateStr}&benchmark=${this.backtestBenchmark}`
+        if (this.customPortfolioTickers && this.customPortfolioTickers.length > 0) {
+          url += `&tickers=${encodeURIComponent(this.customPortfolioTickers.join(','))}`
+        }
         
         const response = await fetch(url, {
           headers: {
@@ -2026,6 +2103,27 @@ export default {
       })
 
       return slices
+    },
+
+    toggleCustomTicker(ticker) {
+      if (!this.customPortfolioTickers) {
+        this.customPortfolioTickers = this.portfolioHoldings
+          .map(h => h.ticker)
+          .filter(t => t !== ticker)
+      } else {
+        const idx = this.customPortfolioTickers.indexOf(ticker)
+        if (idx > -1) {
+          const updated = [...this.customPortfolioTickers]
+          updated.splice(idx, 1)
+          this.customPortfolioTickers = updated.length > 0 ? updated : null
+        } else {
+          this.customPortfolioTickers = [...this.customPortfolioTickers, ticker]
+          if (this.portfolioHoldings && this.customPortfolioTickers.length === this.portfolioHoldings.length) {
+            this.customPortfolioTickers = null
+          }
+        }
+      }
+      this.fetchBacktest()
     },
 
     formatCurrency(value) {
