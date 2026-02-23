@@ -19,7 +19,6 @@ lxml==6.0.2
 pandas==2.3.3
 numpy==2.2.6
 pillow==12.0.0
-asyncio==4.0.0
 beautifulsoup4
 lxml_html_clean
 playwright
