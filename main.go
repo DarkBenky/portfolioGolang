@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"main/bills"
 	"math"
@@ -4450,6 +4451,32 @@ func calculateSortinoRatio(dailyReturns []float64, riskFreeRate float64) float64
 	return (annualizedReturn - riskFreeRate) / annualizedDownside
 }
 
+func calculateAnnualizedVolatility(dailyReturns []float64) float64 {
+	if len(dailyReturns) < 2 {
+		return 0
+	}
+	sum := 0.0
+	for _, r := range dailyReturns {
+		sum += r
+	}
+	mean := sum / float64(len(dailyReturns))
+	variance := 0.0
+	for _, r := range dailyReturns {
+		diff := r - mean
+		variance += diff * diff
+	}
+	stdDev := math.Sqrt(variance / float64(len(dailyReturns)))
+	return stdDev * math.Sqrt(252) * 100
+}
+
+func calculateCalmarRatio(cagrPct float64, maxDrawdownPct float64) float64 {
+	dd := math.Abs(maxDrawdownPct)
+	if dd == 0 {
+		return 0
+	}
+	return cagrPct / dd
+}
+
 // calculateYoYReturn calculates Year-over-Year return from price history
 func calculateYoYReturn(prices []float64, timestamps []int64) float64 {
 	if len(prices) < 2 {
@@ -5424,20 +5451,24 @@ func fillMissingTickerIsinPeriodic(interval time.Duration) {
 }
 
 type BackTestResult struct {
-	PortfolioValues  []float64 `json:"portfolio_values"`
-	BenchmarkValues  []float64 `json:"benchmark_values"`
-	Timestamps       []int64   `json:"timestamps"`
-	CAGRPortfolio    float64   `json:"cagr_portfolio"`
-	CAGRBenchmark    float64   `json:"cagr_benchmark"`
-	MaxDDPortfolio   float64   `json:"max_drawdown_portfolio"`
-	MaxDDBenchmark   float64   `json:"max_drawdown_benchmark"`
-	SharpePortfolio  float64   `json:"sharpe_ratio_portfolio"`
-	SharpeBenchmark  float64   `json:"sharpe_ratio_benchmark"`
-	SortinoPortfolio float64   `json:"sortino_ratio_portfolio"`
-	SortinoBenchmark float64   `json:"sortino_ratio_benchmark"`
+	PortfolioValues    []float64 `json:"portfolio_values"`
+	BenchmarkValues    []float64 `json:"benchmark_values"`
+	Timestamps         []int64   `json:"timestamps"`
+	CAGRPortfolio      float64   `json:"cagr_portfolio"`
+	CAGRBenchmark      float64   `json:"cagr_benchmark"`
+	MaxDDPortfolio     float64   `json:"max_drawdown_portfolio"`
+	MaxDDBenchmark     float64   `json:"max_drawdown_benchmark"`
+	SharpePortfolio    float64   `json:"sharpe_ratio_portfolio"`
+	SharpeBenchmark    float64   `json:"sharpe_ratio_benchmark"`
+	SortinoPortfolio   float64   `json:"sortino_ratio_portfolio"`
+	SortinoBenchmark   float64   `json:"sortino_ratio_benchmark"`
+	VolatilityPortfolio float64  `json:"volatility_portfolio"`
+	VolatilityBenchmark float64  `json:"volatility_benchmark"`
+	CalmarPortfolio    float64   `json:"calmar_ratio_portfolio"`
+	CalmarBenchmark    float64   `json:"calmar_ratio_benchmark"`
 }
 
-func creteBackTestForPortfolio(userID string, startDate string, endDate string, benchmark string) (*BackTestResult, error) {
+func creteBackTestForPortfolio(userID string, startDate string, endDate string, benchmark string, tickerFilter []string) (*BackTestResult, error) {
 	startTime, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start date: %v", err)
@@ -5456,6 +5487,20 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch holdings: %v", err)
+	}
+
+	if len(tickerFilter) > 0 {
+		filterSet := make(map[string]bool, len(tickerFilter))
+		for _, t := range tickerFilter {
+			filterSet[t] = true
+		}
+		filtered := make([]Holding, 0, len(holdings))
+		for _, h := range holdings {
+			if filterSet[h.Ticker] {
+				filtered = append(filtered, h)
+			}
+		}
+		holdings = filtered
 	}
 
 	if len(holdings) == 0 {
@@ -5546,18 +5591,28 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 	sortinoPortfolio := calculateSortinoRatio(portfolioReturns, 0.0)
 	sortinoBenchmark := calculateSortinoRatio(benchmarkReturns, 0.0)
 
+	volatilityPortfolio := calculateAnnualizedVolatility(portfolioReturns)
+	volatilityBenchmark := calculateAnnualizedVolatility(benchmarkReturns)
+
+	calmarPortfolio := calculateCalmarRatio(cagrPortfolio, maxDDPortfolio)
+	calmarBenchmark := calculateCalmarRatio(cagrBenchmark, maxDDBenchmark)
+
 	return &BackTestResult{
-		PortfolioValues:  portfolioValuesSlice,
-		BenchmarkValues:  benchmarkValuesSlice,
-		Timestamps:       timestamps,
-		CAGRPortfolio:    math.Round(cagrPortfolio*100) / 100,
-		CAGRBenchmark:    math.Round(cagrBenchmark*100) / 100,
-		MaxDDPortfolio:   math.Round(maxDDPortfolio*100) / 100,
-		MaxDDBenchmark:   math.Round(maxDDBenchmark*100) / 100,
-		SharpePortfolio:  math.Round(sharpePortfolio*100) / 100,
-		SharpeBenchmark:  math.Round(sharpeBenchmark*100) / 100,
-		SortinoPortfolio: math.Round(sortinoPortfolio*100) / 100,
-		SortinoBenchmark: math.Round(sortinoBenchmark*100) / 100,
+		PortfolioValues:     portfolioValuesSlice,
+		BenchmarkValues:     benchmarkValuesSlice,
+		Timestamps:          timestamps,
+		CAGRPortfolio:       math.Round(cagrPortfolio*100) / 100,
+		CAGRBenchmark:       math.Round(cagrBenchmark*100) / 100,
+		MaxDDPortfolio:      math.Round(maxDDPortfolio*100) / 100,
+		MaxDDBenchmark:      math.Round(maxDDBenchmark*100) / 100,
+		SharpePortfolio:     math.Round(sharpePortfolio*100) / 100,
+		SharpeBenchmark:     math.Round(sharpeBenchmark*100) / 100,
+		SortinoPortfolio:    math.Round(sortinoPortfolio*100) / 100,
+		SortinoBenchmark:    math.Round(sortinoBenchmark*100) / 100,
+		VolatilityPortfolio: math.Round(volatilityPortfolio*100) / 100,
+		VolatilityBenchmark: math.Round(volatilityBenchmark*100) / 100,
+		CalmarPortfolio:     math.Round(calmarPortfolio*100) / 100,
+		CalmarBenchmark:     math.Round(calmarBenchmark*100) / 100,
 	}, nil
 }
 
@@ -5597,6 +5652,7 @@ func getBacktest(c echo.Context) error {
 	startDate := c.QueryParam("start_date")
 	endDate := c.QueryParam("end_date")
 	benchmark := c.QueryParam("benchmark")
+	tickersParam := c.QueryParam("tickers")
 
 	if startDate == "" || endDate == "" {
 		return c.String(http.StatusBadRequest, "start_date and end_date are required")
@@ -5606,7 +5662,17 @@ func getBacktest(c echo.Context) error {
 		benchmark = "SPY"
 	}
 
-	result, err := creteBackTestForPortfolio(userID, startDate, endDate, benchmark)
+	var tickerFilter []string
+	if tickersParam != "" {
+		for _, t := range strings.Split(tickersParam, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				tickerFilter = append(tickerFilter, t)
+			}
+		}
+	}
+
+	result, err := creteBackTestForPortfolio(userID, startDate, endDate, benchmark, tickerFilter)
 	if err != nil {
 		log.Printf("Error creating backtest: %v", err)
 		return c.String(http.StatusInternalServerError, fmt.Sprintf("Failed to create backtest: %v", err))
