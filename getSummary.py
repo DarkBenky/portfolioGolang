@@ -74,7 +74,6 @@ Focus only on facts from the articles. Include specific numbers, percentages, da
 
     try:
         response = ollama.generate(
-            # model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
             model="qwen3:4b",
             prompt=prompt,
             options={
@@ -208,20 +207,36 @@ Write 2-3 sentences about how this news may affect your portfolio value and what
 
 Only include facts from the articles. Use specific numbers, percentages, dates, and company names. Do not speculate or invent information."""
 
-    response = ollama.generate(
-        model="nidumai/nidum-gemma-3-4b-it-uncensored:q3_k_m",
-        prompt=prompt,
-        options={
-            "num_predict": max_tokens,
-            "temperature": 0.4,
-            "repeat_penalty": 1.15,
-            "top_k": 40,
-            "top_p": 0.9,
-        }
-    )
+    try:
+        response = ollama.generate(
+            model="qwen3:4b",
+            prompt=prompt,
+            options={
+                "num_predict": max_tokens,
+                "temperature": 0.4,
+                "repeat_penalty": 1.15,
+                "top_k": 40,
+                "top_p": 0.9,
+            }
+        )
 
-    summary_text = response['response'].strip()
-    
+        summary_text = response['response'].strip()
+
+        if not summary_text or len(summary_text) < 50:
+            print(f"Warning: Model generated empty or short response. Using fallback.")
+            summary_parts = []
+            for t, items in list(ticker_news.items())[:5]:
+                if items:
+                    summary_parts.append(f"**{t}**: {items[0]['content'][:200]}")
+            summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
+    except Exception as e:
+        print(f"Error generating portfolio summary with Ollama: {e}")
+        summary_parts = []
+        for t, items in list(ticker_news.items())[:5]:
+            if items:
+                summary_parts.append(f"**{t}**: {items[0]['content'][:200]}")
+        summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
+
     # Clean up repetitive content while preserving markdown structure
     lines = summary_text.split('\n')
     seen_content = set()
