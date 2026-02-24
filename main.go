@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -5450,22 +5451,38 @@ func fillMissingTickerIsinPeriodic(interval time.Duration) {
 	}
 }
 
+type HoldingReturn struct {
+	Ticker             string  `json:"ticker"`
+	Name               string  `json:"name"`
+	ISIN               string  `json:"isin"`
+	TotalReturn        float64 `json:"total_return"`
+	VsBenchmark        float64 `json:"vs_benchmark"`
+	CurrentPrice       float64 `json:"current_price"`
+	Weight             float64 `json:"weight"`
+	Return1M           float64 `json:"return_1m"`
+	Return3M           float64 `json:"return_3m"`
+	DrawdownFromPeak   float64 `json:"drawdown_from_peak"`
+	MeanReversionScore float64 `json:"mean_reversion_score"`
+	Signal             string  `json:"signal"`
+}
+
 type BackTestResult struct {
-	PortfolioValues    []float64 `json:"portfolio_values"`
-	BenchmarkValues    []float64 `json:"benchmark_values"`
-	Timestamps         []int64   `json:"timestamps"`
-	CAGRPortfolio      float64   `json:"cagr_portfolio"`
-	CAGRBenchmark      float64   `json:"cagr_benchmark"`
-	MaxDDPortfolio     float64   `json:"max_drawdown_portfolio"`
-	MaxDDBenchmark     float64   `json:"max_drawdown_benchmark"`
-	SharpePortfolio    float64   `json:"sharpe_ratio_portfolio"`
-	SharpeBenchmark    float64   `json:"sharpe_ratio_benchmark"`
-	SortinoPortfolio   float64   `json:"sortino_ratio_portfolio"`
-	SortinoBenchmark   float64   `json:"sortino_ratio_benchmark"`
-	VolatilityPortfolio float64  `json:"volatility_portfolio"`
-	VolatilityBenchmark float64  `json:"volatility_benchmark"`
-	CalmarPortfolio    float64   `json:"calmar_ratio_portfolio"`
-	CalmarBenchmark    float64   `json:"calmar_ratio_benchmark"`
+	PortfolioValues     []float64                `json:"portfolio_values"`
+	BenchmarkValues     []float64                `json:"benchmark_values"`
+	Timestamps          []int64                  `json:"timestamps"`
+	CAGRPortfolio       float64                  `json:"cagr_portfolio"`
+	CAGRBenchmark       float64                  `json:"cagr_benchmark"`
+	MaxDDPortfolio      float64                  `json:"max_drawdown_portfolio"`
+	MaxDDBenchmark      float64                  `json:"max_drawdown_benchmark"`
+	SharpePortfolio     float64                  `json:"sharpe_ratio_portfolio"`
+	SharpeBenchmark     float64                  `json:"sharpe_ratio_benchmark"`
+	SortinoPortfolio    float64                  `json:"sortino_ratio_portfolio"`
+	SortinoBenchmark    float64                  `json:"sortino_ratio_benchmark"`
+	VolatilityPortfolio float64                  `json:"volatility_portfolio"`
+	VolatilityBenchmark float64                  `json:"volatility_benchmark"`
+	CalmarPortfolio     float64                  `json:"calmar_ratio_portfolio"`
+	CalmarBenchmark     float64                  `json:"calmar_ratio_benchmark"`
+	HoldingReturns      map[string]HoldingReturn `json:"holding_returns"`
 }
 
 func creteBackTestForPortfolio(userID string, startDate string, endDate string, benchmark string, tickerFilter []string) (*BackTestResult, error) {
@@ -5533,14 +5550,50 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		return nil, fmt.Errorf("no benchmark data in date range")
 	}
 
+	holdingStartPrices := make(map[string]float64, len(holdings))
+	totalInitialValue := 0.0
+	for _, holding := range holdings {
+		prices, exists := holdingPrices[holding.Ticker]
+		if !exists {
+			continue
+		}
+		var startPrice float64
+		minDiff := int64(math.MaxInt64)
+		for _, price := range prices {
+			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			diff := priceTs - startTime.Unix()
+			if diff >= 0 && diff < minDiff {
+				minDiff = diff
+				startPrice = price.Close
+			}
+		}
+		if startPrice > 0 {
+			holdingStartPrices[holding.Ticker] = startPrice
+			totalInitialValue += startPrice * holding.Quantity
+		}
+	}
+
+	holdingWeights := make(map[string]float64, len(holdings))
+	if totalInitialValue > 0 {
+		for _, holding := range holdings {
+			if sp, ok := holdingStartPrices[holding.Ticker]; ok {
+				holdingWeights[holding.Ticker] = (sp * holding.Quantity) / totalInitialValue
+			}
+		}
+	}
+
 	for _, ts := range timestamps {
 		portfolioValue := 0.0
 		for _, holding := range holdings {
+			startPrice, hasStart := holdingStartPrices[holding.Ticker]
+			weight, hasWeight := holdingWeights[holding.Ticker]
+			if !hasStart || !hasWeight || startPrice == 0 {
+				continue
+			}
 			prices, exists := holdingPrices[holding.Ticker]
 			if !exists {
 				continue
 			}
-
 			var closestPrice float64
 			minDiff := int64(math.MaxInt64)
 			for _, price := range prices {
@@ -5551,9 +5604,8 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 					closestPrice = price.Close
 				}
 			}
-
 			if closestPrice > 0 {
-				portfolioValue += closestPrice * holding.Quantity
+				portfolioValue += weight * (closestPrice / startPrice)
 			}
 		}
 		portfolioValues[ts] = portfolioValue
@@ -5597,6 +5649,139 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 	calmarPortfolio := calculateCalmarRatio(cagrPortfolio, maxDDPortfolio)
 	calmarBenchmark := calculateCalmarRatio(cagrBenchmark, maxDDBenchmark)
 
+	benchmarkTotalReturn := benchmarkValuesSlice[len(benchmarkValuesSlice)-1] - 100
+	holdingReturnMap := make(map[string]HoldingReturn, len(holdings))
+	totalEndValue := 0.0
+	holdingEndPrices := make(map[string]float64, len(holdings))
+
+	for _, holding := range holdings {
+		prices, exists := holdingPrices[holding.Ticker]
+		if !exists {
+			continue
+		}
+		var endPrice float64
+		var maxTs int64 = -1
+		for _, price := range prices {
+			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			if priceTs <= endTime.Unix() && priceTs > maxTs {
+				maxTs = priceTs
+				endPrice = price.Close
+			}
+		}
+		holdingEndPrices[holding.Ticker] = endPrice
+		totalEndValue += endPrice * holding.Quantity
+	}
+
+	for _, holding := range holdings {
+		prices, exists := holdingPrices[holding.Ticker]
+		if !exists {
+			continue
+		}
+		var startPrice float64
+		minStartDiff := int64(math.MaxInt64)
+		var endPrice float64
+		var maxTs int64 = -1
+		for _, price := range prices {
+			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			diff := priceTs - startTime.Unix()
+			if diff >= 0 && diff < minStartDiff {
+				minStartDiff = diff
+				startPrice = price.Close
+			}
+			if priceTs <= endTime.Unix() && priceTs > maxTs {
+				maxTs = priceTs
+				endPrice = price.Close
+			}
+		}
+		if startPrice == 0 || endPrice == 0 {
+			continue
+		}
+		totalReturn := ((endPrice - startPrice) / startPrice) * 100
+		vsBenchmark := totalReturn - benchmarkTotalReturn
+		weight := 0.0
+		if totalEndValue > 0 {
+			weight = (holdingEndPrices[holding.Ticker] * holding.Quantity / totalEndValue) * 100
+		}
+
+		var sortedPrices []Price
+		for _, p := range prices {
+			priceTs, _ := strconv.ParseInt(p.Date, 10, 64)
+			if priceTs >= startTime.Unix() && priceTs <= endTime.Unix() {
+				sortedPrices = append(sortedPrices, p)
+			}
+		}
+		sort.Slice(sortedPrices, func(i, j int) bool {
+			ts1, _ := strconv.ParseInt(sortedPrices[i].Date, 10, 64)
+			ts2, _ := strconv.ParseInt(sortedPrices[j].Date, 10, 64)
+			return ts1 < ts2
+		})
+
+		var return1M, return3M, drawdownFromPeak float64
+		n := len(sortedPrices)
+		if n > 0 {
+			peakPrice := sortedPrices[0].Close
+			for _, p := range sortedPrices {
+				if p.Close > peakPrice {
+					peakPrice = p.Close
+				}
+			}
+			if peakPrice > 0 {
+				drawdownFromPeak = ((endPrice - peakPrice) / peakPrice) * 100
+			}
+			idx1M := n - 21
+			if idx1M < 0 {
+				idx1M = 0
+			}
+			price1MAgo := sortedPrices[idx1M].Close
+			if price1MAgo > 0 {
+				return1M = ((endPrice - price1MAgo) / price1MAgo) * 100
+			}
+			idx3M := n - 63
+			if idx3M < 0 {
+				idx3M = 0
+			}
+			price3MAgo := sortedPrices[idx3M].Close
+			if price3MAgo > 0 {
+				return3M = ((endPrice - price3MAgo) / price3MAgo) * 100
+			}
+		}
+
+		var meanReversionScore float64
+		if n > 21 {
+			totalDays := float64(n)
+			avgDailyReturn := (endPrice - startPrice) / startPrice / totalDays * 100
+			expected1M := avgDailyReturn * 21
+			meanReversionScore = expected1M - return1M
+		}
+
+		var signal string
+		switch {
+		case totalReturn > 0 && meanReversionScore > 3 && drawdownFromPeak < -5:
+			signal = "BUY_DIP"
+		case return1M > 3 && return3M > 5 && vsBenchmark > 0:
+			signal = "STRONG"
+		case totalReturn < 0 && return1M < 0 && return3M < 0:
+			signal = "WEAK"
+		default:
+			signal = "NEUTRAL"
+		}
+
+		holdingReturnMap[holding.Ticker] = HoldingReturn{
+			Ticker:             holding.Ticker,
+			Name:               holding.Name,
+			ISIN:               holding.ISIN,
+			TotalReturn:        math.Round(totalReturn*100) / 100,
+			VsBenchmark:        math.Round(vsBenchmark*100) / 100,
+			CurrentPrice:       math.Round(endPrice*100) / 100,
+			Weight:             math.Round(weight*100) / 100,
+			Return1M:           math.Round(return1M*100) / 100,
+			Return3M:           math.Round(return3M*100) / 100,
+			DrawdownFromPeak:   math.Round(drawdownFromPeak*100) / 100,
+			MeanReversionScore: math.Round(meanReversionScore*100) / 100,
+			Signal:             signal,
+		}
+	}
+
 	return &BackTestResult{
 		PortfolioValues:     portfolioValuesSlice,
 		BenchmarkValues:     benchmarkValuesSlice,
@@ -5613,6 +5798,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		VolatilityBenchmark: math.Round(volatilityBenchmark*100) / 100,
 		CalmarPortfolio:     math.Round(calmarPortfolio*100) / 100,
 		CalmarBenchmark:     math.Round(calmarBenchmark*100) / 100,
+		HoldingReturns:      holdingReturnMap,
 	}, nil
 }
 

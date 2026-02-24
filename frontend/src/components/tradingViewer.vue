@@ -68,40 +68,34 @@
 
         <!-- Indicators -->
         <v-card variant="outlined">
-          <v-card-title class="text-subtitle-2 pa-2">Indicators</v-card-title>
+          <div class="ind-header">Indicators</div>
           <v-divider />
-          <v-card-text class="pa-2">
-            <div v-for="ind in indicatorDefs" :key="ind.id" class="mb-3">
-              <div class="d-flex align-center">
-                <span
-                  class="indicator-dot mr-2"
-                  :style="{ backgroundColor: ind.color }"
-                ></span>
+          <template v-for="(ind, idx) in indicatorDefs" :key="ind.id">
+            <div class="ind-row">
+              <span class="ind-swatch" :style="{ background: ind.color }"></span>
+              <span class="ind-label">{{ ind.label }}</span>
+              <div class="ind-controls">
+                <input
+                  v-if="enabledIndicators[ind.id]"
+                  v-model.number="indicatorParams[ind.id].period"
+                  type="number"
+                  min="1"
+                  class="period-input"
+                  @change="() => onParamChange(ind.id)"
+                  @input="() => onParamChange(ind.id)"
+                />
                 <v-switch
                   v-model="enabledIndicators[ind.id]"
-                  :label="ind.label"
                   density="compact"
                   hide-details
                   :color="ind.color"
                   @update:model-value="val => onIndicatorToggle(ind.id, val)"
-                  class="flex-grow-1"
-                />
-              </div>
-              <div v-if="enabledIndicators[ind.id]" class="pl-6 mt-1">
-                <v-text-field
-                  v-model.number="indicatorParams[ind.id].period"
-                  label="Period"
-                  type="number"
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                  :min="1"
-                  style="max-width: 110px;"
-                  @update:model-value="() => onParamChange(ind.id)"
+                  class="ind-switch"
                 />
               </div>
             </div>
-          </v-card-text>
+            <v-divider v-if="idx < indicatorDefs.length - 1" />
+          </template>
         </v-card>
       </v-col>
 
@@ -173,7 +167,7 @@ export default {
     const indicatorParams = reactive(
       Object.fromEntries(indicatorDefs.map(d => [d.id, { ...d.defaultParams }]))
     )
-    const activeSeries = reactive({})
+    const activeSeries = {}
 
     function updateChartHeight() {
       chartHeight.value = Math.max(400, window.innerHeight - 100)
@@ -190,11 +184,18 @@ export default {
         searchResults.value = []
         return
       }
-      const isIsin = /^[A-Z]{2}[A-Z0-9]{9,10}$/i.test(searchQuery.value)
-      const type = isIsin ? 'isin' : 'ticker'
+      const q = searchQuery.value.trim()
+      let type
+      if (/^[A-Z]{2}[A-Z0-9]{9,10}$/i.test(q)) {
+        type = 'isin'
+      } else if (q.includes('.')) {
+        type = 'ticker'
+      } else {
+        type = 'name'
+      }
       try {
         const res = await fetch(
-          `${PYTHON_API_URL}/api/search?identifier=${encodeURIComponent(searchQuery.value)}&search_type=${type}`
+          `${PYTHON_API_URL}/api/search?identifier=${encodeURIComponent(q)}&search_type=${type}`
         )
         searchResults.value = res.ok ? await res.json() : []
       } catch {
@@ -394,10 +395,68 @@ export default {
   background-color: rgba(var(--v-theme-primary), 0.08);
 }
 
-.indicator-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.ind-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  padding: 8px 10px 6px;
+}
+
+.ind-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.ind-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
   flex-shrink: 0;
+}
+
+.ind-label {
+  font-size: 0.85rem;
+  flex-grow: 1;
+  color: rgba(var(--v-theme-on-surface), 0.87);
+}
+
+.ind-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.period-input {
+  width: 44px;
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.18);
+  border-radius: 4px;
+  color: rgba(var(--v-theme-on-surface), 0.87);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 3px 4px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.period-input::-webkit-inner-spin-button,
+.period-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.period-input:focus {
+  border-color: rgba(var(--v-theme-primary), 0.7);
+  background: rgba(var(--v-theme-primary), 0.08);
+}
+
+.ind-switch {
+  margin: 0;
+  padding: 0;
 }
 </style>

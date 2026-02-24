@@ -205,7 +205,7 @@ def search_ticker_info(identifier, search_type="ticker"):
                     continue
             
             return results
-        else:
+        elif search_type == "isin":
             try:
                 ticker_obj = yf.Ticker(identifier)
                 info = ticker_obj.info
@@ -236,6 +236,32 @@ def search_ticker_info(identifier, search_type="ticker"):
                 pass
             
             return []
+        elif search_type == "name":
+            try:
+                search = yf.Search(identifier, max_results=10, enable_fuzzy_query=True)
+                quotes = search.quotes
+                results = []
+                for q in quotes[:8]:
+                    ticker_sym = q.get('symbol', '')
+                    if not ticker_sym:
+                        continue
+                    quote_type = q.get('quoteType', 'Unknown')
+                    results.append({
+                        'ticker': ticker_sym,
+                        'name': q.get('shortName', q.get('longName', 'Unknown')),
+                        'exchange': q.get('exchange', 'Unknown'),
+                        'isin': q.get('isin', 'N/A'),
+                        'currency': q.get('currency', 'USD'),
+                        'type': quote_type,
+                        'price': q.get('regularMarketPrice', 'N/A'),
+                        'ter': None,
+                        'distribution_policy': None
+                    })
+                return results
+            except Exception as e:
+                print(f"Name search error for '{identifier}': {e}")
+                return []
+
     except Exception as e:
         print(f"Error searching for {identifier}: {e}")
         return []
