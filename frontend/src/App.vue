@@ -957,23 +957,25 @@
           <v-row>
             <v-col cols="12">
               <v-card>
-                <v-card-title class="d-flex align-center justify-space-between flex-wrap gap-2">
+                <v-card-title class="d-flex align-center justify-space-between flex-wrap" style="gap: 8px; min-height: 56px;">
                   <span>Portfolio vs Benchmark Comparison</span>
-                  <div class="d-flex align-center gap-2 flex-wrap">
+                  <div class="d-flex align-center flex-wrap" style="gap: 8px;">
                     <v-btn
                       :color="showPortfolioCustomizer ? 'primary' : undefined"
                       variant="outlined"
-                      size="small"
+                      density="compact"
                       prepend-icon="mdi-tune"
+                      style="height: 40px;"
                       @click="showPortfolioCustomizer = !showPortfolioCustomizer"
                     >
                       Customize
-                      <v-chip
+                      <v-badge
                         v-if="customPortfolioTickers && customPortfolioTickers.length > 0"
-                        size="x-small"
+                        :content="customPortfolioTickers.length"
                         color="primary"
+                        inline
                         class="ml-1"
-                      >{{ customPortfolioTickers.length }}</v-chip>
+                      />
                     </v-btn>
                     <v-select
                       v-model="backtestBenchmark"
@@ -982,7 +984,7 @@
                       variant="outlined"
                       density="compact"
                       hide-details
-                      style="max-width: 200px;"
+                      style="max-width: 200px; min-width: 140px;"
                       @update:model-value="fetchBacktest"
                     ></v-select>
                     <v-select
@@ -992,7 +994,7 @@
                       variant="outlined"
                       density="compact"
                       hide-details
-                      style="max-width: 150px;"
+                      style="max-width: 150px; min-width: 120px;"
                       @update:model-value="fetchBacktest"
                     ></v-select>
                   </div>
@@ -1012,17 +1014,43 @@
                           @click="customPortfolioTickers = null; fetchBacktest()"
                         >Reset to all</v-btn>
                       </div>
-                      <div class="d-flex flex-wrap gap-1">
-                        <v-chip
-                          v-for="h in portfolioHoldings"
+                      <div class="d-flex flex-wrap" style="gap: 6px;">
+                        <v-tooltip
+                          v-for="h in sortedPortfolioHoldings"
                           :key="h.id_holding"
-                          :color="!customPortfolioTickers || customPortfolioTickers.includes(h.ticker) ? 'primary' : undefined"
-                          :variant="!customPortfolioTickers || customPortfolioTickers.includes(h.ticker) ? 'tonal' : 'outlined'"
-                          size="small"
-                          label
-                          clickable
-                          @click="toggleCustomTicker(h.ticker)"
-                        >{{ h.ticker }}</v-chip>
+                          location="top"
+                          max-width="240"
+                        >
+                          <template v-slot:activator="{ props: tp }">
+                            <div
+                              v-bind="tp"
+                              class="holding-perf-chip"
+                              :class="{ 'holding-perf-chip--inactive': customPortfolioTickers && !customPortfolioTickers.includes(h.ticker) }"
+                              :style="holdingChipStyle(h.ticker)"
+                              @click="toggleCustomTicker(h.ticker)"
+                            >
+                              <span class="hpc-ticker">{{ h.ticker }}</span>
+                              <span
+                                v-if="backtestData && backtestData.holding_returns && backtestData.holding_returns[h.ticker]"
+                                class="hpc-delta"
+                                :style="{ color: holdingTextColor(backtestData.holding_returns[h.ticker].vs_benchmark) }"
+                              >
+                                {{ backtestData.holding_returns[h.ticker].vs_benchmark >= 0 ? '+' : '' }}{{ backtestData.holding_returns[h.ticker].vs_benchmark }}%
+                              </span>
+                            </div>
+                          </template>
+                          <div v-if="backtestData && backtestData.holding_returns && backtestData.holding_returns[h.ticker]" class="pa-1">
+                            <div class="font-weight-bold mb-1" style="font-size:0.8rem;">{{ backtestData.holding_returns[h.ticker].name }}</div>
+                            <div class="text-caption text-grey">ISIN: {{ backtestData.holding_returns[h.ticker].isin || 'N/A' }}</div>
+                            <div class="text-caption">Price: {{ backtestData.holding_returns[h.ticker].current_price }}</div>
+                            <div class="text-caption">Return (period): {{ backtestData.holding_returns[h.ticker].total_return >= 0 ? '+' : '' }}{{ backtestData.holding_returns[h.ticker].total_return }}%</div>
+                            <div class="text-caption" :style="{ color: holdingTextColor(backtestData.holding_returns[h.ticker].vs_benchmark) }">
+                              vs {{ backtestBenchmark }}: {{ backtestData.holding_returns[h.ticker].vs_benchmark >= 0 ? '+' : '' }}{{ backtestData.holding_returns[h.ticker].vs_benchmark }}%
+                            </div>
+                            <div class="text-caption text-grey">Weight: {{ backtestData.holding_returns[h.ticker].weight }}%</div>
+                          </div>
+                          <div v-else>{{ h.name || h.ticker }}</div>
+                        </v-tooltip>
                       </div>
                     </v-card-text>
                   </div>
@@ -1138,6 +1166,86 @@
                               </v-list-item>
                             </v-list>
                           </v-card-text>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+
+                    <v-row v-if="holdingReturns.length > 0" class="mt-2">
+                      <v-col cols="12">
+                        <v-card variant="outlined">
+                          <div class="attrib-header d-flex align-center justify-space-between px-3 py-2">
+                            <span class="text-subtitle-2">Holding Attribution vs {{ backtestBenchmark }}</span>
+                            <div class="d-flex align-center" style="gap:6px;">
+                              <v-chip v-if="underperformers.length > 0" color="error" size="x-small" variant="tonal">{{ underperformers.length }} weak</v-chip>
+                              <v-chip v-if="buyDipSignals.length > 0" color="success" size="x-small" variant="tonal">{{ buyDipSignals.length }} buy dip</v-chip>
+                              <v-btn-toggle v-model="attribSort" mandatory density="compact" size="x-small" color="primary" variant="outlined">
+                                <v-btn value="weight">Weight</v-btn>
+                                <v-btn value="return">Return</v-btn>
+                                <v-btn value="reversion">Reversion</v-btn>
+                              </v-btn-toggle>
+                            </div>
+                          </div>
+                          <v-divider />
+                          <div class="attrib-table-head">
+                            <span>Ticker</span>
+                            <span class="text-right">Total</span>
+                            <span class="text-right">1M</span>
+                            <span class="text-right">3M</span>
+                            <span class="text-right">vs ref</span>
+                            <span class="text-right">DD peak</span>
+                            <span class="text-right">Wt</span>
+                            <span class="text-right">Signal</span>
+                          </div>
+                          <v-divider />
+                          <div
+                            v-for="hr in holdingReturns"
+                            :key="hr.ticker"
+                            class="attrib-row"
+                            :style="{ borderLeft: '3px solid ' + holdingHeatmapBg(hr.vs_benchmark) }"
+                          >
+                            <div class="attrib-info">
+                              <span class="attrib-ticker">{{ hr.ticker }}</span>
+                              <span class="attrib-name">{{ hr.name }}</span>
+                            </div>
+                            <span class="attrib-cell" :style="{ color: hr.total_return >= 0 ? '#26a69a' : '#ef5350' }">{{ hr.total_return >= 0 ? '+' : '' }}{{ hr.total_return }}%</span>
+                            <span class="attrib-cell" :style="{ color: hr.return_1m >= 0 ? '#26a69a' : '#ef5350' }">{{ hr.return_1m >= 0 ? '+' : '' }}{{ hr.return_1m }}%</span>
+                            <span class="attrib-cell" :style="{ color: hr.return_3m >= 0 ? '#26a69a' : '#ef5350' }">{{ hr.return_3m >= 0 ? '+' : '' }}{{ hr.return_3m }}%</span>
+                            <span class="attrib-cell" :style="{ color: holdingTextColor(hr.vs_benchmark) }">{{ hr.vs_benchmark >= 0 ? '+' : '' }}{{ hr.vs_benchmark }}%</span>
+                            <span class="attrib-cell" :style="{ color: hr.drawdown_from_peak < -10 ? '#ef5350' : '#aaa' }">{{ hr.drawdown_from_peak.toFixed(1) }}%</span>
+                            <span class="attrib-cell text-grey">{{ hr.weight }}%</span>
+                            <span class="attrib-cell">
+                              <span class="signal-badge" :class="'signal-' + hr.signal">{{ hr.signal === 'BUY_DIP' ? 'dip' : hr.signal === 'STRONG' ? 'str' : hr.signal === 'WEAK' ? 'weak' : '-' }}</span>
+                            </span>
+                          </div>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+
+                    <v-row v-if="buyDipSignals.length > 0" class="mt-2">
+                      <v-col cols="12">
+                        <v-card variant="outlined" style="border-color: rgba(38,166,154,0.3);">
+                          <div class="attrib-header d-flex align-center px-3 py-2" style="gap:6px;">
+                            <v-icon size="small" color="success">mdi-trending-down</v-icon>
+                            <span class="text-subtitle-2">Buy-the-Dip Candidates</span>
+                            <span class="text-caption text-grey ml-1">long-term positive but recently below own avg</span>
+                          </div>
+                          <v-divider />
+                          <div v-for="hr in buyDipSignals" :key="hr.ticker" class="attrib-row" style="border-left: 3px solid rgba(38,166,154,0.6);">
+                            <div class="attrib-info">
+                              <span class="attrib-ticker">{{ hr.ticker }}</span>
+                              <span class="attrib-name">{{ hr.name }}</span>
+                            </div>
+                            <div class="attrib-metrics">
+                              <span class="text-caption" style="color:#aaa;">period: </span>
+                              <span class="attrib-return" style="color:#26a69a;">+{{ hr.total_return }}%</span>
+                              <span class="text-caption" style="color:#aaa;">1M: </span>
+                              <span class="attrib-return" :style="{ color: hr.return_1m >= 0 ? '#26a69a' : '#ef5350' }">{{ hr.return_1m >= 0 ? '+' : '' }}{{ hr.return_1m }}%</span>
+                              <span class="text-caption" style="color:#aaa;">rev score: </span>
+                              <span class="attrib-return" style="color:#26a69a;">+{{ hr.mean_reversion_score.toFixed(2) }}</span>
+                              <span class="text-caption" style="color:#aaa;">DD: </span>
+                              <span class="attrib-return" style="color:#ef5350;">{{ hr.drawdown_from_peak.toFixed(1) }}%</span>
+                            </div>
+                          </div>
                         </v-card>
                       </v-col>
                     </v-row>
@@ -1274,6 +1382,7 @@ export default {
       backtestPeriod: '1Y',
       showPortfolioCustomizer: false,
       customPortfolioTickers: null,
+      attribSort: 'weight',
       benchmarkOptions: [
         { title: 'S&P 500', value: 'SPY' },
         { title: 'NASDAQ 100', value: 'QQQ' },
@@ -1299,6 +1408,26 @@ export default {
   },
 
   computed: {
+    holdingReturns() {
+      if (!this.backtestData || !this.backtestData.holding_returns) return []
+      const arr = Object.values(this.backtestData.holding_returns)
+      if (this.attribSort === 'weight') return [...arr].sort((a, b) => b.weight - a.weight)
+      if (this.attribSort === 'return') return [...arr].sort((a, b) => a.vs_benchmark - b.vs_benchmark)
+      if (this.attribSort === 'reversion') return [...arr].sort((a, b) => b.mean_reversion_score - a.mean_reversion_score)
+      return arr
+    },
+
+    buyDipSignals() {
+      if (!this.backtestData || !this.backtestData.holding_returns) return []
+      return Object.values(this.backtestData.holding_returns)
+        .filter(h => h.signal === 'BUY_DIP')
+        .sort((a, b) => b.mean_reversion_score - a.mean_reversion_score)
+    },
+
+    underperformers() {
+      return this.holdingReturns.filter(h => h.signal === 'WEAK')
+    },
+
     canAddHolding() {
       return this.selectedResult && 
              this.newHolding.quantity > 0 && 
@@ -1361,6 +1490,16 @@ export default {
       }
       
       return holdings
+    },
+
+    sortedPortfolioHoldings() {
+      if (!this.portfolioHoldings) return []
+      const hr = this.backtestData?.holding_returns || {}
+      return [...this.portfolioHoldings].sort((a, b) => {
+        const wa = hr[a.ticker]?.weight ?? 0
+        const wb = hr[b.ticker]?.weight ?? 0
+        return wb - wa
+      })
     },
 
     filteredHoldings() {
@@ -1506,6 +1645,30 @@ export default {
   },
 
   methods: {
+    holdingHeatmapBg(vsBenchmark) {
+      const v = Math.max(-30, Math.min(30, vsBenchmark))
+      if (v >= 0) {
+        const i = Math.min(1, v / 30)
+        return `rgba(38,166,154,${(0.15 + i * 0.6).toFixed(2)})`
+      }
+      const i = Math.min(1, Math.abs(v) / 30)
+      return `rgba(239,83,80,${(0.15 + i * 0.6).toFixed(2)})`
+    },
+
+    holdingTextColor(vsBenchmark) {
+      return vsBenchmark >= 0 ? '#26a69a' : '#ef5350'
+    },
+
+    holdingChipStyle(ticker) {
+      const inactive = this.customPortfolioTickers && !this.customPortfolioTickers.includes(ticker)
+      if (!this.backtestData || !this.backtestData.holding_returns || !this.backtestData.holding_returns[ticker]) {
+        return inactive ? { opacity: '0.35' } : {}
+      }
+      const vs = this.backtestData.holding_returns[ticker].vs_benchmark
+      const bg = this.holdingHeatmapBg(vs)
+      return inactive ? { background: bg, opacity: '0.35' } : { background: bg }
+    },
+
     isTokenExpired(token) {
       const payload = decodeJwtPayload(token)
       if (!payload || typeof payload.exp !== 'number') {
@@ -2388,5 +2551,132 @@ export default {
 .bg-error-lighten-4,
 .bg-error-lighten-5 {
   background-color: rgba(239, 83, 80, 0.08) !important;
+}
+
+.holding-perf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.18);
+  cursor: pointer;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+  background: rgba(var(--v-theme-on-surface), 0.06);
+}
+
+.holding-perf-chip:hover {
+  filter: brightness(1.25);
+}
+
+.holding-perf-chip--inactive {
+  opacity: 0.35;
+}
+
+.hpc-ticker {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.hpc-delta {
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.attrib-table-head {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 60px 70px 68px 46px 48px;
+  padding: 3px 12px 3px 13px;
+  font-size: 0.68rem;
+  color: rgba(var(--v-theme-on-surface), 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.attrib-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 60px 70px 68px 46px 48px;
+  align-items: center;
+  padding: 4px 12px 4px 10px;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.07);
+}
+
+.attrib-row:last-of-type {
+  border-bottom: none;
+}
+
+.attrib-cell {
+  font-size: 0.75rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  float: right;
+}
+
+.signal-BUY_DIP {
+  background: rgba(38,166,154,0.18);
+  color: #26a69a;
+  border: 1px solid rgba(38,166,154,0.35);
+}
+
+.signal-STRONG {
+  background: rgba(33,150,243,0.15);
+  color: #2196F3;
+  border: 1px solid rgba(33,150,243,0.3);
+}
+
+.signal-WEAK {
+  background: rgba(239,83,80,0.15);
+  color: #ef5350;
+  border: 1px solid rgba(239,83,80,0.3);
+}
+
+.signal-NEUTRAL {
+  color: rgba(var(--v-theme-on-surface), 0.3);
+}
+
+.attrib-info {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.attrib-ticker {
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.attrib-name {
+  font-size: 0.7rem;
+  color: rgba(var(--v-theme-on-surface), 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attrib-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.attrib-return {
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 </style>

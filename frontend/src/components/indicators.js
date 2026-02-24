@@ -118,21 +118,61 @@ register({
   }
 })
 
-// Time Price Opportunity midpoint — average of typical prices in the rolling window
+// Time Price Opportunity Point of Control
+// Divides the window's price range into buckets and counts how many candles
+// touched each bucket (price range overlap). The bucket with the most touches
+// is where price spent the most time — the TPO Point of Control.
 register({
   id: 'TPO',
-  label: 'TPO Mid',
+  label: 'TPO PoC',
   color: '#009688',
-  defaultParams: { period: 20 },
-  compute(candles, { period }) {
+  defaultParams: { period: 20, levels: 50 },
+  compute(candles, { period, levels }) {
+    const numLevels = Math.max(10, levels || 50)
     const result = []
+
     for (let i = period - 1; i < candles.length; i++) {
-      let sum = 0
-      for (let j = i - period + 1; j <= i; j++) {
-        sum += (candles[j].high + candles[j].low + candles[j].close) / 3
+      const window = candles.slice(i - period + 1, i + 1)
+
+      let rangeHigh = -Infinity
+      let rangeLow = Infinity
+      for (const c of window) {
+        if (c.high > rangeHigh) rangeHigh = c.high
+        if (c.low < rangeLow) rangeLow = c.low
       }
-      result.push({ time: candles[i].time, value: sum / period })
+
+      if (rangeHigh === rangeLow) {
+        result.push({ time: candles[i].time, value: rangeHigh })
+        continue
+      }
+
+      const bucketSize = (rangeHigh - rangeLow) / numLevels
+      const counts = new Float64Array(numLevels)
+
+      for (const c of window) {
+        const firstBucket = Math.floor((c.low - rangeLow) / bucketSize)
+        const lastBucket = Math.min(
+          Math.floor((c.high - rangeLow) / bucketSize),
+          numLevels - 1
+        )
+        for (let b = Math.max(0, firstBucket); b <= lastBucket; b++) {
+          counts[b]++
+        }
+      }
+
+      let maxCount = -1
+      let pocBucket = 0
+      for (let b = 0; b < numLevels; b++) {
+        if (counts[b] > maxCount) {
+          maxCount = counts[b]
+          pocBucket = b
+        }
+      }
+
+      const pocPrice = rangeLow + (pocBucket + 0.5) * bucketSize
+      result.push({ time: candles[i].time, value: pocPrice })
     }
+
     return result
   }
 })
