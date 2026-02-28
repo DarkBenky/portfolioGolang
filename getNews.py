@@ -126,38 +126,34 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
                     text = article.text
                 except requests.exceptions.HTTPError as e:
                     if hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
-                        # Try with different User-Agents if 403 Forbidden
                         for user_agent in USER_AGENTS:
                             try:
                                 headers = {'User-Agent': user_agent}
-                                response = requests.get(url, headers=headers, timeout=10)
-                                response.raise_for_status()
-                                
-                                article = Article(url)
-                                article.html = response.text
-                                article.parse()
-                                text = article.text
-                                break  # Success, exit loop
+                                with requests.get(url, headers=headers, timeout=10) as response:
+                                    response.raise_for_status()
+                                    article = Article(url)
+                                    article.html = response.text
+                                    article.parse()
+                                    text = article.text
+                                break
                             except Exception:
-                                continue  # Try next User-Agent
+                                continue
                     else:
                         print(f"Error fetching article from {url}: {e}")
                 except Exception as e:
-                    # If standard download fails, try with custom User-Agent
                     if '403' in str(e) or 'Forbidden' in str(e):
                         for user_agent in USER_AGENTS:
                             try:
                                 headers = {'User-Agent': user_agent}
-                                response = requests.get(url, headers=headers, timeout=10)
-                                response.raise_for_status()
-                                
-                                article = Article(url)
-                                article.html = response.text
-                                article.parse()
-                                text = article.text
-                                break  # Success, exit loop
+                                with requests.get(url, headers=headers, timeout=10) as response:
+                                    response.raise_for_status()
+                                    article = Article(url)
+                                    article.html = response.text
+                                    article.parse()
+                                    text = article.text
+                                break
                             except Exception:
-                                continue  # Try next User-Agent
+                                continue
                         else:
                             print(f"Error fetching article from {url}: {e}")
                     else:
@@ -165,18 +161,18 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
 
             # Check if news already exists in DB (now including text)
             try:
-                response = requests.get(
+                with requests.get(
                     f"{BACKEND_GO}/news_exists",
                     params={"title": title, "summary": summary, "text": text[:500] if text else ""},
                     timeout=5
-                )
-                if response.status_code == 200:
-                    exists = response.json().get("exists", False)
-                    if exists:
-                        print(f"News already exists in DB: {title}")
-                        continue  # skip this news item
-                else:
-                    print(f"Error checking news existence for {title}: {response.status_code}")
+                ) as response:
+                    if response.status_code == 200:
+                        exists = response.json().get("exists", False)
+                        if exists:
+                            print(f"News already exists in DB: {title}")
+                            continue
+                    else:
+                        print(f"Error checking news existence for {title}: {response.status_code}")
             except Exception as e:
                 print(f"Error checking news existence: {e}")
             

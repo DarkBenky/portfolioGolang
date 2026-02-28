@@ -1,3 +1,4 @@
+import resource
 import yfinance as yf
 import flask
 from functools import lru_cache
@@ -14,6 +15,12 @@ from datetime import datetime, timezone
 from collections import deque
 from flask_cors import CORS
 import atexit
+
+try:
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(65536, _hard), _hard))
+except Exception:
+    pass
 
 app = flask.Flask(__name__)
 
@@ -104,28 +111,26 @@ def get_etf_ter_and_policy(ticker, isin):
             url = f"https://www.justetf.com/en/etf-profile.html?isin={isin}"
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.content, 'html.parser')
-                text = soup.get_text().lower()
-                
-                # Get TER if not found yet
-                if not ter:
-                    ter_match = soup.find(string=lambda t: t and 'total expense ratio' in t.lower())
-                    if ter_match:
-                        parent = ter_match.find_parent()
-                        if parent:
-                            ter_text = parent.get_text()
-                            ter_pattern = re.search(r'(\d+\.?\d*)\s*%', ter_text)
-                            if ter_pattern:
-                                ter = f"{ter_pattern.group(1)}%"
-                
-                # Get distribution policy if not found yet
-                if not dist_policy:
-                    if 'distributing' in text and 'distribution policy' in text:
-                        dist_policy = 'Distributing'
-                    elif 'accumulating' in text or 'reinvesting' in text:
-                        dist_policy = 'Accumulating'
+            with requests.get(url, headers=headers, timeout=5) as response:
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    text = soup.get_text().lower()
+
+                    if not ter:
+                        ter_match = soup.find(string=lambda t: t and 'total expense ratio' in t.lower())
+                        if ter_match:
+                            parent = ter_match.find_parent()
+                            if parent:
+                                ter_text = parent.get_text()
+                                ter_pattern = re.search(r'(\d+\.?\d*)\s*%', ter_text)
+                                if ter_pattern:
+                                    ter = f"{ter_pattern.group(1)}%"
+
+                    if not dist_policy:
+                        if 'distributing' in text and 'distribution policy' in text:
+                            dist_policy = 'Distributing'
+                        elif 'accumulating' in text or 'reinvesting' in text:
+                            dist_policy = 'Accumulating'
         except Exception as e:
             print(f"Warning: JustETF lookup failed for {isin}: {e}")
     
@@ -139,27 +144,25 @@ def get_etf_ter_and_policy(ticker, isin):
             url = f"https://etfdb.com/etf/{clean_ticker}/"
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.content, 'html.parser')
-                text = soup.get_text().lower()
-                
-                # Get TER if not found yet
-                if not ter:
-                    expense_match = soup.find(string=lambda t: t and 'expense ratio' in t.lower())
-                    if expense_match:
-                        parent = expense_match.find_parent()
-                        if parent:
-                            ter_pattern = re.search(r'(\d+\.?\d*)\s*%', parent.get_text())
-                            if ter_pattern:
-                                ter = f"{ter_pattern.group(1)}%"
-                
-                # Get distribution policy if not found yet
-                if not dist_policy:
-                    if 'dividend' in text and ('distributing' in text or 'paying' in text):
-                        dist_policy = 'Distributing'
-                    elif 'accumulating' in text or 'reinvesting' in text:
-                        dist_policy = 'Accumulating'
+            with requests.get(url, headers=headers, timeout=5) as response:
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    text = soup.get_text().lower()
+
+                    if not ter:
+                        expense_match = soup.find(string=lambda t: t and 'expense ratio' in t.lower())
+                        if expense_match:
+                            parent = expense_match.find_parent()
+                            if parent:
+                                ter_pattern = re.search(r'(\d+\.?\d*)\s*%', parent.get_text())
+                                if ter_pattern:
+                                    ter = f"{ter_pattern.group(1)}%"
+
+                    if not dist_policy:
+                        if 'dividend' in text and ('distributing' in text or 'paying' in text):
+                            dist_policy = 'Distributing'
+                        elif 'accumulating' in text or 'reinvesting' in text:
+                            dist_policy = 'Accumulating'
         except Exception as e:
             print(f"Warning: ETFDB lookup failed for {clean_ticker}: {e}")
     
@@ -277,19 +280,18 @@ def convert_ticker_to_isin(ticker):
         headers = {'Content-Type': 'application/json'}
         payload = [{"idType": "TICKER", "idValue": ticker}]
         
-        response = requests.post(url, json=payload, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0 and 'data' in data[0]:
-                results = data[0]['data']
-                if results and len(results) > 0:
-                    isin = results[0].get('isin')
-                    if isin:
-                        return isin
+        with requests.post(url, json=payload, headers=headers, timeout=5) as response:
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0 and 'data' in data[0]:
+                    results = data[0]['data']
+                    if results and len(results) > 0:
+                        isin = results[0].get('isin')
+                        if isin:
+                            return isin
     except Exception as e:
         print(f"OpenFIGI lookup failed for {ticker}: {e}")
-    
+
     return None
 
 # curl "http://localhost:5123/api/search?identifier=AAPL"
@@ -402,19 +404,18 @@ def convert_isin_to_ticker(isin):
         headers = {'Content-Type': 'application/json'}
         payload = [{"idType": "ID_ISIN", "idValue": isin}]
         
-        response = requests.post(url, json=payload, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0 and 'data' in data[0]:
-                results = data[0]['data']
-                if results and len(results) > 0:
-                    ticker = results[0].get('ticker')
-                    if ticker:
-                        return ticker
+        with requests.post(url, json=payload, headers=headers, timeout=5) as response:
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0 and 'data' in data[0]:
+                    results = data[0]['data']
+                    if results and len(results) > 0:
+                        ticker = results[0].get('ticker')
+                        if ticker:
+                            return ticker
     except Exception as e:
         print(f"OpenFIGI lookup failed for {isin}: {e}")
-    
+
     return None
 
 # curl "http://localhost:5123/api/isin_to_ticker?isin=US0378331005"
@@ -498,5 +499,4 @@ def api_convert_currency():
     })
 
 if __name__ == '__main__':
-    # For production, use: gunicorn -w 1 --threads 10 -b 0.0.0.0:5123 app:app
-    app.run(debug=True, host='0.0.0.0', port=BACKEND_PYTHON_PORT, threaded=True)
+    app.run(debug=False, host='0.0.0.0', port=BACKEND_PYTHON_PORT, threaded=True)
