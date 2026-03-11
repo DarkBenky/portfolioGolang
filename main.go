@@ -6100,11 +6100,11 @@ func main() {
 	}()
 
 	go fetchOldPriceDataPeriodic(7 * 24 * time.Hour)
-	go fetchNewsPeriodic(15 * time.Minute)
+	go fetchNewsPeriodic(30 * time.Minute)
 	go fetchPricesPeriodic(10 * time.Minute)
 	go fillInBetweenPricesPeriodic(90 * time.Minute)
-	go updateSentimentsPeriodic(1 * time.Hour)
-	go updateETFDataPeriodic(15 * time.Minute)
+	go updateSentimentsPeriodic(6 * time.Hour)
+	go updateETFDataPeriodic(30 * time.Minute)
 	go fetchAssetDetailsPeriodic(1 * time.Hour)
 	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
 
