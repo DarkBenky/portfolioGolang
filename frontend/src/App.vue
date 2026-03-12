@@ -412,6 +412,9 @@
             <v-card-title class="d-flex align-center">
               <span>Portfolio Value</span>
               <v-spacer></v-spacer>
+              <span v-if="sentimentHistory.length > 0" class="text-caption mr-3" :class="sentimentHistory[sentimentHistory.length - 1].sentiment >= 0 ? 'text-success' : 'text-error'">
+                <v-icon size="x-small" class="mr-1">mdi-chart-timeline-variant</v-icon>Sentiment {{ sentimentHistory[sentimentHistory.length - 1].sentiment >= 0 ? '+' : '' }}{{ sentimentHistory[sentimentHistory.length - 1].sentiment.toFixed(3) }}
+              </span>
               <v-btn-toggle v-model="selectedInterval" mandatory density="compact" color="primary">
                 <v-btn value="5m" size="small">5m</v-btn>
                 <v-btn value="15m" size="small">15m</v-btn>
@@ -433,7 +436,7 @@
                 <CandleChart
                   ref="portfolioChart"
                   :data="portfolioData"
-                  :height="400"
+                  :height="340"
                   :price-decimals="2"
                   :show-volume="false"
                   bull-color="#26a79a"
@@ -1270,6 +1273,7 @@
 import LoginRegister from './components/loginRegister.vue'
 import ExpensesView from './components/expensesView.vue'
 import { API_BASE_URL, PYTHON_API_URL } from './config'
+import { BaselineSeries } from 'lightweight-charts'
 import CandleChart from './components/candleChart.vue'
 import BacktestChart from './components/backtestChart.vue'
 import HoldingView from './components/holdingView.vue'
@@ -1383,6 +1387,11 @@ export default {
       showPortfolioCustomizer: false,
       customPortfolioTickers: null,
       attribSort: 'weight',
+
+      sentimentHistory: [],
+      sentimentLoading: false,
+      sentimentSeries: null,
+
       benchmarkOptions: [
         { title: 'S&P 500', value: 'SPY' },
         { title: 'NASDAQ 100', value: 'QQQ' },
@@ -1569,12 +1578,14 @@ export default {
         })
       }
       return options
-    }
+    },
+
   },
 
   watch: {
     selectedInterval() {
       this.fetchPortfolioHistory()
+      this.fetchSentimentHistory()
     },
 
     isAuthenticated(newVal) {
@@ -1625,6 +1636,7 @@ export default {
         this.getPortfolioAllocation()
         this.fetchPortfolioStatistics()
         this.fetchPortfolioSentiment()
+        this.fetchSentimentHistory()
         this.fetchTopGainersLosers()
         if (this.activeView === 'news') {
           this.fetchPortfolioNews()
@@ -1910,12 +1922,62 @@ export default {
     },
 
     onPortfolioChartReady({ chart, candleSeries }) {
-      if (this.portfolioCostBasisLine) {
-        candleSeries.removePriceLine(this.portfolioCostBasisLine)
+      if (this._portfolioChart !== chart) {
+        this.sentimentSeries = null
+        this.portfolioCostBasisLine = null
       }
-      
+
+      this._portfolioChart = chart
+      this._portfolioCandleSeries = candleSeries
+
+      if (this.portfolioCostBasisLine) {
+        try { candleSeries.removePriceLine(this.portfolioCostBasisLine) } catch (_) {}
+        this.portfolioCostBasisLine = null
+      }
+
       if (this.statsData.total_cost && this.statsData.total_cost > 0) {
         this.portfolioCostBasisLine = candleSeries.createPriceLine({
+          price: this.statsData.total_cost,
+          color: '#808080',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Cost Basis'
+        })
+      }
+
+      if (!this.sentimentSeries) {
+        const sentimentPane = chart.addPane()
+        sentimentPane.setHeight(90)
+        this.sentimentSeries = chart.addSeries(BaselineSeries, {
+          baseValue: { type: 'price', price: 0 },
+          topLineColor: '#26a79a',
+          topFillColor1: 'rgba(38,167,154,0.28)',
+          topFillColor2: 'rgba(38,167,154,0.05)',
+          bottomLineColor: '#ef5250',
+          bottomFillColor1: 'rgba(239,82,80,0.05)',
+          bottomFillColor2: 'rgba(239,82,80,0.28)',
+          lineWidth: 1.5,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: 'Sentiment'
+        }, sentimentPane.paneIndex())
+
+        if (this.sentimentHistory && this.sentimentHistory.length > 0) {
+          this.sentimentSeries.setData(
+            this.sentimentHistory.map(p => ({ time: p.timestamp, value: p.sentiment }))
+          )
+        }
+      }
+    },
+
+    updateCostBasisLine() {
+      if (!this._portfolioCandleSeries) return
+      if (this.portfolioCostBasisLine) {
+        this._portfolioCandleSeries.removePriceLine(this.portfolioCostBasisLine)
+      }
+      if (this.statsData.total_cost && this.statsData.total_cost > 0) {
+        this.portfolioCostBasisLine = this._portfolioCandleSeries.createPriceLine({
           price: this.statsData.total_cost,
           color: '#808080',
           lineWidth: 2,
@@ -1961,10 +2023,7 @@ export default {
         
         this.$nextTick(() => {
           if (this.$refs.portfolioChart) {
-            this.onPortfolioChartReady({
-              chart: this.$refs.portfolioChart.getChart(),
-              candleSeries: this.$refs.portfolioChart.getCandleSeries()
-            })
+            this.updateCostBasisLine()
           }
         })
       } catch (error) {
@@ -2199,11 +2258,39 @@ export default {
       }
     },
 
-    // Update chart width on resize
     updateChartWidth() {
       const container = document.querySelector('.chart-wrapper')
       if (container) {
         this.chartWidth = container.clientWidth - 20
+      }
+    },
+
+    async fetchSentimentHistory() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+
+      this.sentimentLoading = true
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/portfolio/sentiment_history?interval=${this.selectedInterval}`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        )
+        if (!response.ok) throw new Error('Failed to fetch sentiment history')
+        this.sentimentHistory = await response.json() || []
+        if (this.sentimentSeries && this.sentimentHistory.length > 0) {
+          try {
+            this.sentimentSeries.setData(
+              this.sentimentHistory.map(p => ({ time: p.timestamp, value: p.sentiment }))
+            )
+          } catch (_) {
+            this.sentimentSeries = null
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching sentiment history:', error)
+        this.sentimentHistory = []
+      } finally {
+        this.sentimentLoading = false
       }
     },
 

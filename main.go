@@ -3446,6 +3446,157 @@ func GetPortfolioValueHistory(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+func GetPortfolioSentimentHistory(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+	interval := c.QueryParam("interval")
+
+	now := time.Now().UTC()
+	var startTime time.Time
+
+	switch interval {
+	case "5m":
+		startTime = now.Add(-24 * time.Hour)
+	case "15m":
+		startTime = now.Add(-7 * 24 * time.Hour)
+	case "1h":
+		startTime = now.Add(-30 * 24 * time.Hour)
+	case "4h":
+		startTime = now.Add(-90 * 24 * time.Hour)
+	case "1d":
+		startTime = now.Add(-365 * 24 * time.Hour)
+	case "1w":
+		startTime = now.Add(-730 * 24 * time.Hour)
+	case "1M":
+		startTime = time.Time{}
+	default:
+		startTime = now.Add(-365 * 24 * time.Hour)
+	}
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err != nil || len(holdings) == 0 {
+		return c.JSON(http.StatusOK, []map[string]interface{}{})
+	}
+
+	totalValue := 0.0
+	for _, h := range holdings {
+		totalValue += h.Quantity * h.PurchasePrice
+	}
+
+	weightMap := make(map[string]float64)
+	for _, h := range holdings {
+		if totalValue > 0 {
+			weightMap[h.Ticker] += (h.Quantity * h.PurchasePrice) / totalValue
+		}
+	}
+
+	for _, h := range holdings {
+		if !h.Etf {
+			continue
+		}
+		components, cerr := db.getUnderlyingAssetTickers(h.Ticker, h.ISIN)
+		if cerr != nil || len(components) == 0 {
+			continue
+		}
+		etfWeight := weightMap[h.Ticker]
+		weightMap[h.Ticker] = etfWeight / 2
+		componentWeight := (etfWeight / 2) / float64(len(components))
+		for _, ct := range components {
+			weightMap[ct] += componentWeight
+		}
+	}
+
+	tickers := make([]string, 0, len(weightMap))
+	for ticker := range weightMap {
+		tickers = append(tickers, ticker)
+	}
+
+	phParts := make([]string, len(tickers))
+	for i := range tickers {
+		phParts[i] = "?"
+	}
+	placeholders := strings.Join(phParts, ",")
+
+	args := make([]interface{}, 0, len(tickers)+2)
+	for _, t := range tickers {
+		args = append(args, t)
+	}
+
+	endDateStr := now.Format("2006-01-02")
+	var queryStr string
+	if startTime.IsZero() {
+		args = append(args, endDateStr)
+		queryStr = fmt.Sprintf(
+			`SELECT ticker, date, sentiment FROM daily_sentiment WHERE ticker IN (%s) AND date <= ? ORDER BY date ASC`,
+			placeholders,
+		)
+	} else {
+		startDateStr := startTime.Format("2006-01-02")
+		args = append(args, startDateStr, endDateStr)
+		queryStr = fmt.Sprintf(
+			`SELECT ticker, date, sentiment FROM daily_sentiment WHERE ticker IN (%s) AND date >= ? AND date <= ? ORDER BY date ASC`,
+			placeholders,
+		)
+	}
+
+	dbMutex.RLock()
+	rows, err := db.Query(queryStr, args...)
+	dbMutex.RUnlock()
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error querying sentiment data")
+	}
+	defer rows.Close()
+
+	type DateEntry struct {
+		totalWeight    float64
+		totalSentiment float64
+	}
+
+	dateMap := make(map[string]*DateEntry)
+	orderedDates := make([]string, 0)
+
+	for rows.Next() {
+		var ticker, date string
+		var sentiment float64
+		if err := rows.Scan(&ticker, &date, &sentiment); err != nil {
+			continue
+		}
+		w := weightMap[ticker]
+		if _, ok := dateMap[date]; !ok {
+			dateMap[date] = &DateEntry{}
+			orderedDates = append(orderedDates, date)
+		}
+		dateMap[date].totalWeight += w
+		dateMap[date].totalSentiment += sentiment * w
+	}
+
+	sort.Strings(orderedDates)
+
+	type SentimentPoint struct {
+		Timestamp int64   `json:"timestamp"`
+		Sentiment float64 `json:"sentiment"`
+	}
+
+	result := make([]SentimentPoint, 0, len(orderedDates))
+	for _, date := range orderedDates {
+		entry := dateMap[date]
+		if entry.totalWeight <= 0 {
+			continue
+		}
+		t, parseErr := time.Parse("2006-01-02", date)
+		if parseErr != nil {
+			continue
+		}
+		result = append(result, SentimentPoint{
+			Timestamp: t.Unix(),
+			Sentiment: entry.totalSentiment / entry.totalWeight,
+		})
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 func getPortfolioValueChange(c echo.Context) error {
 	// return day change, day change percent, total change, total change percent
 	// Get user ID from JWT token
@@ -6153,6 +6304,7 @@ func main() {
 	protected.GET("/portfolio/backtest", getBacktest)
 	protected.GET("/portfolio/top_gainers", topGainers)
 	protected.GET("/portfolio/top_losers", topLosers)
+	protected.GET("/portfolio/sentiment_history", GetPortfolioSentimentHistory)
 
 	// Asset endpoints
 	protected.GET("/asset/sentiments", GetAssetSentiments)

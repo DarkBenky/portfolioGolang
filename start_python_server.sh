@@ -4,7 +4,11 @@ cd "$(dirname "$0")"
 
 ulimit -n 65536
 
-if [ -f "venv/bin/activate" ]; then
+CONDA_SH="/home/user/anaconda3/etc/profile.d/conda.sh"
+if [ -f "$CONDA_SH" ]; then
+    source "$CONDA_SH"
+    conda activate portfolio
+elif [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
