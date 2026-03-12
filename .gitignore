@@ -1,6 +1,9 @@
 venv/
 __pycache__/
 *.pyc
+Anaconda*.sh
+*.sqlite
+*.sqlite3
 *.pyo
 *.pyd
 *.db-*
