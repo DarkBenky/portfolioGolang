@@ -74,7 +74,7 @@ Focus only on facts from the articles. Include specific numbers, percentages, da
 
     try:
         response = ollama.generate(
-            model="qwen3.5:2b",
+            model="gemma4:e2b",
             prompt=prompt,
             options={
                 "num_predict": max_tokens,
@@ -209,7 +209,7 @@ Only include facts from the articles. Use specific numbers, percentages, dates, 
 
     try:
         response = ollama.generate(
-            model="qwen3.5:2b",
+            model="gemma4:e2b",
             prompt=prompt,
             options={
                 "num_predict": max_tokens,
