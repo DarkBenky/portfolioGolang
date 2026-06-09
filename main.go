@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -6046,6 +6047,508 @@ func topLosers(c echo.Context) error {
 	return c.JSON(http.StatusOK, losers)
 }
 
+type CamtDocument struct {
+	XMLName       xml.Name      `xml:"Document"`
+	BkToCstmrStmt BkToCstmrStmt `xml:"BkToCstmrStmt"`
+}
+
+type BkToCstmrStmt struct {
+	Stmt CamtStmt `xml:"Stmt"`
+}
+
+type CamtStmt struct {
+	Entries []CamtEntry `xml:"Ntry"`
+}
+
+type CamtEntry struct {
+	NtryRef   string       `xml:"NtryRef"`
+	Amt       CamtAmount   `xml:"Amt"`
+	CdtDbtInd string       `xml:"CdtDbtInd"`
+	Sts       string       `xml:"Sts"`
+	BookgDt   CamtDate     `xml:"BookgDt"`
+	ValDt     CamtDate     `xml:"ValDt"`
+	NtryDtls  CamtNtryDtls `xml:"NtryDtls"`
+}
+
+type CamtAmount struct {
+	Value float64 `xml:",chardata"`
+	Ccy   string  `xml:"Ccy,attr"`
+}
+
+type CamtDate struct {
+	Dt string `xml:"Dt"`
+}
+
+type CamtNtryDtls struct {
+	TxDtls CamtTxDtls `xml:"TxDtls"`
+}
+
+type CamtTxDtls struct {
+	Refs      CamtRefs      `xml:"Refs"`
+	RltdPties CamtRltdPties `xml:"RltdPties"`
+	RmtInf    CamtRmtInf    `xml:"RmtInf"`
+}
+
+type CamtRefs struct {
+	AcctSvcrRef string `xml:"AcctSvcrRef"`
+}
+
+type CamtRltdPties struct {
+	DbtrAcct CamtAcct  `xml:"DbtrAcct"`
+	CdtrAcct CamtAcct  `xml:"CdtrAcct"`
+	Cdtr     CamtParty `xml:"Cdtr"`
+	Dbtr     CamtParty `xml:"Dbtr"`
+}
+
+type CamtAcct struct {
+	IBAN string `xml:"Id>IBAN"`
+	Nm   string `xml:"Nm"`
+}
+
+type CamtParty struct {
+	Nm string `xml:"Nm"`
+}
+
+type CamtRmtInf struct {
+	Ustrd string `xml:"Ustrd"`
+}
+
+func importBankXML(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "No file provided"})
+	}
+
+	if file.Size > 10*1024*1024 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "File too large (max 10MB)"})
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open file"})
+	}
+	defer src.Close()
+
+	xmlBytes, err := io.ReadAll(src)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read file"})
+	}
+
+	xmlBytes = bytes.ReplaceAll(xmlBytes, []byte(`xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"`), []byte(""))
+	xmlBytes = bytes.ReplaceAll(xmlBytes, []byte(`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`), []byte(""))
+
+	var doc CamtDocument
+	if err := xml.Unmarshal(xmlBytes, &doc); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid XML format"})
+	}
+
+	imported := 0
+	skipped := 0
+
+	for _, entry := range doc.BkToCstmrStmt.Stmt.Entries {
+		desc := entry.NtryDtls.TxDtls.RmtInf.Ustrd
+		if desc == "" {
+			desc = "No description"
+		}
+
+		tx := bills.BankTransaction{
+			NtryRef:     entry.NtryRef,
+			AcctSvcrRef: entry.NtryDtls.TxDtls.Refs.AcctSvcrRef,
+			Amount:      entry.Amt.Value,
+			Currency:    entry.Amt.Ccy,
+			Direction:   entry.CdtDbtInd,
+			Status:      entry.Sts,
+			BookingDate: entry.BookgDt.Dt,
+			ValueDate:   entry.ValDt.Dt,
+			Description: desc,
+			UserID:      userID,
+		}
+
+		tx.IsSavingsRoundup = strings.Contains(strings.ToLower(tx.Description), "drobne bokom")
+		tx.Category = bills.CategorizeBankTransaction(tx)
+
+		added, err := bills.ImportBankTransaction(tx)
+		if err != nil {
+			log.Printf("Error importing transaction %s: %v", tx.NtryRef, err)
+			continue
+		}
+		if added {
+			imported++
+		} else {
+			skipped++
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"imported": imported,
+		"skipped":  skipped,
+		"total":    imported + skipped,
+	})
+}
+
+func getBankTransactions(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	txs, err := bills.GetBankTransactions(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get transactions"})
+	}
+
+	if txs == nil {
+		txs = []bills.BankTransaction{}
+	}
+	return c.JSON(http.StatusOK, txs)
+}
+
+func getSavingsTransactions(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	txs, err := bills.GetSavingsTransactions(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get savings transactions"})
+	}
+
+	if txs == nil {
+		txs = []bills.BankTransaction{}
+	}
+	return c.JSON(http.StatusOK, txs)
+}
+
+func getBankStats(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	stats, err := bills.GetBankTransactionStats(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get bank stats"})
+	}
+
+	return c.JSON(http.StatusOK, stats)
+}
+
+func updateBankTransaction(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	var tx bills.BankTransaction
+	if err := c.Bind(&tx); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	if tx.ID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing transaction ID"})
+	}
+
+	tx.UserID = userID
+	if err := bills.UpdateBankTransaction(tx); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update transaction"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Transaction updated"})
+}
+
+func deleteBankTransaction(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	txID := c.QueryParam("id")
+	if txID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing transaction ID"})
+	}
+
+	id, err := strconv.Atoi(txID)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid transaction ID"})
+	}
+
+	if err := bills.DeleteBankTransaction(id, userID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete transaction"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Transaction deleted"})
+}
+
+type OpenRouterMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type OpenRouterRequest struct {
+	Model    string              `json:"model"`
+	Messages []OpenRouterMessage `json:"messages"`
+}
+
+type OpenRouterChoice struct {
+	Message OpenRouterMessage `json:"message"`
+}
+
+type OpenRouterResponse struct {
+	Choices []OpenRouterChoice `json:"choices"`
+}
+
+func computePeriodDates(period string) (string, string) {
+	now := time.Now()
+	switch period {
+	case "week":
+		weekday := now.Weekday()
+		if weekday == 0 {
+			weekday = 7
+		}
+		monday := now.AddDate(0, 0, -int(weekday)+1)
+		return monday.Format("2006-01-02"), monday.AddDate(0, 0, 6).Format("2006-01-02")
+	case "month":
+		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		return start.Format("2006-01-02"), start.AddDate(0, 1, -1).Format("2006-01-02")
+	case "quarter":
+		qStart := time.Date(now.Year(), ((now.Month()-1)/3)*3+1, 1, 0, 0, 0, 0, now.Location())
+		return qStart.Format("2006-01-02"), qStart.AddDate(0, 3, -1).Format("2006-01-02")
+	default:
+		return "", ""
+	}
+}
+
+func tryAutoGenerateReport(userID, period string) (string, string, string, error) {
+	periodStart, periodEnd := computePeriodDates(period)
+	if periodStart == "" {
+		return "", "", "", fmt.Errorf("invalid period")
+	}
+
+	exists, err := bills.ReportExistsForPeriod(userID, period, periodStart, periodEnd)
+	if err != nil {
+		return "", "", "", err
+	}
+	if exists {
+		return periodStart, periodEnd, "", fmt.Errorf("report already exists")
+	}
+
+	expenses, _ := bills.GetExpensesByUserID(userID)
+	bankTxs, _ := bills.GetBankTransactions(userID)
+
+	var dataLines []string
+	totalOut := 0.0
+	totalIn := 0.0
+	byCategory := map[string]float64{}
+
+	for _, e := range expenses {
+		if e.Date >= periodStart && e.Date <= periodEnd {
+			dataLines = append(dataLines, fmt.Sprintf("MANUAL | %s | %s | €%.2f", e.Date, e.Category, e.Amount))
+			totalOut += e.Amount
+			byCategory[e.Category] += e.Amount
+		}
+	}
+	for _, t := range bankTxs {
+		if t.BookingDate >= periodStart && t.BookingDate <= periodEnd {
+			dir := "OUT"
+			if t.Direction == "CRDT" {
+				dir = "IN"
+				totalIn += t.Amount
+			} else {
+				totalOut += t.Amount
+				byCategory[t.Category] += t.Amount
+			}
+			dataLines = append(dataLines, fmt.Sprintf("BANK | %s | %s | %s | €%.2f | %s", t.BookingDate, t.Category, dir, t.Amount, t.Description))
+		}
+	}
+
+	if len(dataLines) == 0 {
+		return periodStart, periodEnd, "No transactions found for this period.", nil
+	}
+
+	categoryBreakdown := ""
+	for cat, val := range byCategory {
+		categoryBreakdown += fmt.Sprintf("  - %s: €%.2f\n", cat, val)
+	}
+
+	prompt := fmt.Sprintf(`You are a personal finance analyst. Analyze the following expense data for the period %s to %s (%s).
+
+Summary:
+- Total Out: €%.2f
+- Total In: €%.2f
+- Net: €%.2f
+- Transaction count: %d
+
+Category breakdown:
+%s
+
+Transactions:
+%s
+
+Provide a concise report with these sections in plain text (no markdown):
+1. OVERVIEW (2-3 sentences about the period's spending patterns)
+2. KEY INSIGHTS (3-4 bullet points with - prefix, highlighting notable spending, trends, or concerns)
+3. CATEGORY ANALYSIS (which categories were highest, any unusual spending)
+4. SAVINGS OBSERVATIONS
+5. RECOMMENDATIONS (2-3 actionable tips to improve finances)
+
+Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, totalIn, totalOut-totalIn, len(dataLines), categoryBreakdown, strings.Join(dataLines, "\n"))
+
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return periodStart, periodEnd, "", fmt.Errorf("OpenRouter API key not configured")
+	}
+
+	reqBody := OpenRouterRequest{
+		Model: "deepseek/deepseek-v4-flash",
+		Messages: []OpenRouterMessage{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	jsonBody, _ := json.Marshal(reqBody)
+	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return periodStart, periodEnd, "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("HTTP-Referer", "http://localhost:8085")
+	httpReq.Header.Set("X-Title", "Portfolio Expense Tracker")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return periodStart, periodEnd, "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var orResp OpenRouterResponse
+	if err := json.Unmarshal(respBody, &orResp); err != nil {
+		return periodStart, periodEnd, "", fmt.Errorf("failed to parse AI response")
+	}
+
+	if len(orResp.Choices) == 0 {
+		return periodStart, periodEnd, "", fmt.Errorf("no response from AI model")
+	}
+
+	summary := orResp.Choices[0].Message.Content
+
+	report := bills.ExpenseReport{
+		Period:      period,
+		PeriodStart: periodStart,
+		PeriodEnd:   periodEnd,
+		Summary:     summary,
+		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+		UserID:      userID,
+	}
+
+	if err := bills.SaveExpenseReport(report); err != nil {
+		log.Printf("Error saving report for user %s: %v", userID, err)
+	}
+
+	return periodStart, periodEnd, summary, nil
+}
+
+func generateExpenseReport(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	period := c.QueryParam("period")
+	if period != "week" && period != "month" && period != "quarter" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Period must be week, month, or quarter"})
+	}
+
+	periodStart, periodEnd, summary, err := tryAutoGenerateReport(userID, period)
+	if err != nil {
+		if err.Error() == "report already exists" {
+			return c.JSON(http.StatusConflict, map[string]string{"error": "Report already exists for this period"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"period":       period,
+		"period_start": periodStart,
+		"period_end":   periodEnd,
+		"summary":      summary,
+		"created_at":   time.Now().Format("2006-01-02 15:04:05"),
+	})
+}
+
+func startAutoReportScheduler() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+
+		log.Printf("Auto-report scheduler started (every 30 min)")
+
+		for range ticker.C {
+			userIDs, err := bills.GetAllUserIDs()
+			if err != nil {
+				log.Printf("Auto-report: failed to get user IDs: %v", err)
+				continue
+			}
+
+			for _, uid := range userIDs {
+				for _, period := range []string{"week", "month", "quarter"} {
+					start, end := computePeriodDates(period)
+					if start == "" {
+						continue
+					}
+					exists, _ := bills.ReportExistsForPeriod(uid, period, start, end)
+					if exists {
+						continue
+					}
+					log.Printf("Auto-report: generating %s report for user %s (%s to %s)", period, uid, start, end)
+					_, _, summary, err := tryAutoGenerateReport(uid, period)
+					if err != nil {
+						log.Printf("Auto-report: failed for user %s period %s: %v", uid, period, err)
+					} else {
+						log.Printf("Auto-report: generated %s report for user %s (%d chars)", period, uid, len(summary))
+					}
+				}
+			}
+		}
+	}()
+}
+
+func getExpenseReports(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	reports, err := bills.GetExpenseReports(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get reports"})
+	}
+
+	if reports == nil {
+		reports = []bills.ExpenseReport{}
+	}
+	return c.JSON(http.StatusOK, reports)
+}
+
+func getExpenseReport(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	reportID := c.Param("id")
+	id, err := strconv.Atoi(reportID)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid report ID"})
+	}
+
+	report, err := bills.GetExpenseReportByID(id, userID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Report not found"})
+	}
+
+	return c.JSON(http.StatusOK, report)
+}
+
 func getExpenses(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
@@ -6056,6 +6559,9 @@ func getExpenses(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get expenses"})
 	}
 
+	if expenses == nil {
+		expenses = []bills.Expense{}
+	}
 	return c.JSON(http.StatusOK, expenses)
 }
 
@@ -6328,6 +6834,19 @@ func main() {
 	protected.GET("/expenses/stats/category", getExpensesByCategory)
 	protected.GET("/expenses/stats/monthly", getExpensesByMonth)
 	protected.GET("/expenses/stats/biweekly", getExpensesBiweekly)
+
+	protected.POST("/bank/import", importBankXML)
+	protected.GET("/bank/transactions", getBankTransactions)
+	protected.GET("/bank/savings", getSavingsTransactions)
+	protected.GET("/bank/stats", getBankStats)
+	protected.PUT("/bank/transactions", updateBankTransaction)
+	protected.DELETE("/bank/transactions", deleteBankTransaction)
+
+	protected.GET("/expenses/reports", getExpenseReports)
+	protected.GET("/expenses/report/:id", getExpenseReport)
+	protected.POST("/expenses/report/generate", generateExpenseReport)
+
+	startAutoReportScheduler()
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)

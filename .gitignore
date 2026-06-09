@@ -1,4 +1,5 @@
 venv/
+.env
 __pycache__/
 *.pyc
 Anaconda*.sh
@@ -25,3 +26,4 @@ extractText/*.csv
 *.pt
 dataGeneration
 dataGeneratio
+frontend/example.xml
