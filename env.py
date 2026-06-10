@@ -7,6 +7,8 @@ DEV_MODE = os.getenv("DEV_MODE", "true") == "true"
 BACKEND_GO_PORT = os.getenv("BACKEND_GO_PORT")
 BACKEND_PYTHON_PORT = os.getenv("BACKEND_PYTHON_PORT")
 SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
 
 if DEV_MODE:
     BACKEND_GO = f"http://localhost:{BACKEND_GO_PORT}"

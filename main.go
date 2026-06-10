@@ -37,11 +37,16 @@ import (
 var (
 	SALT           string
 	JWT_SECRET     string
-	JWT_EXPIRY     = 90 * 24 * time.Hour
+	JWT_EXPIRY     = 7 * 24 * time.Hour
 	BASE_URL       string
 	db             *DB
 	dbMutex        sync.RWMutex
 	candleInterval int64 = 600 // 10 minutes
+
+	loginAttempts    = make(map[string][]time.Time)
+	loginAttemptsMu  sync.Mutex
+	maxLoginAttempts = 5
+	loginBlockWindow = 15 * time.Minute
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -597,7 +602,31 @@ func fetchNewsPeriodic(interval time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		log.Println("Starting periodic news fetch for all tickers...")
+		log.Println("Starting periodic news fetch...")
+
+		etfTickers, err := db.getETFTickers()
+		if err != nil {
+			log.Printf("Error getting ETF tickers: %v", err)
+		} else {
+			log.Printf("Found %d ETF tickers to fetch composite news for", len(etfTickers))
+			for _, etfTicker := range etfTickers {
+				topTickers, err := db.getTopHoldingTickersForETF(etfTicker, 10)
+				if err != nil {
+					log.Printf("Error getting top holdings for ETF %s: %v", etfTicker, err)
+					continue
+				}
+				if len(topTickers) == 0 {
+					log.Printf("ETF %s has no underlying holdings in DB, falling back to direct fetch", etfTicker)
+					fetchNews(etfTicker, 10)
+					continue
+				}
+				log.Printf("ETF %s: fetching news for %d underlying holdings: %v", etfTicker, len(topTickers), topTickers)
+				for _, underlying := range topTickers {
+					fetchNewsAs(underlying, etfTicker, 3)
+					time.Sleep(200 * time.Millisecond)
+				}
+			}
+		}
 
 		tickers, err := db.getUniqueTickers()
 		if err != nil {
@@ -605,16 +634,23 @@ func fetchNewsPeriodic(interval time.Duration) {
 			continue
 		}
 
+		etfSet := make(map[string]bool)
+		for _, t := range etfTickers {
+			etfSet[t] = true
+		}
+
 		log.Printf("Found %d unique tickers to fetch news for", len(tickers))
 
 		var wg sync.WaitGroup
 
 		for _, tickerSymbol := range tickers {
+			if etfSet[tickerSymbol] {
+				continue
+			}
 			wg.Add(1)
 
 			go func(ticker string) {
 				defer wg.Done()
-
 				log.Printf("Fetching news for %s...", ticker)
 				err := fetchNews(ticker, 10)
 				if err != nil {
@@ -630,6 +666,68 @@ func fetchNewsPeriodic(interval time.Duration) {
 		wg.Wait()
 		log.Println("Completed periodic news fetch cycle")
 	}
+}
+
+func fetchNewsAs(actualTicker string, storeAsTicker string, numArticles int) error {
+	baseURL := BASE_URL + "/fetch_news"
+	params := url.Values{}
+	params.Add("ticker", actualTicker)
+	params.Add("num_articles", strconv.Itoa(numArticles))
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch news: %s", resp.Status)
+	}
+
+	var newsArticles []struct {
+		Title       string  `json:"title"`
+		Summary     string  `json:"summary"`
+		Text        string  `json:"text"`
+		URL         string  `json:"url"`
+		PublishedAt int64   `json:"published_at"`
+		Author      string  `json:"author"`
+		ImgURL      string  `json:"img_url"`
+		Sentiment   float64 `json:"sentiment"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&newsArticles); err != nil {
+		return err
+	}
+
+	holdings, _ := db.getHoldingsByTicker(storeAsTicker)
+	assets, _ := db.getAssetsByTicker(storeAsTicker)
+
+	for _, article := range newsArticles {
+		news := News{
+			IdNews:      generateID(),
+			Title:       fmt.Sprintf("[via %s] %s", actualTicker, article.Title),
+			Link:        article.URL,
+			PublishedAt: strconv.FormatInt(article.PublishedAt, 10),
+			Summary:     article.Summary,
+			Text:        article.Text,
+			Author:      article.Author,
+			Ticker:      storeAsTicker,
+			Sentiment:   article.Sentiment,
+		}
+		if len(assets) > 0 {
+			news.idAsset = assets[0].IdAsset
+		}
+		if len(holdings) > 0 {
+			news.idHolding = holdings[0].IdHolding
+		}
+		if err := db.addNews(news); err != nil {
+			log.Printf("Error adding composite news '%s': %v", article.Title, err)
+		}
+	}
+
+	log.Printf("Fetched %d composite articles for ETF %s (via %s)", len(newsArticles), storeAsTicker, actualTicker)
+	return nil
 }
 
 func (database *DB) newsExists(title string, summary string, text string) (bool, error) {
@@ -2178,6 +2276,53 @@ func (database *DB) getUniqueTickers() ([]string, error) {
 	return tickers, nil
 }
 
+func (database *DB) getETFTickers() ([]string, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`SELECT DISTINCT ticker FROM holdings WHERE etf = 1 AND ticker != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tickers []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tickers = append(tickers, t)
+	}
+	return tickers, nil
+}
+
+func (database *DB) getTopHoldingTickersForETF(etfTicker string, limit int) ([]string, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT a.ticker FROM assets a
+		JOIN holdings h ON a.id_holding = h.id_holding
+		WHERE h.ticker = ? AND a.ticker != ''
+		LIMIT ?
+	`, etfTicker, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tickers []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tickers = append(tickers, t)
+	}
+	return tickers, nil
+}
+
 func (database *DB) getUniqueISINs() ([]string, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
@@ -2378,6 +2523,62 @@ func generateJWT(userID, email string) (string, error) {
 	return token.SignedString([]byte(JWT_SECRET))
 }
 
+func isEmailValid(email string) bool {
+	if len(email) < 5 || len(email) > 254 {
+		return false
+	}
+	atIdx := strings.IndexByte(email, '@')
+	if atIdx <= 0 || atIdx == len(email)-1 {
+		return false
+	}
+	dotIdx := strings.LastIndexByte(email, '.')
+	return dotIdx > atIdx+1 && dotIdx < len(email)-1
+}
+
+func checkLoginRateLimit(ip string) bool {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-loginBlockWindow)
+
+	var recent []time.Time
+	for _, t := range loginAttempts[ip] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	loginAttempts[ip] = recent
+
+	if len(recent) >= maxLoginAttempts {
+		return false
+	}
+	loginAttempts[ip] = append(loginAttempts[ip], now)
+	return true
+}
+
+func clearExpiredLoginAttempts() {
+	for {
+		time.Sleep(10 * time.Minute)
+		loginAttemptsMu.Lock()
+		cutoff := time.Now().Add(-loginBlockWindow)
+		for ip, attempts := range loginAttempts {
+			var recent []time.Time
+			for _, t := range attempts {
+				if t.After(cutoff) {
+					recent = append(recent, t)
+				}
+			}
+			if len(recent) == 0 {
+				delete(loginAttempts, ip)
+			} else {
+				loginAttempts[ip] = recent
+			}
+		}
+		loginAttemptsMu.Unlock()
+	}
+}
+
 func addUser(c echo.Context) error {
 	var req struct {
 		UserName string `json:"user_name"`
@@ -2389,11 +2590,14 @@ func addUser(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	if req.Email == "" || req.Password == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email and password are required"})
+	if !isEmailValid(req.Email) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid email format"})
 	}
 
-	// Hash password with salt using SHA-256 first to stay within bcrypt's 72-byte limit
+	if len(req.Password) < 8 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password must be at least 8 characters"})
+	}
+
 	passwordHash := hashPasswordWithSalt(req.Password)
 	hashed, err := bcrypt.GenerateFromPassword([]byte(passwordHash), bcrypt.DefaultCost)
 	if err != nil {
@@ -2417,6 +2621,11 @@ func addUser(c echo.Context) error {
 }
 
 func login(c echo.Context) error {
+	ip := c.RealIP()
+	if !checkLoginRateLimit(ip) {
+		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "Too many login attempts. Try again later."})
+	}
+
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -2424,6 +2633,10 @@ func login(c echo.Context) error {
 
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	if req.Email == "" || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Email and password are required"})
 	}
 
 	valid, err := db.verifyUser(req.Email, req.Password)
@@ -2434,13 +2647,15 @@ func login(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid email or password"})
 	}
 
-	// Get user details
 	user, err := db.getUserByEmail(req.Email)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error retrieving user"})
 	}
 
-	// Generate JWT token
+	// Set secure cookie flags via response headers
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+	c.Response().Header().Set("X-Frame-Options", "DENY")
+
 	token, err := generateJWT(user.Id, user.Email)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error generating token"})
@@ -6757,11 +6972,12 @@ func main() {
 	}()
 
 	go fetchOldPriceDataPeriodic(7 * 24 * time.Hour)
-	go fetchNewsPeriodic(30 * time.Minute)
+	go fetchNewsPeriodic(45 * time.Minute)
 	go fetchPricesPeriodic(10 * time.Minute)
 	go fillInBetweenPricesPeriodic(90 * time.Minute)
-	go updateSentimentsPeriodic(6 * time.Hour)
+	go updateSentimentsPeriodic(24 * time.Hour)
 	go updateETFDataPeriodic(30 * time.Minute)
+	go clearExpiredLoginAttempts()
 	go fetchAssetDetailsPeriodic(1 * time.Hour)
 	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
 

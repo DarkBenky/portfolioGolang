@@ -192,6 +192,36 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             articles.append(news)
     except Exception as e:
         print(f"Error retrieving news for {Ticker}: {e}")
-    return articles        
-                
+
+    if len(articles) == 0:
+        print(f"No news found for {Ticker} via yfinance. Trying search fallback...")
+        try:
+            search_results = yf.Search(Ticker).news
+            for item in search_results:
+                if len(articles) >= num_articles:
+                    break
+                content = item.get('content', item)
+                title = content.get('title', '')
+                summary = content.get('summary', '')
+                url = content.get('canonicalUrl', '') if isinstance(content.get('canonicalUrl'), str) else content.get('canonicalUrl', {}).get('url', '') if isinstance(content.get('canonicalUrl'), dict) else ''
+
+                published_at_unix = convert_pubdate_to_unix(content.get('pubDate', ''))
+                articles.append({
+                    'ticker': Ticker,
+                    'title': title,
+                    'summary': summary,
+                    'text': summary,
+                    'url': url,
+                    'published_at': published_at_unix,
+                    'author': '',
+                    'img_url': '',
+                    'sentiment': getSentiment(model, title, summary, summary, [0.5, 0.5, 0.0])
+                })
+        except Exception as e:
+            print(f"Search fallback also failed for {Ticker}: {e}")
+
+    if len(articles) == 0:
+        print(f"WARNING: No news articles found for {Ticker}. This may be an ETF with limited news coverage.")
+
+    return articles
 
