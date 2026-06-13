@@ -2979,7 +2979,6 @@ func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 }
 
 func updatePortfolioDailySentiment(userID string, todayDate string) error {
-	// Get user's holdings
 	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
 		return fmt.Errorf("error fetching holdings: %v", err)
@@ -2990,41 +2989,39 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		return nil
 	}
 
-	// Collect news from all holdings - include full text
-	var allSummaries []string
-	var allSentiments []float64
-	var allTickers []string
-	var allFullTexts []string
-
-	for _, holding := range holdings {
-		newsList, err := db.getNewsForTickerToday(holding.Ticker, todayDate)
-		if err != nil {
-			log.Printf("Error fetching news for %s: %v", holding.Ticker, err)
-			continue
-		}
-
-		for _, news := range newsList {
-			allSummaries = append(allSummaries, news.Summary)
-			allSentiments = append(allSentiments, news.Sentiment)
-			allTickers = append(allTickers, news.Ticker)
-			allFullTexts = append(allFullTexts, news.Text)
-		}
+	type HoldingSummary struct {
+		Ticker    string  `json:"ticker"`
+		Summary   string  `json:"summary"`
+		Sentiment float64 `json:"sentiment"`
 	}
 
-	if len(allSummaries) == 0 {
-		log.Printf("No news found for user %s portfolio on %s, skipping", userID, todayDate)
+	var holdingSummaries []HoldingSummary
+
+	for _, holding := range holdings {
+		ds, dsErr := db.getHoldingDailySummary(holding.Ticker, todayDate)
+		if dsErr != nil || ds == nil {
+			continue
+		}
+		if ds.Summary == "" {
+			continue
+		}
+		holdingSummaries = append(holdingSummaries, HoldingSummary{
+			Ticker:    ds.Ticker,
+			Summary:   ds.Summary,
+			Sentiment: ds.Sentiment,
+		})
+	}
+
+	if len(holdingSummaries) == 0 {
+		log.Printf("No holding summaries found for user %s on %s, skipping", userID, todayDate)
 		return nil
 	}
 
-	// Call Python API to generate portfolio summary
 	requestBody := map[string]interface{}{
-		"user_id":        userID,
-		"date":           todayDate,
-		"news_list":      allSummaries,
-		"sentiment_list": allSentiments,
-		"tickers_list":   allTickers,
-		"full_text_list": allFullTexts,
-		"max_tokens":     4096,
+		"user_id":           userID,
+		"date":              todayDate,
+		"holding_summaries": holdingSummaries,
+		"max_tokens":        4096,
 	}
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -3054,7 +3051,6 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		return fmt.Errorf("error decoding response: %v", err)
 	}
 
-	// Upsert to database
 	sentiment := PortfolioDailySentiment{
 		IdSentiment: generateID(),
 		UserID:      result.UserID,

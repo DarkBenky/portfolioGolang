@@ -107,6 +107,69 @@ Focus only on facts from the articles. Include specific numbers, percentages, da
         summary_text += "\n".join([f"- {s}" for s in news_list[:5]])
 
 
+def summarize_portfolio_from_holdings(holding_summaries, max_tokens=4096, user_id="", date=""):
+    if not holding_summaries:
+        return {
+            "user_id": user_id,
+            "date": date,
+            "summary": f"No holding summaries available for your portfolio on {date}.",
+            "sentiment": 0.0,
+        }
+
+    sentiments = [hs.get("sentiment", 0.0) for hs in holding_summaries]
+    average_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+    sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
+
+    per_ticker_blocks = []
+    ticker_briefs = []
+
+    for hs in holding_summaries:
+        ticker = hs.get("ticker", "???")
+        summary = hs.get("summary", "")
+        sentiment = hs.get("sentiment", 0.0)
+
+        per_ticker_blocks.append(f"{ticker}\n{summary}\n")
+
+        ticker_label = "Bullish" if sentiment > 0.2 else "Bearish" if sentiment < -0.2 else "Neutral"
+        summary_snippet = summary[:400].replace("\n", " ").strip()
+        ticker_briefs.append(f"{ticker}: {ticker_label} ({sentiment:.2f}) - {summary_snippet}")
+
+    per_ticker_detail = "\n".join(per_ticker_blocks)
+    ticker_brief_block = "\n\n".join(ticker_briefs[:30])
+
+    unique_tickers = list(set(hs.get("ticker", "???") for hs in holding_summaries))
+
+    prompt = f"""You are analyzing a portfolio with these holdings on {date}: {', '.join(unique_tickers[:20])}
+
+Overall portfolio sentiment: {sentiment_label} ({average_sentiment:.2f})
+
+Here are pre-generated summaries for each holding:
+
+{ticker_brief_block}
+
+Write a concise portfolio overview in markdown with exactly these sections:
+
+## Portfolio Summary
+Write 3-4 sentences highlighting the most impactful news across the portfolio. Mention which holdings had the most significant developments and the overall tone. Include specific facts and numbers from the summaries.
+
+## Market Impact
+Write 2-3 sentences about how these developments may affect the portfolio and what investors should monitor going forward.
+
+Keep it focused on the big picture. The detailed per-holding summaries will be appended separately, so do not repeat individual article lists. Only include facts from the provided summaries. Do not speculate or invent information."""
+
+    try:
+        ai_overview = _call_openrouter(prompt, max_tokens)
+        if not ai_overview or len(ai_overview) < 50:
+            ai_overview = f"## Portfolio Summary\nYour portfolio had summarized news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
+    except Exception as e:
+        print(f"Error generating portfolio overview with OpenRouter: {e}")
+        ai_overview = f"## Portfolio Summary\nYour portfolio had summarized news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
+
+    combined_summary = f"Portfolio Update - {sentiment_label}\n\n{ai_overview}\n\n---\n\n## Individual Holdings Detail\n\n{per_ticker_detail}"
+
+    return {"user_id": user_id, "date": date, "summary": combined_summary, "sentiment": average_sentiment}
+
+
 def _build_portfolio_fallback(ticker_news, sentiment_label, date):
     summary_parts = []
     for ticker, items in ticker_news.items():

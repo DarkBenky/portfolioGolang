@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import convertCurrency, getPrice, getPriceDataOld
-from getSummary import summarize_daily_news, summarize_daily_portfolio_news
+from getSummary import summarize_daily_news, summarize_daily_portfolio_news, summarize_portfolio_from_holdings
 from getStock import get_stock_data
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 from datetime import datetime, timezone
@@ -370,24 +370,18 @@ def api_summarize_portfolio():
     data = flask.request.get_json()
     user_id = data.get('user_id', '')
     date = data.get('date', '')
-    news_list = data.get('news_list', [])
-    sentiment_list = data.get('sentiment_list', [])
-    tickers_list = data.get('tickers_list', [])
-    full_text_list = data.get('full_text_list', None)
-    max_tokens = data.get('max_tokens', 8192)
+    holding_summaries = data.get('holding_summaries', [])
+    max_tokens = data.get('max_tokens', 4096)
 
-    if not news_list:
-        return flask.jsonify({'error': 'news_list is required'}), 400
+    if not holding_summaries:
+        return flask.jsonify({'error': 'holding_summaries is required'}), 400
 
     future = executor.submit(
-        summarize_daily_portfolio_news,
-        news_list,
-        sentiment_list,
-        tickers_list,
+        summarize_portfolio_from_holdings,
+        holding_summaries,
         max_tokens,
         user_id,
-        date,
-        full_text_list
+        date
     )
     result = future.result()
     return flask.jsonify(result)
