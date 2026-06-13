@@ -23,10 +23,13 @@ def _call_openrouter(prompt, max_tokens=2048):
 
     try:
         resp = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=90)
+        if not resp.ok:
+            print(f"OpenRouter error body: {resp.text[:500]}")
         resp.raise_for_status()
         data = resp.json()
         if data.get("choices") and len(data["choices"]) > 0:
             return data["choices"][0]["message"]["content"].strip()
+        print(f"OpenRouter empty choices, full response: {json.dumps(data)[:500]}")
         return ""
     except Exception as e:
         print(f"OpenRouter API error: {e}")
