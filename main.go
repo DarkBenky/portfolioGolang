@@ -47,6 +47,10 @@ var (
 	loginAttemptsMu  sync.Mutex
 	maxLoginAttempts = 5
 	loginBlockWindow = 15 * time.Minute
+
+	lastSummaryGen   = make(map[string]time.Time)
+	lastSummaryGenMu sync.Mutex
+	summaryCooldown  = 30 * time.Minute
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -3060,6 +3064,83 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 	}
 
 	return db.upsertPortfolioDailySentiment(sentiment)
+}
+
+func triggerNewsSummary(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	lastSummaryGenMu.Lock()
+	if last, ok := lastSummaryGen[userID]; ok && time.Since(last) < summaryCooldown {
+		remaining := summaryCooldown - time.Since(last)
+		lastSummaryGenMu.Unlock()
+		return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+			"error":           "Please wait before generating another summary",
+			"retry_after_min": int(remaining.Minutes()) + 1,
+		})
+	}
+	lastSummaryGenMu.Unlock()
+
+	todayDate := time.Now().UTC().Format("2006-01-02")
+
+	log.Printf("Manual news summary triggered by user %s - fetching fresh news first", userID)
+
+	fetchedCount := 0
+	holdings, err := db.getHoldingsByUser(userID)
+	if err == nil {
+		for _, h := range holdings {
+			if h.Etf {
+				topTickers, err := db.getTopHoldingTickersForETF(h.Ticker, 10)
+				if err == nil && len(topTickers) > 0 {
+					log.Printf("ETF %s: fetching composite news from %d holdings", h.Ticker, len(topTickers))
+					for _, underlying := range topTickers {
+						fetchNewsAs(underlying, h.Ticker, 3)
+						fetchedCount++
+					}
+				} else {
+					fetchNews(h.Ticker, 5)
+					fetchedCount++
+				}
+			} else {
+				fetchNews(h.Ticker, 10)
+				fetchedCount++
+			}
+		}
+	}
+	log.Printf("Fetched news for %d holdings before summary generation", fetchedCount)
+
+	tickers, err := db.getUniqueTickers()
+	if err != nil {
+		log.Printf("Error getting tickers for summary: %v", err)
+	} else {
+		for _, t := range tickers {
+			if err := updateTickerDailySentiment(t, todayDate); err != nil {
+				log.Printf("Error updating ticker sentiment for %s: %v", t, err)
+			}
+		}
+	}
+
+	if err := updatePortfolioDailySentiment(userID, todayDate); err != nil {
+		log.Printf("Error updating portfolio sentiment for user %s: %v", userID, err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate summary"})
+	}
+
+	lastSummaryGenMu.Lock()
+	lastSummaryGen[userID] = time.Now()
+	lastSummaryGenMu.Unlock()
+
+	sentiment, err := db.getPortfolioDailySummary(userID, todayDate)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Summary generated but failed to retrieve"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":   "News summary generated successfully",
+		"sentiment": sentiment.Sentiment,
+		"summary":   sentiment.Summary,
+		"date":      sentiment.Date,
+	})
 }
 
 // holding actions
@@ -7027,6 +7108,8 @@ func main() {
 	protected.GET("/portfolio/top_gainers", topGainers)
 	protected.GET("/portfolio/top_losers", topLosers)
 	protected.GET("/portfolio/sentiment_history", GetPortfolioSentimentHistory)
+
+	protected.POST("/news/generate-summary", triggerNewsSummary)
 
 	// Asset endpoints
 	protected.GET("/asset/sentiments", GetAssetSentiments)

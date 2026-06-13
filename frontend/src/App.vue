@@ -345,6 +345,18 @@
                 :date="portfolioSentiment.date"
                 :show-trend="false"
               />
+              <div class="d-flex justify-end mt-2">
+                <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Regenerate AI Summary</v-btn>
+              </div>
+            </v-col>
+          </v-row>
+          <v-row v-else-if="activeView == 'dashboard'" class="mt-4">
+            <v-col cols="12">
+              <v-card variant="outlined" class="text-center pa-4">
+                <v-icon size="32" color="grey" class="mb-2">mdi-robot</v-icon>
+                <div class="text-caption text-grey mb-2">No AI summary yet</div>
+                <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Generate AI Summary</v-btn>
+              </v-card>
             </v-col>
           </v-row>
         </v-container>
@@ -697,6 +709,18 @@
                 :date="portfolioSentiment.date"
                 :show-trend="false"
               />
+              <div class="d-flex justify-end mt-2">
+                <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Regenerate AI Summary</v-btn>
+              </div>
+            </v-col>
+          </v-row>
+          <v-row v-else class="mt-4">
+            <v-col cols="12">
+              <v-card variant="outlined" class="text-center pa-6">
+                <v-icon size="40" color="grey" class="mb-2">mdi-robot</v-icon>
+                <div class="text-body-2 text-grey mb-3">No AI portfolio summary yet</div>
+                <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Generate AI Summary</v-btn>
+              </v-card>
             </v-col>
           </v-row>
         </v-container>
@@ -712,17 +736,16 @@
                 :date="portfolioSentiment.date"
                 :show-trend="false"
               />
-              <v-card v-else elevation="2" class="mb-4">
-                <v-card-title class="text-subtitle-1 pb-2">
-                  <v-icon size="small" class="mr-2">mdi-chart-line</v-icon>
-                  Portfolio Sentiment Today
-                </v-card-title>
-                <v-card-text class="text-center py-8">
-                  <v-icon size="48" color="grey">mdi-chart-timeline-variant</v-icon>
-                  <div class="text-body-2 text-grey mt-3">No sentiment data available yet</div>
-                  <div class="text-caption text-grey">Sentiment analysis will appear after news is processed</div>
+              <v-card v-else class="mb-4" variant="outlined">
+                <v-card-text class="text-center py-6">
+                  <v-icon size="36" color="grey" class="mb-2">mdi-robot</v-icon>
+                  <div class="text-body-2 text-grey mb-2">No AI summary yet</div>
+                  <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Generate AI Summary</v-btn>
                 </v-card-text>
               </v-card>
+              <div v-if="portfolioSentiment" class="d-flex justify-end mt-2">
+                <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Regenerate AI Summary</v-btn>
+              </div>
 
               <v-card class="mt-4" elevation="2">
                 <v-card-title class="text-subtitle-1 pb-2">
@@ -1365,6 +1388,7 @@ export default {
       // News view state
       portfolioNews: [],
       portfolioSentiment: null,
+      summaryGenerating: false,
       newsLoading: false,
       newsError: '',
       newsOffset: 0,
@@ -2127,6 +2151,37 @@ export default {
         this.portfolioSentiment = data
       } catch (error) {
         console.error('Error fetching portfolio sentiment:', error)
+      }
+    },
+
+    async generateSummary() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+      this.summaryGenerating = true
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/news/generate-summary`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        if (response.ok) {
+          const data = await response.json()
+          this.portfolioSentiment = {
+            sentiment: data.sentiment,
+            summary: data.summary,
+            date: data.date
+          }
+        } else if (response.status === 429) {
+          const err = await response.json()
+          alert(`Cooldown: ${err.error}. Try again in about ${err.retry_after_min} minute(s).`)
+        } else {
+          const err = await response.json()
+          alert(err.error || 'Failed to generate summary')
+        }
+      } catch (error) {
+        console.error('Error generating summary:', error)
+        alert('Failed to generate summary. Ensure the Python backend is running.')
+      } finally {
+        this.summaryGenerating = false
       }
     },
 
