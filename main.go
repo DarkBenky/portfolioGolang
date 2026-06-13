@@ -3024,7 +3024,7 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		"sentiment_list": allSentiments,
 		"tickers_list":   allTickers,
 		"full_text_list": allFullTexts,
-		"max_tokens":     2048,
+		"max_tokens":     4096,
 	}
 
 	jsonBody, err := json.Marshal(requestBody)

@@ -374,14 +374,14 @@ def api_summarize_portfolio():
     sentiment_list = data.get('sentiment_list', [])
     tickers_list = data.get('tickers_list', [])
     full_text_list = data.get('full_text_list', None)
-    max_tokens = data.get('max_tokens', 2048)
-    
+    max_tokens = data.get('max_tokens', 8192)
+
     if not news_list:
         return flask.jsonify({'error': 'news_list is required'}), 400
-    
+
     future = executor.submit(
-        summarize_daily_portfolio_news, 
-        news_list, 
+        summarize_daily_portfolio_news,
+        news_list,
         sentiment_list,
         tickers_list,
         max_tokens,

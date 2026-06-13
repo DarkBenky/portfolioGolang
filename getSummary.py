@@ -11,6 +11,7 @@ def _call_openrouter(prompt, max_tokens=2048):
     payload = {
         "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
     }
 
     headers = {
@@ -105,24 +106,24 @@ Focus only on facts from the articles. Include specific numbers, percentages, da
         summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
         summary_text += "\n".join([f"- {s}" for s in news_list[:5]])
 
-    lines = summary_text.split("\n")
-    seen_content = set()
-    clean_lines = []
-    for line in lines:
-        line_stripped = line.strip()
-        if line_stripped.startswith("#") or line_stripped.startswith("-") or line_stripped.startswith("*"):
-            clean_lines.append(line)
-        elif line_stripped and line_stripped not in seen_content:
-            seen_content.add(line_stripped)
-            clean_lines.append(line)
-        elif not line_stripped:
-            clean_lines.append(line)
-    summary_text = "\n".join(clean_lines)
 
-    return {"ticker": ticker, "date": date, "summary": summary_text, "sentiment": average_sentiment}
+def _build_portfolio_fallback(ticker_news, sentiment_label, date):
+    summary_parts = []
+    for ticker, items in ticker_news.items():
+        if not items:
+            continue
+        ticker_sent = sum(it["sentiment"] for it in items) / len(items)
+        ticker_label = "Bullish" if ticker_sent > 0.2 else "Bearish" if ticker_sent < -0.2 else "Neutral"
+        block = f"{ticker} had {len(items)} news items on {date}. Sentiment: {ticker_label} ({ticker_sent:.2f})\n"
+        for it in items:
+            block += f"{it['content']}\n"
+        summary_parts.append(block)
+    if summary_parts:
+        return f"Portfolio Update - {sentiment_label}\n\n" + "\n".join(summary_parts)
+    return f"No significant news for your holdings on {date}."
 
 
-def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_tokens=2048, user_id="", date="", full_text_list=None):
+def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_tokens=4096, user_id="", date="", full_text_list=None):
     if not news_list:
         return {
             "user_id": user_id,
@@ -140,98 +141,70 @@ def summarize_daily_portfolio_news(news_list, sentiment_list, tickers_list, max_
     average_sentiment = sum(sentiment_list) / len(sentiment_list) if sentiment_list else 0.0
     sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
 
-    max_context_chars = (32000 - 1500 - max_tokens) * 4
     ticker_news = {}
-    current_chars = 0
-
     for i, (summary, sentiment, ticker) in enumerate(zip(news_list, sentiment_list, tickers_list)):
         if ticker not in ticker_news:
             ticker_news[ticker] = []
-        sent_label = "+" if sentiment > 0.2 else "-" if sentiment < -0.2 else "~"
         content = summary
         if full_text_list and full_text_list[i]:
             full_text = full_text_list[i].strip()
             if len(full_text) > len(summary) * 1.5:
-                estimated_chars = len(full_text) + 100
-                if current_chars + estimated_chars <= max_context_chars:
-                    content = full_text
-                    current_chars += estimated_chars
-                else:
-                    current_chars += len(summary) + 100
-            else:
-                current_chars += len(summary) + 100
-        else:
-            current_chars += len(summary) + 100
-        ticker_news[ticker].append({"label": sent_label, "sentiment": sentiment, "content": content})
+                content = full_text
+        ticker_news[ticker].append({"sentiment": sentiment, "content": content})
 
-    news_sections = []
+    per_ticker_blocks = []
     for ticker, items in ticker_news.items():
-        ticker_section = f"### {ticker}\n"
-        for idx, item in enumerate(items[:5], 1):
-            ticker_section += f"Article {idx} [{item['label']} {item['sentiment']:.2f}]:\n{item['content']}\n\n"
-        news_sections.append(ticker_section)
+        ticker_sent = sum(it["sentiment"] for it in items) / len(items)
+        ticker_label = "Bullish" if ticker_sent > 0.2 else "Bearish" if ticker_sent < -0.2 else "Neutral"
+        block = f"{ticker} had {len(items)} news items on {date}. Sentiment: {ticker_label} ({ticker_sent:.2f})\n"
+        for it in items:
+            block += f"{it['content']}\n"
+        per_ticker_blocks.append(block)
 
-    news_block = "\n".join(news_sections[:10])
+    per_ticker_detail = "\n".join(per_ticker_blocks)
+
+    ticker_summaries_for_prompt = []
+    for ticker, items in ticker_news.items():
+        ticker_sent = sum(it["sentiment"] for it in items) / len(items)
+        ticker_label = "Bullish" if ticker_sent > 0.2 else "Bearish" if ticker_sent < -0.2 else "Neutral"
+        item_summaries = "\n".join([f"  - {it['content'][:300]}" for it in items[:5]])
+        ticker_summaries_for_prompt.append(
+            f"{ticker}: {len(items)} articles, {ticker_label} ({ticker_sent:.2f})\n{item_summaries}"
+        )
+
+    ticker_summary_block = "\n\n".join(ticker_summaries_for_prompt[:20])
     unique_tickers = list(set(tickers_list))
 
-    prompt = f"""Analyze news for this portfolio from {date}. Holdings: {', '.join(unique_tickers[:15])}
+    prompt = f"""You are analyzing a portfolio with these holdings on {date}: {', '.join(unique_tickers[:20])}
 
-Overall sentiment: {sentiment_label} ({average_sentiment:.2f})
+Overall portfolio sentiment: {sentiment_label} ({average_sentiment:.2f})
 
-{news_block}
+Here are pre-summarized news for each holding:
 
-Write a clear portfolio summary in markdown:
+{ticker_summary_block}
 
-## Daily Summary
-Write 3-4 sentences covering the most important news across all holdings. Include specific facts and numbers.
+Write a concise portfolio overview in markdown with exactly these sections:
 
-## Holdings with Significant News
-- List each ticker with major news and what happened (earnings, upgrades, product news, etc.) with specific numbers
+## Portfolio Summary
+Write 3-4 sentences highlighting the most impactful news across the portfolio. Mention which holdings had the most significant developments and the overall tone. Include specific facts and numbers.
 
 ## Market Impact
-Write 2-3 sentences about how this news may affect your portfolio value and what to watch next.
+Write 2-3 sentences about how these developments may affect the portfolio and what investors should monitor going forward.
 
-Only include facts from the articles. Use specific numbers, percentages, dates, and company names. Do not speculate or invent information."""
+Keep it focused on the big picture. The detailed per-holding news will be appended separately, so do not repeat individual article lists. Only include facts from the provided summaries. Do not speculate or invent information."""
 
     try:
-        summary_text = _call_openrouter(prompt, max_tokens)
-        if not summary_text or len(summary_text) < 50:
-            print(f"Warning: Model generated empty or short response. Using fallback.")
-            summary_parts = []
-            for t, items in list(ticker_news.items())[:5]:
-                if items:
-                    summary_parts.append(f"**{t}**: {items[0]['content'][:200]}")
-            summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
+        ai_overview = _call_openrouter(prompt, max_tokens)
+        if not ai_overview or len(ai_overview) < 50:
+            print(f"Warning: Model generated empty or short portfolio overview. Using fallback.")
+            ai_overview = f"## Portfolio Summary\nYour portfolio had news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
     except Exception as e:
-        print(f"Error generating portfolio summary with OpenRouter: {e}")
-        summary_parts = []
-        for t, items in list(ticker_news.items())[:5]:
-            if items:
-                summary_parts.append(f"**{t}**: {items[0]['content'][:200]}")
-        summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
+        print(f"Error generating portfolio overview with OpenRouter: {e}")
+        ai_overview = f"## Portfolio Summary\nYour portfolio had news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
 
-    lines = summary_text.split("\n")
-    seen_content = set()
-    clean_lines = []
-    for line in lines:
-        line_stripped = line.strip()
-        if line_stripped.startswith("#") or line_stripped.startswith("-") or line_stripped.startswith("*"):
-            clean_lines.append(line)
-        elif line_stripped and line_stripped not in seen_content:
-            seen_content.add(line_stripped)
-            clean_lines.append(line)
-        elif not line_stripped:
-            clean_lines.append(line)
-    summary_text = "\n".join(clean_lines)
+    combined_summary = f"Portfolio Update - {sentiment_label}\n\n{ai_overview}\n\n---\n\n## Individual Holdings Detail\n\n{per_ticker_detail}"
 
-    if len(summary_text) < 100:
-        summary_parts = []
-        for ticker, items in list(ticker_news.items())[:5]:
-            if items:
-                summary_parts.append(f"**{ticker}**: {items[0]['content'][:200]}")
-        summary_text = f"## Portfolio Update - {sentiment_label}\n\n" + "\n\n".join(summary_parts) if summary_parts else f"No significant news for your holdings on {date}."
-
-    return {"user_id": user_id, "date": date, "summary": summary_text, "sentiment": average_sentiment}
+    return {"user_id": user_id, "date": date, "summary": combined_summary, "sentiment": average_sentiment}
 
 
 if __name__ == "__main__":
