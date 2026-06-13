@@ -3080,31 +3080,7 @@ func triggerNewsSummary(c echo.Context) error {
 
 	todayDate := time.Now().UTC().Format("2006-01-02")
 
-	log.Printf("Manual news summary triggered by user %s - fetching fresh news first", userID)
-
-	fetchedCount := 0
-	holdings, err := db.getHoldingsByUser(userID)
-	if err == nil {
-		for _, h := range holdings {
-			if h.Etf {
-				topTickers, err := db.getTopHoldingTickersForETF(h.Ticker, 10)
-				if err == nil && len(topTickers) > 0 {
-					log.Printf("ETF %s: fetching composite news from %d holdings", h.Ticker, len(topTickers))
-					for _, underlying := range topTickers {
-						fetchNewsAs(underlying, h.Ticker, 3)
-						fetchedCount++
-					}
-				} else {
-					fetchNews(h.Ticker, 5)
-					fetchedCount++
-				}
-			} else {
-				fetchNews(h.Ticker, 10)
-				fetchedCount++
-			}
-		}
-	}
-	log.Printf("Fetched news for %d holdings before summary generation", fetchedCount)
+	log.Printf("Manual news summary triggered by user %s - regenerating from existing news", userID)
 
 	tickers, err := db.getUniqueTickers()
 	if err != nil {
