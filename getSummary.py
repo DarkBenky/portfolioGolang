@@ -109,6 +109,13 @@ Focus only on facts from the articles. Include specific numbers, percentages, da
         summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
         summary_text += "\n".join([f"- {s}" for s in news_list[:5]])
 
+    return {
+        "ticker": ticker,
+        "date": date,
+        "summary": summary_text,
+        "sentiment": average_sentiment,
+    }
+
 
 def summarize_portfolio_from_holdings(holding_summaries, max_tokens=4096, user_id="", date=""):
     if not holding_summaries:

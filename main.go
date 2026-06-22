@@ -51,6 +51,10 @@ var (
 	lastSummaryGen   = make(map[string]time.Time)
 	lastSummaryGenMu sync.Mutex
 	summaryCooldown  = 30 * time.Minute
+
+	lastTickerSummaryGen   = make(map[string]time.Time)
+	lastTickerSummaryGenMu sync.Mutex
+	tickerSummaryCooldown  = 15 * time.Minute
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -1770,7 +1774,7 @@ func (database *DB) getPortfolioDailySummary(userID string, date string) (*Portf
 		err = database.QueryRow(`
 			SELECT id_sentiment, user_id, date, summary, sentiment
 			FROM portfolio_daily_sentiment
-			WHERE user_id = ?
+			WHERE user_id = ? AND date >= date('now', '-7 days')
 			ORDER BY date DESC
 			LIMIT 1
 		`, userID).Scan(&summary.IdSentiment, &summary.UserID, &summary.Date, &summary.Summary, &summary.Sentiment)
@@ -1795,7 +1799,7 @@ func (database *DB) getHoldingDailySummary(holdingID string, date string) (*Dail
 		err = database.QueryRow(`
 			SELECT id_sentiment, ticker, date, summary, sentiment
 			FROM daily_sentiment
-			WHERE ticker = ?
+			WHERE ticker = ? AND date >= date('now', '-7 days')
 			ORDER BY date DESC
 			LIMIT 1
 		`, holdingID).Scan(&summary.IdSentiment, &summary.Ticker, &summary.Date, &summary.Summary, &summary.Sentiment)
@@ -2178,6 +2182,41 @@ func (database *DB) getNewsForTickerToday(ticker string, todayDate string) ([]Ne
 		WHERE ticker = ? AND date(datetime(published_at, 'unixepoch')) = ?
 		ORDER BY published_at DESC
 	`, ticker, todayDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var newsList []News
+	for rows.Next() {
+		var n News
+		var idAsset, idHolding sql.NullString
+		err := rows.Scan(&n.IdNews, &n.Title, &n.Link, &n.PublishedAt, &n.Summary, &n.Text, &n.Sentiment, &n.Ticker, &idAsset, &idHolding)
+		if err != nil {
+			return nil, err
+		}
+		if idAsset.Valid {
+			n.idAsset = idAsset.String
+		}
+		if idHolding.Valid {
+			n.idHolding = idHolding.String
+		}
+		newsList = append(newsList, n)
+	}
+	return newsList, nil
+}
+
+func (database *DB) getRecentNewsForTicker(ticker string, limit int) ([]News, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT id_news, title, link, published_at, summary, text, sentiment, ticker, id_asset, id_holding
+		FROM news
+		WHERE ticker = ?
+		ORDER BY published_at DESC
+		LIMIT ?
+	`, ticker, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2812,7 +2851,7 @@ func FillInBetweenPrices(Ticker string) error {
 	return nil
 }
 
-// updateSentimentsPeriodic runs every 6 hours to generate daily summaries for tickers and portfolios
+// updateSentimentsPeriodic runs once per day to generate daily summaries for tickers and portfolios
 func updateSentimentsPeriodic(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2834,7 +2873,9 @@ func updateSentimentsPeriodic(interval time.Duration) {
 			go func(tickerSym string) {
 				err := updateTickerDailySentiment(tickerSym, todayDate)
 				if err != nil {
-					log.Printf("Error updating sentiment for %s: %v", tickerSym, err)
+					if !strings.Contains(err.Error(), "no news available") {
+						log.Printf("Error updating sentiment for %s: %v", tickerSym, err)
+					}
 				} else {
 					log.Printf("Successfully updated sentiment for %s", tickerSym)
 				}
@@ -2908,15 +2949,13 @@ func updateETFDataPeriodic(interval time.Duration) {
 }
 
 func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
-	// Get today's news for this ticker
-	newsList, err := db.getNewsForTickerToday(tickerSymbol, todayDate)
+	newsList, err := db.getRecentNewsForTicker(tickerSymbol, 30)
 	if err != nil {
 		return fmt.Errorf("error fetching news: %v", err)
 	}
 
 	if len(newsList) == 0 {
-		log.Printf("No news found for %s on %s, skipping", tickerSymbol, todayDate)
-		return nil
+		return fmt.Errorf("no news available for %s", tickerSymbol)
 	}
 
 	// Prepare data for API call
@@ -3088,7 +3127,9 @@ func triggerNewsSummary(c echo.Context) error {
 	} else {
 		for _, t := range tickers {
 			if err := updateTickerDailySentiment(t, todayDate); err != nil {
-				log.Printf("Error updating ticker sentiment for %s: %v", t, err)
+				if !strings.Contains(err.Error(), "no news available") {
+					log.Printf("Error updating ticker sentiment for %s: %v", t, err)
+				}
 			}
 		}
 	}
@@ -3109,6 +3150,63 @@ func triggerNewsSummary(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":   "News summary generated successfully",
+		"sentiment": sentiment.Sentiment,
+		"summary":   sentiment.Summary,
+		"date":      sentiment.Date,
+	})
+}
+
+func triggerHoldingSummary(c echo.Context) error {
+	ticker := c.FormValue("ticker")
+	if ticker == "" {
+		return c.String(http.StatusBadRequest, "ticker is required")
+	}
+
+	resolvedTicker, err := resolveTickerOrISIN(ticker)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", ticker, err)
+		resolvedTicker = ticker
+	}
+
+	cooldownKey := resolvedTicker
+	lastTickerSummaryGenMu.Lock()
+	if last, ok := lastTickerSummaryGen[cooldownKey]; ok && time.Since(last) < tickerSummaryCooldown {
+		remaining := tickerSummaryCooldown - time.Since(last)
+		lastTickerSummaryGenMu.Unlock()
+		return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+			"error":           "Please wait before generating another summary for this holding",
+			"retry_after_min": int(remaining.Minutes()) + 1,
+		})
+	}
+	lastTickerSummaryGenMu.Unlock()
+
+	todayDate := time.Now().UTC().Format("2006-01-02")
+
+	log.Printf("Manual holding summary triggered for ticker %s", resolvedTicker)
+
+	if err := updateTickerDailySentiment(resolvedTicker, todayDate); err != nil {
+		log.Printf("Error updating ticker sentiment for %s: %v", resolvedTicker, err)
+		if strings.Contains(err.Error(), "no news available") {
+			return c.JSON(http.StatusOK, map[string]interface{}{
+				"message": "No news articles available yet for this holding. News is fetched periodically.",
+				"ticker":  resolvedTicker,
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate holding summary"})
+	}
+
+	lastTickerSummaryGenMu.Lock()
+	lastTickerSummaryGen[cooldownKey] = time.Now()
+	lastTickerSummaryGenMu.Unlock()
+
+	sentiment, err := db.getHoldingDailySummary(resolvedTicker, todayDate)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Summary generated but failed to retrieve"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":   "Holding summary generated successfully",
+		"ticker":    sentiment.Ticker,
 		"sentiment": sentiment.Sentiment,
 		"summary":   sentiment.Summary,
 		"date":      sentiment.Date,
@@ -7095,6 +7193,7 @@ func main() {
 	protected.GET("/asset/history", GetAssetPriceHistory)
 	protected.GET("/asset/stats", getAssetStats)
 	protected.GET("/asset/daily_sentiment", getAssetDailySentimentSummary)
+	protected.POST("/asset/generate-summary", triggerHoldingSummary)
 	protected.GET("/asset/details", getLatestAssetDetailsEndpoint)
 	protected.GET("/asset/details/history", getAssetDetails)
 

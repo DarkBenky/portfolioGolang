@@ -275,7 +275,7 @@
           </v-row>
 
           <!-- Daily Summary Section -->
-          <!-- <v-row class="mt-4">
+          <v-row class="mt-4">
             <v-col cols="12">
               <v-card variant="outlined">
                 <v-card-title class="text-subtitle-1 pb-2 d-flex justify-space-between align-center">
@@ -283,10 +283,24 @@
                     <v-icon size="small" class="mr-2">mdi-text-box-outline</v-icon>
                     Today's Summary - {{ holding.ticker }}
                   </div>
-                  <v-chip v-if="dailySummary?.sentiment !== undefined"
-                    :color="getSentimentColor(dailySummary.sentiment)" size="small" variant="tonal">
-                    Sentiment: {{ getSentimentLabel(dailySummary.sentiment) }}
-                  </v-chip>
+                  <div class="d-flex align-center ga-2">
+                    <v-chip v-if="dailySummary?.sentiment !== undefined"
+                      :color="getSentimentColor(dailySummary.sentiment)" size="small" variant="tonal">
+                      Sentiment: {{ getSentimentLabel(dailySummary.sentiment) }}
+                    </v-chip>
+                    <v-btn size="small" variant="tonal" color="primary"
+                      :loading="holdingSummaryGenerating"
+                      :disabled="holdingSummaryCooldown > 0"
+                      @click="generateHoldingSummary"
+                      prepend-icon="mdi-magic">
+                      <template v-if="holdingSummaryCooldown > 0">
+                        Wait {{ holdingSummaryCooldown }}s
+                      </template>
+                      <template v-else>
+                        {{ dailySummary?.summary ? 'Regenerate Summary' : 'Generate AI Summary' }}
+                      </template>
+                    </v-btn>
+                  </div>
                 </v-card-title>
                 <v-card-text>
                   <div v-if="dailySummaryLoading" class="d-flex justify-center py-4">
@@ -298,12 +312,15 @@
                   <div v-else class="text-center text-grey py-4">
                     <v-icon size="36" class="mb-2">mdi-text-box-remove-outline</v-icon>
                     <div>No summary available for today</div>
-                    <div class="text-caption mt-1">Summaries are generated periodically from recent news</div>
+                    <div class="text-caption mt-1">Click the button above to generate one from recent news</div>
                   </div>
+                  <v-alert v-if="holdingSummaryError" type="error" density="compact" class="mt-2">
+                    {{ holdingSummaryError }}
+                  </v-alert>
                 </v-card-text>
               </v-card>
             </v-col>
-          </v-row> -->
+          </v-row>
 
           <!-- Pie Charts for ETFs - Sectors, Regions & Top 10 Holdings -->
           <v-row
@@ -906,6 +923,10 @@ export default {
       expandedNews: {},
       dailySummary: null,
       dailySummaryLoading: false,
+      holdingSummaryGenerating: false,
+      holdingSummaryCooldown: 0,
+      holdingSummaryError: '',
+      holdingSummaryTimer: null,
       hoveredSlice: null,
       pieColors: ['#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0', '#00BCD4', '#795548', '#607D8B'],
       pieColors2: ['#3F51B5', '#8BC34A', '#FFC107', '#F44336', '#673AB7', '#009688', '#FF5722', '#03A9F4'],
@@ -1107,6 +1128,13 @@ export default {
     this.fetchData()
   },
 
+  beforeUnmount() {
+    if (this.holdingSummaryTimer) {
+      clearInterval(this.holdingSummaryTimer)
+      this.holdingSummaryTimer = null
+    }
+  },
+
   methods: {
     async fetchConversionRate() {
       if (this.holding.currency === this.homeCurrency) {
@@ -1304,6 +1332,66 @@ export default {
       } finally {
         this.dailySummaryLoading = false
       }
+    },
+
+    async generateHoldingSummary() {
+      this.holdingSummaryGenerating = true
+      this.holdingSummaryError = ''
+      try {
+        const formData = new FormData()
+        formData.append('ticker', this.identifier)
+
+        const response = await fetch(`${API_BASE_URL}/api/asset/generate-summary`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          body: formData
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          if (data.message && !data.summary) {
+            this.holdingSummaryError = data.message
+          } else {
+            this.dailySummary = {
+              ticker: data.ticker,
+              sentiment: data.sentiment,
+              summary: data.summary,
+              date: data.date
+            }
+            this.holdingSummaryError = ''
+            this.startHoldingSummaryCooldown()
+          }
+        } else if (response.status === 429) {
+          const err = await response.json()
+          this.holdingSummaryError = `${err.error}. Try again in about ${err.retry_after_min} minute(s).`
+          this.startHoldingSummaryCooldown(err.retry_after_min * 60)
+        } else {
+          const err = await response.json()
+          this.holdingSummaryError = err.error || 'Failed to generate holding summary'
+        }
+      } catch (error) {
+        console.error('Error generating holding summary:', error)
+        this.holdingSummaryError = 'Failed to generate summary. Ensure the server is running.'
+      } finally {
+        this.holdingSummaryGenerating = false
+      }
+    },
+
+    startHoldingSummaryCooldown(seconds = 900) {
+      this.holdingSummaryCooldown = seconds
+      if (this.holdingSummaryTimer) {
+        clearInterval(this.holdingSummaryTimer)
+      }
+      this.holdingSummaryTimer = setInterval(() => {
+        this.holdingSummaryCooldown--
+        if (this.holdingSummaryCooldown <= 0) {
+          clearInterval(this.holdingSummaryTimer)
+          this.holdingSummaryTimer = null
+          this.holdingSummaryError = ''
+        }
+      }, 1000)
     },
 
     // Generate SVG pie chart slices
