@@ -210,7 +210,19 @@
                     </span>
                   </template>
                   <template v-slot:[`item.category`]="{ item }">
-                    <v-chip :color="getCategoryColor(item.category)" size="x-small" variant="flat" class="text-caption">{{ item.category }}</v-chip>
+                    <v-menu offset-y>
+                      <template v-slot:activator="{ props }">
+                        <v-chip :color="getCategoryColor(item.category)" size="x-small" variant="flat" class="text-caption" v-bind="props" style="cursor:pointer">{{ item.category }}</v-chip>
+                      </template>
+                      <v-list density="compact">
+                        <v-list-item v-for="cat in allCategories" :key="cat" :value="cat" @click="quickRecategorize(item, cat)" :active="item.category === cat">
+                          <template v-slot:prepend>
+                            <v-icon size="12" :color="getCategoryColor(cat)" class="mr-2">mdi-circle</v-icon>
+                          </template>
+                          <v-list-item-title class="text-caption">{{ cat }}</v-list-item-title>
+                        </v-list-item>
+                      </v-list>
+                    </v-menu>
                   </template>
                   <template v-slot:[`item.source`]="{ item }">
                     <v-chip :color="item.source === 'bank' ? 'blue' : 'grey'" size="x-small" variant="tonal">{{ item.source }}</v-chip>
@@ -514,13 +526,15 @@ const latestReport = ref(null)
 const reportDialog = ref(false)
 const viewingReport = ref(null)
 
-const allCategories = ['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Food', 'Transportation', 'Education', 'Other']
+const allCategories = ['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Food', 'Transportation', 'Education', 'Other']
 
 const categoryColors = {
   Food: '#FF6384', Transportation: '#36A2EB', Entertainment: '#FFCE56',
   Utilities: '#4BC0C0', Healthcare: '#9966FF', Shopping: '#FF9F40',
   Education: '#C9CBCF', Other: '#B0BEC5', Income: '#4CAF50',
-  Groceries: '#8BC34A', Dining: '#FF7043', Transport: '#29B6F6', Savings: '#AB47BC'
+  Groceries: '#8BC34A', Dining: '#FF7043', Transport: '#29B6F6', Savings: '#AB47BC',
+  Investments: '#00BCD4', Subscriptions: '#E040FB', Insurance: '#607D8B',
+  Housing: '#795548', Snacks: '#FF9800', Services: '#9E9E9E'
 }
 
 const unifiedHeaders = [
@@ -897,6 +911,34 @@ async function saveEdit() {
     showSnackbar('Failed to save', 'error')
   } finally {
     editSaving.value = false
+  }
+}
+
+async function quickRecategorize(item, newCategory) {
+  if (item.category === newCategory) return
+  try {
+    let res
+    if (item.source === 'bank') {
+      res = await authFetch('/api/bank/transactions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.rawId, description: item.description, category: newCategory, is_savings_roundup: item.is_savings_roundup || false })
+      })
+    } else {
+      res = await authFetch('/api/expenses', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.rawId, description: item.description, amount: item.amount, category: newCategory, date: item.date })
+      })
+    }
+    if (res.ok) {
+      item.category = newCategory
+      showSnackbar('Category updated', 'success')
+    } else {
+      showSnackbar('Failed to update category', 'error')
+    }
+  } catch (e) {
+    showSnackbar('Failed to update category', 'error')
   }
 }
 

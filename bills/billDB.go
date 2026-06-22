@@ -232,14 +232,24 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 
 	desc := strings.ToLower(tx.Description)
 
+	if looksLikeInvestment(desc) {
+		return "Investments"
+	}
+
+	if looksLikeSubscription(desc) {
+		return "Subscriptions"
+	}
+
 	categoryKeywords := map[string][]string{
-		"Groceries":     {"tesco", "lidl", "billa", "kaufland", "albert", "coop", "kraj", "merkury", "fresh"},
-		"Dining":        {"chilantro", "unas food", "restaurant", "bistro", "pizza", "burger", "sushi", "kebab", "food truck", "foodtruck"},
-		"Transport":     {"bolt.eu", "uber", "taxi", "fuel", "benzin", "nafta", "orlen", "shell", "esso", "train", "bus", "bolt"},
-		"Entertainment": {"cinemacity", "cinema", "bowlicheck", "bowling", "theatre", "concert", "festival", "sport"},
-		"Shopping":      {"zara", "h&m", "primark", "mall", "ikea", "decathlon", "alza"},
-		"Utilities":     {"telekom", "orange", "o2", "electric", "gas", "water", "internet", "spp", "zsd"},
-		"Healthcare":    {"pharmacy", "lekaren", "doctor", "hospital", "nemocnica", "poliklinika"},
+		"Groceries":     {"tesco", "lidl", "billa", "kaufland", "albert", "coop", "kraj", "merkury", "fresh", "jednota", "dm drogerie", "ter"},
+		"Dining":        {"chilantro", "unas food", "restaurant", "bistro", "pizza", "burger", "sushi", "kebab", "food truck", "foodtruck", "cafe", "coffee", "starbucks", "mc donald", "mcdonald", "kfc", "bageta", "obcerstvenie"},
+		"Transport":     {"bolt.eu", "uber", "taxi", "fuel", "benzin", "nafta", "orlen", "shell", "esso", "omv", "slovnaft", "train", "bus", "mhd", "parking", "dialnica", "highway"},
+		"Entertainment": {"cinemacity", "cinema", "bowlicheck", "bowling", "theatre", "concert", "festival", "sport", "fitnes", "gym", "netflix", "hbo", "spotify", "steam", "playstation", "ticket"},
+		"Shopping":      {"zara", "h&m", "primark", "mall", "ikea", "decathlon", "alza", "nay", "notino", "aboutyou", "zalando", "amazon"},
+		"Utilities":     {"telekom", "orange", "o2", "electric", "gas", "water", "internet", "spp", "zsd", "zse", "vse", "teplo"},
+		"Healthcare":    {"pharmacy", "lekaren", "doctor", "hospital", "nemocnica", "poliklinika", "zubar", "dentist", "benu", "dr max"},
+		"Insurance":     {"poistovna", "insurance", "poistenie", "allianz", "kooperativa", "union", "general"},
+		"Housing":       {"najom", "rent", "hypotek", "mortgage", "fond oprav", "sprava"},
 	}
 
 	for category, keywords := range categoryKeywords {
@@ -249,7 +259,82 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 			}
 		}
 	}
+
+	if strings.Contains(desc, "platba kartou") {
+		return categorizeCardPayment(tx)
+	}
+
 	return "Other"
+}
+
+func looksLikeInvestment(desc string) bool {
+	investmentPatterns := []string{
+		"ishares", "vanguard", "spdr", "xtrackers", "lyxor", "amundi",
+		"invesco", "wisdomtree", "etf", "acc etf", "dist etf",
+		"world acc", "msci world", "s&p 500", "nasdaq", "emerging markets",
+		"core msci", "msci acwi", "ftse all-world",
+	}
+	for _, p := range investmentPatterns {
+		if strings.Contains(desc, p) {
+			return true
+		}
+	}
+	descUpper := strings.ToUpper(desc)
+	for i := 0; i < len(descUpper)-11; i++ {
+		sub := descUpper[i : i+12]
+		if len(sub) >= 12 {
+			c0 := sub[0]
+			c1 := sub[1]
+			if (c0 >= 'A' && c0 <= 'Z') && (c1 >= 'A' && c1 <= 'Z') {
+				rest := sub[2:]
+				allAlnum := true
+				for _, c := range []byte(rest) {
+					if !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+						allAlnum = false
+						break
+					}
+				}
+				if allAlnum {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func looksLikeSubscription(desc string) bool {
+	subKeywords := []string{
+		"subscription", "recurring", "monthly", "annual",
+		"netflix", "spotify", "hbo", "disney", "prime video",
+		"google one", "icloud", "dropbox", "office 365",
+		"domain", "hosting", "vps", "server",
+	}
+	for _, kw := range subKeywords {
+		if strings.Contains(desc, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func categorizeCardPayment(tx BankTransaction) string {
+	amount := tx.Amount
+	if amount < 0 {
+		amount = -amount
+	}
+	switch {
+	case amount < 3:
+		return "Snacks"
+	case amount < 8:
+		return "Dining"
+	case amount < 25:
+		return "Shopping"
+	case amount < 100:
+		return "Services"
+	default:
+		return "Shopping"
+	}
 }
 
 func ImportBankTransaction(tx BankTransaction) (bool, error) {
@@ -505,4 +590,20 @@ func GetAllUserIDs() ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func UpdateBankTransactionCategory(txID int, userID string, category string) error {
+	query := `UPDATE bank_transactions SET category = ? WHERE id = ? AND user_id = ?`
+	result, err := db.Exec(query, category, txID, userID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("transaction not found or not owned by user")
+	}
+	return nil
 }
