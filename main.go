@@ -39,6 +39,7 @@ var (
 	JWT_SECRET     string
 	JWT_EXPIRY     = 7 * 24 * time.Hour
 	BASE_URL       string
+	devMode        string
 	db             *DB
 	dbMutex        sync.RWMutex
 	candleInterval int64 = 600 // 10 minutes
@@ -2880,7 +2881,7 @@ func updateSentimentsPeriodic(interval time.Duration) {
 					log.Printf("Successfully updated sentiment for %s", tickerSym)
 				}
 			}(tickerSymbol)
-			time.Sleep(5 * time.Second) // Delay to avoid overwhelming Ollama
+			time.Sleep(500 * time.Millisecond)
 		}
 
 		// 2. Update daily sentiment for each user's portfolio
@@ -2901,7 +2902,7 @@ func updateSentimentsPeriodic(interval time.Duration) {
 					log.Printf("Successfully updated portfolio sentiment for user %s", u.Id)
 				}
 			}(user)
-			time.Sleep(10 * time.Second) // Longer delay for portfolio summaries
+			time.Sleep(1 * time.Second)
 		}
 
 		log.Println("Completed periodic sentiment/summary update cycle")
@@ -3107,13 +3108,15 @@ func triggerNewsSummary(c echo.Context) error {
 	userID := claims.UserID
 
 	lastSummaryGenMu.Lock()
-	if last, ok := lastSummaryGen[userID]; ok && time.Since(last) < summaryCooldown {
-		remaining := summaryCooldown - time.Since(last)
-		lastSummaryGenMu.Unlock()
-		return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
-			"error":           "Please wait before generating another summary",
-			"retry_after_min": int(remaining.Minutes()) + 1,
-		})
+	if devMode != "true" {
+		if last, ok := lastSummaryGen[userID]; ok && time.Since(last) < summaryCooldown {
+			remaining := summaryCooldown - time.Since(last)
+			lastSummaryGenMu.Unlock()
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"error":           "Please wait before generating another summary",
+				"retry_after_min": int(remaining.Minutes()) + 1,
+			})
+		}
 	}
 	lastSummaryGenMu.Unlock()
 
@@ -3121,17 +3124,33 @@ func triggerNewsSummary(c echo.Context) error {
 
 	log.Printf("Manual news summary triggered by user %s - regenerating from existing news", userID)
 
-	tickers, err := db.getUniqueTickers()
+	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
-		log.Printf("Error getting tickers for summary: %v", err)
+		log.Printf("Error getting holdings for summary: %v", err)
 	} else {
-		for _, t := range tickers {
-			if err := updateTickerDailySentiment(t, todayDate); err != nil {
-				if !strings.Contains(err.Error(), "no news available") {
-					log.Printf("Error updating ticker sentiment for %s: %v", t, err)
-				}
+		tickerSet := make(map[string]bool)
+		var tickerList []string
+		for _, h := range holdings {
+			if !tickerSet[h.Ticker] {
+				tickerSet[h.Ticker] = true
+				tickerList = append(tickerList, h.Ticker)
 			}
 		}
+		log.Printf("Regenerating summaries for %d holding tickers", len(tickerList))
+
+		var wg sync.WaitGroup
+		for _, t := range tickerList {
+			wg.Add(1)
+			go func(tickerSym string) {
+				defer wg.Done()
+				if err := updateTickerDailySentiment(tickerSym, todayDate); err != nil {
+					if !strings.Contains(err.Error(), "no news available") {
+						log.Printf("Error updating ticker sentiment for %s: %v", tickerSym, err)
+					}
+				}
+			}(t)
+		}
+		wg.Wait()
 	}
 
 	if err := updatePortfolioDailySentiment(userID, todayDate); err != nil {
@@ -3170,13 +3189,15 @@ func triggerHoldingSummary(c echo.Context) error {
 
 	cooldownKey := resolvedTicker
 	lastTickerSummaryGenMu.Lock()
-	if last, ok := lastTickerSummaryGen[cooldownKey]; ok && time.Since(last) < tickerSummaryCooldown {
-		remaining := tickerSummaryCooldown - time.Since(last)
-		lastTickerSummaryGenMu.Unlock()
-		return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
-			"error":           "Please wait before generating another summary for this holding",
-			"retry_after_min": int(remaining.Minutes()) + 1,
-		})
+	if devMode != "true" {
+		if last, ok := lastTickerSummaryGen[cooldownKey]; ok && time.Since(last) < tickerSummaryCooldown {
+			remaining := tickerSummaryCooldown - time.Since(last)
+			lastTickerSummaryGenMu.Unlock()
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"error":           "Please wait before generating another summary for this holding",
+				"retry_after_min": int(remaining.Minutes()) + 1,
+			})
+		}
 	}
 	lastTickerSummaryGenMu.Unlock()
 
@@ -7055,7 +7076,7 @@ func main() {
 		JWT_EXPIRY = time.Duration(jwtExpiryHours) * time.Hour
 	}
 
-	devMode := os.Getenv("DEV_MODE")
+	devMode = os.Getenv("DEV_MODE")
 	pythonPort := os.Getenv("BACKEND_PYTHON_PORT")
 	serverHost := os.Getenv("SERVER_HOST")
 
