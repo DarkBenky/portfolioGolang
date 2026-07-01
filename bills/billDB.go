@@ -111,6 +111,20 @@ func createTables() error {
 		return fmt.Errorf("error creating merchant_categories index: %v", err)
 	}
 
+	createSavingsIBANTable := `
+	CREATE TABLE IF NOT EXISTS user_savings_ibans (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL,
+		iban TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT 'savings',
+		UNIQUE(user_id, iban)
+	);`
+
+	_, err = db.Exec(createSavingsIBANTable)
+	if err != nil {
+		return fmt.Errorf("error creating user_savings_ibans table: %v", err)
+	}
+
 	return nil
 }
 
@@ -353,11 +367,38 @@ var validCategories = map[string]bool{
 	"Groceries": true, "Dining": true, "Transport": true, "Entertainment": true,
 	"Shopping": true, "Utilities": true, "Healthcare": true, "Insurance": true,
 	"Housing": true, "Investments": true, "Subscriptions": true, "Income": true,
-	"Savings": true, "Services": true, "Snacks": true, "Other": true,
+	"Savings": true, "Services": true, "Snacks": true, "Transfer": true, "Other": true,
 }
 
 func ValidCategory(category string) bool {
 	return validCategories[category]
+}
+
+func GetKnownSavingsIBANs(userID string) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT iban FROM user_savings_ibans WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ibans := make(map[string]bool)
+	for rows.Next() {
+		var iban string
+		if err := rows.Scan(&iban); err == nil {
+			ibans[iban] = true
+		}
+	}
+	return ibans, nil
+}
+
+func SaveSavingsIBAN(userID string, iban string) {
+	if iban == "" {
+		return
+	}
+	_, _ = db.Exec(
+		`INSERT OR IGNORE INTO user_savings_ibans (user_id, iban) VALUES (?, ?)`,
+		userID, iban,
+	)
 }
 
 func CategorizeBankTransaction(tx BankTransaction) string {
@@ -493,9 +534,9 @@ func GetSavingsTransactions(userID string) ([]BankTransaction, error) {
 func GetBankTransactionStats(userID string) (map[string]interface{}, error) {
 	stats := map[string]interface{}{}
 
-	var totalIn, totalOut, totalSavings float64
+	var totalIn, totalOut, totalSavings, totalTransfers float64
 	err := db.QueryRow(
-		`SELECT COALESCE(SUM(amount),0) FROM bank_transactions WHERE user_id = ? AND direction = 'CRDT' AND is_savings_roundup = 0`,
+		`SELECT COALESCE(SUM(amount),0) FROM bank_transactions WHERE user_id = ? AND direction = 'CRDT' AND is_savings_roundup = 0 AND category != 'Transfer'`,
 		userID,
 	).Scan(&totalIn)
 	if err != nil {
@@ -503,7 +544,7 @@ func GetBankTransactionStats(userID string) (map[string]interface{}, error) {
 	}
 
 	err = db.QueryRow(
-		`SELECT COALESCE(SUM(amount),0) FROM bank_transactions WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0`,
+		`SELECT COALESCE(SUM(amount),0) FROM bank_transactions WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0 AND category != 'Transfer'`,
 		userID,
 	).Scan(&totalOut)
 	if err != nil {
@@ -518,13 +559,22 @@ func GetBankTransactionStats(userID string) (map[string]interface{}, error) {
 		return nil, err
 	}
 
+	err = db.QueryRow(
+		`SELECT COALESCE(SUM(amount),0) FROM bank_transactions WHERE user_id = ? AND category = 'Transfer' AND direction = 'DBIT'`,
+		userID,
+	).Scan(&totalTransfers)
+	if err != nil {
+		return nil, err
+	}
+
 	stats["total_in"] = totalIn
 	stats["total_out"] = totalOut
 	stats["net"] = totalIn - totalOut
 	stats["total_savings"] = totalSavings
+	stats["total_transfers"] = totalTransfers
 
 	rows, err := db.Query(
-		`SELECT category, SUM(amount) FROM bank_transactions WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0 GROUP BY category`,
+		`SELECT category, SUM(amount) FROM bank_transactions WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0 AND category != 'Transfer' GROUP BY category`,
 		userID,
 	)
 	if err != nil {
@@ -546,7 +596,7 @@ func GetBankTransactionStats(userID string) (map[string]interface{}, error) {
 	monthRows, err := db.Query(
 		`SELECT strftime('%Y-%m', booking_date) AS month, SUM(amount)
 		 FROM bank_transactions
-		 WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0
+		 WHERE user_id = ? AND direction = 'DBIT' AND is_savings_roundup = 0 AND category != 'Transfer'
 		 GROUP BY month ORDER BY month`,
 		userID,
 	)

@@ -6591,9 +6591,15 @@ func importBankXML(c echo.Context) error {
 	skipped := 0
 	var aiPending []bills.BankTransaction
 
+	savingsIBANs, _ := bills.GetKnownSavingsIBANs(userID)
+	if savingsIBANs == nil {
+		savingsIBANs = make(map[string]bool)
+	}
+
 	for _, entry := range doc.BkToCstmrStmt.Stmt.Entries {
 		desc := entry.NtryDtls.TxDtls.RmtInf.Ustrd
 
+		counterpartyIBAN := ""
 		counterpartyName := entry.NtryDtls.TxDtls.RltdPties.CdtrAcct.Nm
 		if counterpartyName == "" {
 			counterpartyName = entry.NtryDtls.TxDtls.RltdPties.Cdtr.Nm
@@ -6603,6 +6609,9 @@ func importBankXML(c echo.Context) error {
 			if counterpartyName == "" {
 				counterpartyName = entry.NtryDtls.TxDtls.RltdPties.Dbtr.Nm
 			}
+			counterpartyIBAN = entry.NtryDtls.TxDtls.RltdPties.DbtrAcct.IBAN
+		} else {
+			counterpartyIBAN = entry.NtryDtls.TxDtls.RltdPties.CdtrAcct.IBAN
 		}
 
 		if desc == "" && counterpartyName != "" {
@@ -6614,21 +6623,37 @@ func importBankXML(c echo.Context) error {
 			desc = "No description"
 		}
 
-		tx := bills.BankTransaction{
-			NtryRef:     entry.NtryRef,
-			AcctSvcrRef: entry.NtryDtls.TxDtls.Refs.AcctSvcrRef,
-			Amount:      entry.Amt.Value,
-			Currency:    entry.Amt.Ccy,
-			Direction:   entry.CdtDbtInd,
-			Status:      entry.Sts,
-			BookingDate: entry.BookgDt.Dt,
-			ValueDate:   entry.ValDt.Dt,
-			Description: desc,
-			UserID:      userID,
+		isRoundup := strings.Contains(strings.ToLower(desc), "drobne bokom")
+		if isRoundup && counterpartyIBAN != "" {
+			savingsIBANs[counterpartyIBAN] = true
+			bills.SaveSavingsIBAN(userID, counterpartyIBAN)
 		}
 
-		tx.IsSavingsRoundup = strings.Contains(strings.ToLower(tx.Description), "drobne bokom")
-		tx.Category = bills.CategorizeBankTransaction(tx)
+		category := bills.CategorizeBankTransaction(bills.BankTransaction{
+			Description:      desc,
+			Direction:        entry.CdtDbtInd,
+			IsSavingsRoundup: isRoundup,
+			UserID:           userID,
+		})
+
+		if !isRoundup && counterpartyIBAN != "" && savingsIBANs[counterpartyIBAN] {
+			category = "Transfer"
+		}
+
+		tx := bills.BankTransaction{
+			NtryRef:          entry.NtryRef,
+			AcctSvcrRef:      entry.NtryDtls.TxDtls.Refs.AcctSvcrRef,
+			Amount:           entry.Amt.Value,
+			Currency:         entry.Amt.Ccy,
+			Direction:        entry.CdtDbtInd,
+			Status:           entry.Sts,
+			BookingDate:      entry.BookgDt.Dt,
+			ValueDate:        entry.ValDt.Dt,
+			Description:      desc,
+			Category:         category,
+			IsSavingsRoundup: isRoundup,
+			UserID:           userID,
+		}
 
 		if tx.Category == "Other" && tx.Direction == "DBIT" && !tx.IsSavingsRoundup {
 			aiPending = append(aiPending, tx)
@@ -6827,6 +6852,10 @@ func tryAutoGenerateReport(userID, period string) (string, string, string, error
 	}
 	for _, t := range bankTxs {
 		if t.BookingDate >= periodStart && t.BookingDate <= periodEnd {
+			if t.Category == "Transfer" || t.Category == "Savings" {
+				dataLines = append(dataLines, fmt.Sprintf("BANK | %s | %s | TRANSFER | €%.2f | %s", t.BookingDate, t.Category, t.Amount, t.Description))
+				continue
+			}
 			dir := "OUT"
 			if t.Direction == "CRDT" {
 				dir = "IN"
