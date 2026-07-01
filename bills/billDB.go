@@ -285,16 +285,17 @@ var seedCategories = map[string]string{
 	"benzin": "Transport", "nafta": "Transport", "orlen": "Transport", "shell": "Transport",
 	"esso": "Transport", "omv": "Transport", "slovnaft": "Transport", "train": "Transport",
 	"bus": "Transport", "mhd": "Transport", "parking": "Transport", "dialnica": "Transport",
-	"highway":    "Transport",
+	"highway": "Transport", "zssk": "Transport",
 	"cinemacity": "Entertainment", "cinema": "Entertainment", "bowlicheck": "Entertainment",
 	"bowling": "Entertainment", "theatre": "Entertainment", "concert": "Entertainment",
 	"festival": "Entertainment", "sport": "Entertainment", "fitnes": "Entertainment",
 	"gym": "Entertainment", "netflix": "Entertainment", "hbo": "Entertainment",
 	"spotify": "Entertainment", "steam": "Entertainment", "playstation": "Entertainment",
-	"ticket": "Entertainment",
-	"zara":   "Shopping", "h&m": "Shopping", "primark": "Shopping", "mall": "Shopping",
+	"ticket": "Entertainment", "fitness": "Entertainment",
+	"zara": "Shopping", "h&m": "Shopping", "primark": "Shopping", "mall": "Shopping",
 	"ikea": "Shopping", "decathlon": "Shopping", "alza": "Shopping", "nay": "Shopping",
 	"notino": "Shopping", "aboutyou": "Shopping", "zalando": "Shopping", "amazon": "Shopping",
+	"aupark": "Shopping", "prior": "Shopping",
 	"telekom": "Utilities", "orange": "Utilities", "o2": "Utilities", "electric": "Utilities",
 	"gas": "Utilities", "water": "Utilities", "internet": "Utilities", "spp": "Utilities",
 	"zsd": "Utilities", "zse": "Utilities", "vse": "Utilities", "teplo": "Utilities",
@@ -401,6 +402,15 @@ func SaveSavingsIBAN(userID string, iban string) {
 	)
 }
 
+func matchSeedKeyword(desc string) (string, bool) {
+	for keyword, category := range seedCategories {
+		if strings.Contains(desc, keyword) {
+			return category, true
+		}
+	}
+	return "", false
+}
+
 func CategorizeBankTransaction(tx BankTransaction) string {
 	if tx.IsSavingsRoundup {
 		return "Savings"
@@ -416,7 +426,18 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 		return cat
 	}
 
+	if cat, found := matchSeedKeyword(desc); found {
+		return cat
+	}
+
 	if strings.Contains(desc, "platba kartou") {
+		parts := strings.SplitN(tx.Description, "|", 2)
+		if len(parts) == 2 {
+			merchantDesc := strings.ToLower(strings.TrimSpace(parts[1]))
+			if cat, found := matchSeedKeyword(merchantDesc); found {
+				return cat
+			}
+		}
 		return categorizeCardPayment(tx)
 	}
 

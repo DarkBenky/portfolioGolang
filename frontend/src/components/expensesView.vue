@@ -526,7 +526,7 @@ const latestReport = ref(null)
 const reportDialog = ref(false)
 const viewingReport = ref(null)
 
-const allCategories = ['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Food', 'Transportation', 'Education', 'Other']
+const allCategories = ['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Transfer', 'Food', 'Transportation', 'Education', 'Other']
 
 const categoryColors = {
   Food: '#FF6384', Transportation: '#36A2EB', Entertainment: '#FFCE56',
@@ -534,7 +534,7 @@ const categoryColors = {
   Education: '#C9CBCF', Other: '#B0BEC5', Income: '#4CAF50',
   Groceries: '#8BC34A', Dining: '#FF7043', Transport: '#29B6F6', Savings: '#AB47BC',
   Investments: '#00BCD4', Subscriptions: '#E040FB', Insurance: '#607D8B',
-  Housing: '#795548', Snacks: '#FF9800', Services: '#9E9E9E'
+  Housing: '#795548', Snacks: '#FF9800', Services: '#9E9E9E', Transfer: '#78909C'
 }
 
 const unifiedHeaders = [
