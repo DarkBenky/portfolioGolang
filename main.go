@@ -6716,7 +6716,9 @@ func tryAutoGenerateReport(userID, period string) (string, string, string, error
 		return "", "", "", err
 	}
 	if exists {
-		return periodStart, periodEnd, "", fmt.Errorf("report already exists")
+		if delErr := bills.DeleteExpenseReportForPeriod(userID, period, periodStart, periodEnd); delErr != nil {
+			log.Printf("Error deleting old report for regeneration: %v", delErr)
+		}
 	}
 
 	expenses, _ := bills.GetExpensesByUserID(userID)
@@ -6849,9 +6851,6 @@ func generateExpenseReport(c echo.Context) error {
 
 	periodStart, periodEnd, summary, err := tryAutoGenerateReport(userID, period)
 	if err != nil {
-		if err.Error() == "report already exists" {
-			return c.JSON(http.StatusConflict, map[string]string{"error": "Report already exists for this period"})
-		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 

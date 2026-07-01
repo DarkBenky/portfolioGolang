@@ -573,6 +573,12 @@ func ReportExistsForPeriod(userID, period, periodStart, periodEnd string) (bool,
 	return count > 0, err
 }
 
+func DeleteExpenseReportForPeriod(userID, period, periodStart, periodEnd string) error {
+	query := `DELETE FROM expense_reports WHERE user_id = ? AND period = ? AND period_start = ? AND period_end = ?`
+	_, err := db.Exec(query, userID, period, periodStart, periodEnd)
+	return err
+}
+
 func GetAllUserIDs() ([]string, error) {
 	query := `SELECT DISTINCT user_id FROM expenses UNION SELECT DISTINCT user_id FROM bank_transactions`
 	rows, err := db.Query(query)
