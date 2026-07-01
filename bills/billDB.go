@@ -290,7 +290,7 @@ var seedCategories = map[string]string{
 	"poistovna": "Insurance", "insurance": "Insurance", "poistenie": "Insurance",
 	"allianz": "Insurance", "kooperativa": "Insurance", "union": "Insurance", "general": "Insurance",
 	"najom": "Housing", "rent": "Housing", "hypotek": "Housing", "mortgage": "Housing",
-	"fond oprav": "Housing", "sprava": "Housing",
+	"fond oprav": "Housing", "sprava": "Housing", "byt": "Housing",
 	"ishares": "Investments", "vanguard": "Investments", "spdr": "Investments",
 	"xtrackers": "Investments", "lyxor": "Investments", "amundi": "Investments",
 	"invesco": "Investments", "wisdomtree": "Investments",

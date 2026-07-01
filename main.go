@@ -6593,6 +6593,23 @@ func importBankXML(c echo.Context) error {
 
 	for _, entry := range doc.BkToCstmrStmt.Stmt.Entries {
 		desc := entry.NtryDtls.TxDtls.RmtInf.Ustrd
+
+		counterpartyName := entry.NtryDtls.TxDtls.RltdPties.CdtrAcct.Nm
+		if counterpartyName == "" {
+			counterpartyName = entry.NtryDtls.TxDtls.RltdPties.Cdtr.Nm
+		}
+		if entry.CdtDbtInd == "CRDT" {
+			counterpartyName = entry.NtryDtls.TxDtls.RltdPties.DbtrAcct.Nm
+			if counterpartyName == "" {
+				counterpartyName = entry.NtryDtls.TxDtls.RltdPties.Dbtr.Nm
+			}
+		}
+
+		if desc == "" && counterpartyName != "" {
+			desc = counterpartyName
+		} else if desc != "" && counterpartyName != "" {
+			desc = desc + " | " + counterpartyName
+		}
 		if desc == "" {
 			desc = "No description"
 		}
