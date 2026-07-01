@@ -13,7 +13,10 @@ var db *sql.DB
 
 func InitBillDB(database *sql.DB) error {
 	db = database
-	return createTables()
+	if err := createTables(); err != nil {
+		return err
+	}
+	return seedMerchantCategories()
 }
 
 type Expense struct {
@@ -85,6 +88,27 @@ func createTables() error {
 	_, err = db.Exec(createReportTable)
 	if err != nil {
 		return fmt.Errorf("error creating expense_reports table: %v", err)
+	}
+
+	createMerchantCategoryTable := `
+	CREATE TABLE IF NOT EXISTS merchant_categories (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		merchant_key TEXT NOT NULL,
+		category TEXT NOT NULL,
+		user_id TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'seed',
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(merchant_key, user_id)
+	);`
+
+	_, err = db.Exec(createMerchantCategoryTable)
+	if err != nil {
+		return fmt.Errorf("error creating merchant_categories table: %v", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_merchant_categories_key ON merchant_categories(merchant_key)`)
+	if err != nil {
+		return fmt.Errorf("error creating merchant_categories index: %v", err)
 	}
 
 	return nil
@@ -222,6 +246,120 @@ type BankTransaction struct {
 	UserID           string  `json:"user_id"`
 }
 
+func NormalizeMerchantKey(desc string) string {
+	lower := strings.ToLower(strings.TrimSpace(desc))
+	words := strings.Fields(lower)
+	if len(words) == 0 {
+		return lower
+	}
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	return strings.Join(words, " ")
+}
+
+var seedCategories = map[string]string{
+	"tesco": "Groceries", "lidl": "Groceries", "billa": "Groceries", "kaufland": "Groceries",
+	"albert": "Groceries", "coop": "Groceries", "kraj": "Groceries", "merkury": "Groceries",
+	"fresh": "Groceries", "jednota": "Groceries", "dm drogerie": "Groceries", "ter": "Groceries",
+	"chilantro": "Dining", "unas food": "Dining", "restaurant": "Dining", "bistro": "Dining",
+	"pizza": "Dining", "burger": "Dining", "sushi": "Dining", "kebab": "Dining",
+	"food truck": "Dining", "foodtruck": "Dining", "cafe": "Dining", "coffee": "Dining",
+	"starbucks": "Dining", "mc donald": "Dining", "mcdonald": "Dining", "kfc": "Dining",
+	"bageta": "Dining", "obcerstvenie": "Dining",
+	"bolt.eu": "Transport", "uber": "Transport", "taxi": "Transport", "fuel": "Transport",
+	"benzin": "Transport", "nafta": "Transport", "orlen": "Transport", "shell": "Transport",
+	"esso": "Transport", "omv": "Transport", "slovnaft": "Transport", "train": "Transport",
+	"bus": "Transport", "mhd": "Transport", "parking": "Transport", "dialnica": "Transport",
+	"highway":    "Transport",
+	"cinemacity": "Entertainment", "cinema": "Entertainment", "bowlicheck": "Entertainment",
+	"bowling": "Entertainment", "theatre": "Entertainment", "concert": "Entertainment",
+	"festival": "Entertainment", "sport": "Entertainment", "fitnes": "Entertainment",
+	"gym": "Entertainment", "netflix": "Entertainment", "hbo": "Entertainment",
+	"spotify": "Entertainment", "steam": "Entertainment", "playstation": "Entertainment",
+	"ticket": "Entertainment",
+	"zara":   "Shopping", "h&m": "Shopping", "primark": "Shopping", "mall": "Shopping",
+	"ikea": "Shopping", "decathlon": "Shopping", "alza": "Shopping", "nay": "Shopping",
+	"notino": "Shopping", "aboutyou": "Shopping", "zalando": "Shopping", "amazon": "Shopping",
+	"telekom": "Utilities", "orange": "Utilities", "o2": "Utilities", "electric": "Utilities",
+	"gas": "Utilities", "water": "Utilities", "internet": "Utilities", "spp": "Utilities",
+	"zsd": "Utilities", "zse": "Utilities", "vse": "Utilities", "teplo": "Utilities",
+	"pharmacy": "Healthcare", "lekaren": "Healthcare", "doctor": "Healthcare",
+	"hospital": "Healthcare", "nemocnica": "Healthcare", "poliklinika": "Healthcare",
+	"zubar": "Healthcare", "dentist": "Healthcare", "benu": "Healthcare", "dr max": "Healthcare",
+	"poistovna": "Insurance", "insurance": "Insurance", "poistenie": "Insurance",
+	"allianz": "Insurance", "kooperativa": "Insurance", "union": "Insurance", "general": "Insurance",
+	"najom": "Housing", "rent": "Housing", "hypotek": "Housing", "mortgage": "Housing",
+	"fond oprav": "Housing", "sprava": "Housing",
+	"ishares": "Investments", "vanguard": "Investments", "spdr": "Investments",
+	"xtrackers": "Investments", "lyxor": "Investments", "amundi": "Investments",
+	"invesco": "Investments", "wisdomtree": "Investments",
+	"msci world": "Investments", "ftse all-world": "Investments",
+	"msci acwi": "Investments", "s&p 500": "Investments",
+	"disney": "Subscriptions", "prime video": "Subscriptions",
+	"google one": "Subscriptions", "icloud": "Subscriptions", "dropbox": "Subscriptions",
+	"office 365": "Subscriptions", "domain": "Subscriptions", "hosting": "Subscriptions",
+	"vps": "Subscriptions",
+}
+
+func seedMerchantCategories() error {
+	for keyword, category := range seedCategories {
+		_, err := db.Exec(
+			`INSERT OR IGNORE INTO merchant_categories (merchant_key, category, user_id, source) VALUES (?, ?, '', 'seed')`,
+			keyword, category,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func GetCachedCategory(merchantKey string, userID string) (string, bool) {
+	var category string
+	err := db.QueryRow(
+		`SELECT category FROM merchant_categories WHERE merchant_key = ? AND user_id = ?`,
+		merchantKey, userID,
+	).Scan(&category)
+	if err == nil {
+		return category, true
+	}
+	err = db.QueryRow(
+		`SELECT category FROM merchant_categories WHERE merchant_key = ? AND user_id = ''`,
+		merchantKey,
+	).Scan(&category)
+	if err == nil {
+		return category, true
+	}
+	return "", false
+}
+
+func SaveMerchantCategory(merchantKey string, category string, userID string, source string) {
+	_, _ = db.Exec(
+		`INSERT OR REPLACE INTO merchant_categories (merchant_key, category, user_id, source) VALUES (?, ?, ?, ?)`,
+		merchantKey, category, userID, source,
+	)
+}
+
+func SaveUserMerchantCategory(description string, category string, userID string) {
+	key := NormalizeMerchantKey(description)
+	if key == "" || category == "" || category == "Other" {
+		return
+	}
+	SaveMerchantCategory(key, category, userID, "user")
+}
+
+var validCategories = map[string]bool{
+	"Groceries": true, "Dining": true, "Transport": true, "Entertainment": true,
+	"Shopping": true, "Utilities": true, "Healthcare": true, "Insurance": true,
+	"Housing": true, "Investments": true, "Subscriptions": true, "Income": true,
+	"Savings": true, "Services": true, "Snacks": true, "Other": true,
+}
+
+func ValidCategory(category string) bool {
+	return validCategories[category]
+}
+
 func CategorizeBankTransaction(tx BankTransaction) string {
 	if tx.IsSavingsRoundup {
 		return "Savings"
@@ -231,33 +369,10 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 	}
 
 	desc := strings.ToLower(tx.Description)
+	key := NormalizeMerchantKey(desc)
 
-	if looksLikeInvestment(desc) {
-		return "Investments"
-	}
-
-	if looksLikeSubscription(desc) {
-		return "Subscriptions"
-	}
-
-	categoryKeywords := map[string][]string{
-		"Groceries":     {"tesco", "lidl", "billa", "kaufland", "albert", "coop", "kraj", "merkury", "fresh", "jednota", "dm drogerie", "ter"},
-		"Dining":        {"chilantro", "unas food", "restaurant", "bistro", "pizza", "burger", "sushi", "kebab", "food truck", "foodtruck", "cafe", "coffee", "starbucks", "mc donald", "mcdonald", "kfc", "bageta", "obcerstvenie"},
-		"Transport":     {"bolt.eu", "uber", "taxi", "fuel", "benzin", "nafta", "orlen", "shell", "esso", "omv", "slovnaft", "train", "bus", "mhd", "parking", "dialnica", "highway"},
-		"Entertainment": {"cinemacity", "cinema", "bowlicheck", "bowling", "theatre", "concert", "festival", "sport", "fitnes", "gym", "netflix", "hbo", "spotify", "steam", "playstation", "ticket"},
-		"Shopping":      {"zara", "h&m", "primark", "mall", "ikea", "decathlon", "alza", "nay", "notino", "aboutyou", "zalando", "amazon"},
-		"Utilities":     {"telekom", "orange", "o2", "electric", "gas", "water", "internet", "spp", "zsd", "zse", "vse", "teplo"},
-		"Healthcare":    {"pharmacy", "lekaren", "doctor", "hospital", "nemocnica", "poliklinika", "zubar", "dentist", "benu", "dr max"},
-		"Insurance":     {"poistovna", "insurance", "poistenie", "allianz", "kooperativa", "union", "general"},
-		"Housing":       {"najom", "rent", "hypotek", "mortgage", "fond oprav", "sprava"},
-	}
-
-	for category, keywords := range categoryKeywords {
-		for _, kw := range keywords {
-			if strings.Contains(desc, kw) {
-				return category
-			}
-		}
+	if cat, found := GetCachedCategory(key, tx.UserID); found {
+		return cat
 	}
 
 	if strings.Contains(desc, "platba kartou") {
@@ -265,57 +380,6 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 	}
 
 	return "Other"
-}
-
-func looksLikeInvestment(desc string) bool {
-	investmentPatterns := []string{
-		"ishares", "vanguard", "spdr", "xtrackers", "lyxor", "amundi",
-		"invesco", "wisdomtree", "etf", "acc etf", "dist etf",
-		"world acc", "msci world", "s&p 500", "nasdaq", "emerging markets",
-		"core msci", "msci acwi", "ftse all-world",
-	}
-	for _, p := range investmentPatterns {
-		if strings.Contains(desc, p) {
-			return true
-		}
-	}
-	descUpper := strings.ToUpper(desc)
-	for i := 0; i < len(descUpper)-11; i++ {
-		sub := descUpper[i : i+12]
-		if len(sub) >= 12 {
-			c0 := sub[0]
-			c1 := sub[1]
-			if (c0 >= 'A' && c0 <= 'Z') && (c1 >= 'A' && c1 <= 'Z') {
-				rest := sub[2:]
-				allAlnum := true
-				for _, c := range []byte(rest) {
-					if !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
-						allAlnum = false
-						break
-					}
-				}
-				if allAlnum {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func looksLikeSubscription(desc string) bool {
-	subKeywords := []string{
-		"subscription", "recurring", "monthly", "annual",
-		"netflix", "spotify", "hbo", "disney", "prime video",
-		"google one", "icloud", "dropbox", "office 365",
-		"domain", "hosting", "vps", "server",
-	}
-	for _, kw := range subKeywords {
-		if strings.Contains(desc, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 func categorizeCardPayment(tx BankTransaction) string {
@@ -512,7 +576,11 @@ func UpdateBankTransaction(tx BankTransaction) error {
 		savingsInt = 1
 	}
 	_, err := db.Exec(query, tx.Description, tx.Category, savingsInt, tx.ID, tx.UserID)
-	return err
+	if err != nil {
+		return err
+	}
+	SaveUserMerchantCategory(tx.Description, tx.Category, tx.UserID)
+	return nil
 }
 
 func DeleteBankTransaction(id int, userID string) error {

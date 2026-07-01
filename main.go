@@ -6500,6 +6500,60 @@ type CamtRmtInf struct {
 	Ustrd string `xml:"Ustrd"`
 }
 
+func categorizeWithAI(description string, userID string) string {
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return "Other"
+	}
+
+	prompt := fmt.Sprintf(`Classify this bank transaction into exactly one category from this list: Groceries, Dining, Transport, Entertainment, Shopping, Utilities, Healthcare, Insurance, Housing, Investments, Subscriptions, Services, Snacks, Other.
+
+Transaction description: %s
+
+Reply with ONLY the category name, nothing else.`, description)
+
+	reqBody := OpenRouterRequest{
+		Model: "deepseek/deepseek-v4-flash",
+		Messages: []OpenRouterMessage{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	jsonBody, _ := json.Marshal(reqBody)
+	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return "Other"
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("HTTP-Referer", "http://localhost:8085")
+	httpReq.Header.Set("X-Title", "Portfolio Expense Tracker")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "Other"
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var orResp OpenRouterResponse
+	if err := json.Unmarshal(respBody, &orResp); err != nil {
+		return "Other"
+	}
+
+	if len(orResp.Choices) == 0 {
+		return "Other"
+	}
+
+	category := strings.TrimSpace(orResp.Choices[0].Message.Content)
+	if bills.ValidCategory(category) {
+		bills.SaveMerchantCategory(bills.NormalizeMerchantKey(description), category, userID, "llm")
+		return category
+	}
+	return "Other"
+}
+
 func importBankXML(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
@@ -6535,6 +6589,7 @@ func importBankXML(c echo.Context) error {
 
 	imported := 0
 	skipped := 0
+	var aiPending []bills.BankTransaction
 
 	for _, entry := range doc.BkToCstmrStmt.Stmt.Entries {
 		desc := entry.NtryDtls.TxDtls.RmtInf.Ustrd
@@ -6558,6 +6613,10 @@ func importBankXML(c echo.Context) error {
 		tx.IsSavingsRoundup = strings.Contains(strings.ToLower(tx.Description), "drobne bokom")
 		tx.Category = bills.CategorizeBankTransaction(tx)
 
+		if tx.Category == "Other" && tx.Direction == "DBIT" && !tx.IsSavingsRoundup {
+			aiPending = append(aiPending, tx)
+		}
+
 		added, err := bills.ImportBankTransaction(tx)
 		if err != nil {
 			log.Printf("Error importing transaction %s: %v", tx.NtryRef, err)
@@ -6568,6 +6627,19 @@ func importBankXML(c echo.Context) error {
 		} else {
 			skipped++
 		}
+	}
+
+	if len(aiPending) > 0 {
+		go func(txs []bills.BankTransaction, uid string) {
+			log.Printf("Running AI categorization for %d uncategorized transactions", len(txs))
+			for _, tx := range txs {
+				aiCategory := categorizeWithAI(tx.Description, uid)
+				if aiCategory != "Other" {
+					log.Printf("AI categorized '%s' as %s", tx.Description[:min(50, len(tx.Description))], aiCategory)
+				}
+				time.Sleep(300 * time.Millisecond)
+			}
+		}(aiPending, userID)
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
