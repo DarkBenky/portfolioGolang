@@ -280,6 +280,178 @@ Keep it focused on the big picture. The detailed per-holding news will be append
     return {"user_id": user_id, "date": date, "summary": combined_summary, "sentiment": average_sentiment}
 
 
+def _extract_json_from_text(text):
+    import re
+    text = text.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*\n?', '', text)
+        text = re.sub(r'\n?```\s*$', '', text)
+    first_brace = text.find('{')
+    if first_brace == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(first_brace, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\':
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[first_brace:i + 1]
+    return None
+
+
+def generate_running_summary(holding_summaries, sector_data, date, window_days, max_tokens=8192):
+    if not holding_summaries:
+        return {
+            "user_id": "",
+            "date": date,
+            "window_days": window_days,
+            "summary": f"No holding data available for the last {window_days} days.",
+            "sentiment": 0.0,
+            "sector_predictions": [],
+            "theme_predictions": [],
+        }
+
+    sentiments = [hs.get("sentiment", 0.0) for hs in holding_summaries]
+    average_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+    sentiment_label = "Bullish" if average_sentiment > 0.2 else "Bearish" if average_sentiment < -0.2 else "Neutral"
+
+    ticker_briefs = []
+    max_brief_chars = 12000
+    current_chars = 0
+    for hs in holding_summaries[:40]:
+        ticker = hs.get("ticker", "???")
+        summary = hs.get("summary", "")
+        sent = hs.get("sentiment", 0.0)
+        tlabel = "Bullish" if sent > 0.2 else "Bearish" if sent < -0.2 else "Neutral"
+        snippet = summary[:400].replace("\n", " ").strip()
+        brief = f"{ticker} [{tlabel} {sent:.2f}]: {snippet}"
+        if current_chars + len(brief) > max_brief_chars:
+            break
+        ticker_briefs.append(brief)
+        current_chars += len(brief) + 2
+
+    ticker_brief_block = "\n\n".join(ticker_briefs)
+
+    sectors_block = ""
+    if sector_data:
+        sector_lines = []
+        for sector_name, sector_info in sector_data.items():
+            tickers_list = sector_info.get("tickers", [])
+            alloc = sector_info.get("allocation", 0)
+            sector_lines.append(f"{sector_name} ({alloc:.1f}% of portfolio): {', '.join(tickers_list[:10])}")
+        sectors_block = "\n".join(sector_lines)
+
+    prompt = f"""You are a senior financial analyst producing a running summary report covering the last {window_days} days ending {date}.
+
+## Ticker Summaries Across the Period
+{ticker_brief_block}
+
+## Portfolio Sector Allocation
+{sectors_block if sectors_block else "No sector data available."}
+
+Overall portfolio sentiment across the window: {sentiment_label} ({average_sentiment:.2f})
+
+Produce a comprehensive report. You MUST respond ONLY with a valid JSON object using this exact schema:
+
+{{
+  "executive_summary": "3-4 sentence overview of the most impactful developments across the entire {window_days}-day window. Include specific facts, dates, numbers, and company names.",
+  "key_themes": [
+    {{ "theme": "Theme Name", "description": "2-3 sentences describing the theme with supporting evidence from the data.", "impact_sentiment": 0.5 }}
+  ],
+  "sector_predictions": [
+    {{
+      "sector": "Sector Name",
+      "scenarios": [
+        {{ "label": "Very Positive", "probability": 10, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Positive", "probability": 35, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Neutral", "probability": 30, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Negative", "probability": 20, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Very Negative", "probability": 5, "description": "What would drive this outcome and its impact." }}
+      ]
+    }}
+  ],
+  "theme_predictions": [
+    {{
+      "theme": "Theme Name",
+      "scenarios": [
+        {{ "label": "Very Positive", "probability": 10, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Positive", "probability": 30, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Neutral", "probability": 35, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Negative", "probability": 20, "description": "What would drive this outcome and its impact." }},
+        {{ "label": "Very Negative", "probability": 5, "description": "What would drive this outcome and its impact." }}
+      ]
+    }}
+  ],
+  "portfolio_outlook": {{
+    "scenarios": [
+      {{ "label": "Very Positive", "probability": 10, "description": "What would drive this outcome." }},
+      {{ "label": "Positive", "probability": 30, "description": "What would drive this outcome." }},
+      {{ "label": "Neutral", "probability": 35, "description": "What would drive this outcome." }},
+      {{ "label": "Negative", "probability": 20, "description": "What would drive this outcome." }},
+      {{ "label": "Very Negative", "probability": 5, "description": "What would drive this outcome." }}
+    ]
+  }}
+}}
+
+CRITICAL RULES:
+- Probabilities for each set of scenarios MUST sum to exactly 100.
+- impact_sentiment for themes must be between -1.0 and 1.0.
+- Identify 3-6 key themes. If no sector data is available, return empty array for sector_predictions.
+- Only include facts from the provided data. Do not invent information.
+- Respond ONLY with valid JSON. No markdown, no commentary, no code fences."""
+
+    try:
+        raw_response = _call_openrouter(prompt, max_tokens)
+        json_str = _extract_json_from_text(raw_response)
+        if not json_str:
+            print(f"Could not extract JSON from AI response. Raw: {raw_response[:500]}")
+            raise ValueError("No JSON found in response")
+
+        parsed = json.loads(json_str)
+
+        return {
+            "user_id": "",
+            "date": date,
+            "window_days": window_days,
+            "summary": parsed.get("executive_summary", ""),
+            "sentiment": average_sentiment,
+            "sector_predictions": parsed.get("sector_predictions", []),
+            "theme_predictions": parsed.get("theme_predictions", []),
+            "key_themes": parsed.get("key_themes", []),
+            "portfolio_outlook": parsed.get("portfolio_outlook", {}),
+        }
+
+    except Exception as e:
+        print(f"Error generating running summary: {e}")
+        fallback_exec = f"Over the last {window_days} days, your portfolio showed {sentiment_label.lower()} sentiment ({average_sentiment:.2f}). Key holdings included {', '.join(list(set(hs.get('ticker', '?') for hs in holding_summaries))[:10])}."
+        return {
+            "user_id": "",
+            "date": date,
+            "window_days": window_days,
+            "summary": fallback_exec,
+            "sentiment": average_sentiment,
+            "sector_predictions": [],
+            "theme_predictions": [],
+            "key_themes": [],
+            "portfolio_outlook": {},
+        }
+
+
 if __name__ == "__main__":
     test_news = [
         "Apple Q4 earnings beat: EPS $1.64 vs $1.58, revenue +8% YoY",

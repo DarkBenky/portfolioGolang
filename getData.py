@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 import re
 from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import convertCurrency, getPrice, getPriceDataOld
-from getSummary import summarize_daily_news, summarize_daily_portfolio_news, summarize_portfolio_from_holdings
+from getSummary import summarize_daily_news, summarize_daily_portfolio_news, summarize_portfolio_from_holdings, generate_running_summary
 from getStock import get_stock_data
 from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
 from datetime import datetime, timezone
@@ -382,6 +382,30 @@ def api_summarize_portfolio():
         max_tokens,
         user_id,
         date
+    )
+    result = future.result()
+    return flask.jsonify(result)
+
+@app.route('/api/running_summary', methods=['POST'])
+def api_running_summary():
+    data = flask.request.get_json()
+    user_id = data.get('user_id', '')
+    date = data.get('date', '')
+    holding_summaries = data.get('holding_summaries', [])
+    sector_data = data.get('sector_data', {})
+    window_days = data.get('window_days', 30)
+    max_tokens = data.get('max_tokens', 8192)
+
+    if not holding_summaries:
+        return flask.jsonify({'error': 'holding_summaries is required'}), 400
+
+    future = executor.submit(
+        generate_running_summary,
+        holding_summaries,
+        sector_data,
+        date,
+        window_days,
+        max_tokens,
     )
     result = future.result()
     return flask.jsonify(result)

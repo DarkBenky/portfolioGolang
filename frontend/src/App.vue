@@ -271,6 +271,13 @@
               @click="activeView = 'tradingView'"
             />
             <v-list-item
+              prepend-icon="mdi-chart-timeline-variant"
+              title="Running Summary"
+              value="runningSummary"
+              :active="activeView === 'runningSummary'"
+              @click="activeView = 'runningSummary'"
+            />
+            <v-list-item
               prepend-icon="mdi-receipt"
               title="Expenses"
               value="expenses"
@@ -721,6 +728,22 @@
                 <div class="text-body-2 text-grey mb-3">No AI portfolio summary yet</div>
                 <v-btn size="small" variant="tonal" color="primary" :loading="summaryGenerating" @click="generateSummary" prepend-icon="mdi-magic">Generate AI Summary</v-btn>
               </v-card>
+            </v-col>
+          </v-row>
+
+          <v-row v-if="runningSummary || activeView === 'dashboard'" class="mt-4">
+            <v-col cols="12">
+              <RunningSummaryCard
+                :sentiment-score="runningSummary?.sentiment || 0"
+                :summary="runningSummary?.summary || ''"
+                :date="runningSummary?.date || ''"
+                :window-days="runningSummary?.window_days || 30"
+                :key-themes="runningSummary?.theme_predictions || []"
+                :generating="runningSummaryGenerating"
+                :has-data="!!runningSummary"
+                @view-full="activeView = 'runningSummary'"
+                @generate="generateRunningSummary"
+              />
             </v-col>
           </v-row>
         </v-container>
@@ -1284,6 +1307,9 @@
         <v-container v-if="activeView == 'tradingView'" class="pa-0" fluid style="height: calc(100vh - 64px);">
           <TradingViewer />
         </v-container>
+        <v-container v-if="activeView === 'runningSummary'" fluid>
+          <RunningSummaryView :auth-token="getCookie('auth_token')" @updated="fetchRunningSummary" />
+        </v-container>
         <v-container v-if="activeView === 'expenses'" fluid class="pa-0">
           <ExpensesView />
         </v-container>
@@ -1301,6 +1327,8 @@ import CandleChart from './components/candleChart.vue'
 import BacktestChart from './components/backtestChart.vue'
 import HoldingView from './components/holdingView.vue'
 import SentimentCard from './components/sentimentCard.vue'
+import RunningSummaryCard from './components/RunningSummaryCard.vue'
+import RunningSummaryView from './components/RunningSummaryView.vue'
 import NewsFeed from './components/newsFeed.vue'
 import TradingViewer from './components/tradingViewer.vue'
 
@@ -1326,6 +1354,8 @@ export default {
     BacktestChart,
     HoldingView,
     SentimentCard,
+    RunningSummaryCard,
+    RunningSummaryView,
     NewsFeed,
     TradingViewer
   },
@@ -1336,6 +1366,9 @@ export default {
       portfolioHoldings: null,
       isAuthenticated: false,
       userEmail: '',
+      runningSummary: null,
+      runningSummaryGenerating: false,
+      runningSummaryWindowDays: 30,
 
       // Portfolio chart data
       portfolioData: [],
@@ -1632,11 +1665,14 @@ export default {
         this.fetchPortfolioSentiment()
       } else if ((newVal === 'dashboard' || newVal === 'holdings') && !this.portfolioSentiment) {
         this.fetchPortfolioSentiment()
+        this.fetchRunningSummary()
         if (this.topGainers.length === 0 && this.topLosers.length === 0) {
           this.fetchTopGainersLosers()
         }
       } else if (newVal === 'statistics' && !this.backtestData) {
         this.fetchBacktest()
+      } else if (newVal === 'runningSummary' && !this.runningSummary) {
+        this.fetchRunningSummary()
       }
     }
   },
@@ -1662,6 +1698,7 @@ export default {
         this.fetchPortfolioSentiment()
         this.fetchSentimentHistory()
         this.fetchTopGainersLosers()
+        this.fetchRunningSummary()
         if (this.activeView === 'news') {
           this.fetchPortfolioNews()
         }
@@ -2182,6 +2219,57 @@ export default {
         alert('Failed to generate summary. Ensure the Python backend is running.')
       } finally {
         this.summaryGenerating = false
+      }
+    },
+
+    async fetchRunningSummary() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/running-summary?window_days=${this.runningSummaryWindowDays}`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        )
+        if (response.ok) {
+          this.runningSummary = await response.json()
+        } else if (response.status === 404) {
+          this.runningSummary = null
+        }
+      } catch (error) {
+        console.error('Error fetching running summary:', error)
+      }
+    },
+
+    async generateRunningSummary() {
+      const token = this.getCookie('auth_token')
+      if (!token) return
+      this.runningSummaryGenerating = true
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/running-summary/generate`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: `window_days=${this.runningSummaryWindowDays}`
+          }
+        )
+        if (response.ok) {
+          this.runningSummary = await response.json()
+        } else if (response.status === 429) {
+          const err = await response.json()
+          alert(`Cooldown: ${err.error}. Try again in about ${err.retry_after_min} minute(s).`)
+        } else {
+          const err = await response.json()
+          alert(err.error || 'Failed to generate running summary')
+        }
+      } catch (error) {
+        console.error('Error generating running summary:', error)
+        alert('Failed to generate running summary. Ensure the Python backend is running.')
+      } finally {
+        this.runningSummaryGenerating = false
       }
     },
 

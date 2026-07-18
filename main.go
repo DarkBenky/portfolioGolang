@@ -56,6 +56,10 @@ var (
 	lastTickerSummaryGen   = make(map[string]time.Time)
 	lastTickerSummaryGenMu sync.Mutex
 	tickerSummaryCooldown  = 15 * time.Minute
+
+	lastRunningSummaryGen   = make(map[string]time.Time)
+	lastRunningSummaryGenMu sync.Mutex
+	runningSummaryCooldown  = 30 * time.Minute
 )
 
 func hashPasswordWithSalt(password string) string {
@@ -117,6 +121,17 @@ type PortfolioDailySentiment struct {
 	Date        string  `json:"date"`
 	Summary     string  `json:"summary"`
 	Sentiment   float64 `json:"sentiment"`
+}
+
+type RunningSummary struct {
+	Id                string  `json:"id"`
+	UserID            string  `json:"user_id"`
+	WindowDays        int     `json:"window_days"`
+	Date              string  `json:"date"`
+	Summary           string  `json:"summary"`
+	Sentiment         float64 `json:"sentiment"`
+	SectorPredictions string  `json:"sector_predictions"`
+	ThemePredictions  string  `json:"theme_predictions"`
 }
 
 type Asset struct {
@@ -1155,6 +1170,24 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS running_summary (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			window_days INTEGER NOT NULL DEFAULT 30,
+			date TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			sentiment REAL NOT NULL,
+			sector_predictions TEXT,
+			theme_predictions TEXT,
+			UNIQUE(user_id, window_days, date),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
 	// Crete Asset Details table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS asset_details (
@@ -1257,6 +1290,21 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_portfolio_daily_sentiment_date ON portfolio_daily_sentiment(date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_running_summary_user_id ON running_summary(user_id)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_running_summary_date ON running_summary(date)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_running_summary_user_window ON running_summary(user_id, window_days)`)
 	if err != nil {
 		return nil, err
 	}
@@ -2001,6 +2049,32 @@ func (database *DB) addSector(sector Sector) error {
 	return nil
 }
 
+func (database *DB) getSectorsByHolding(holdingID string) ([]Sector, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT name, percentage, id_holding
+		FROM sectors
+		WHERE id_holding = ?
+	`, holdingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sectors []Sector
+	for rows.Next() {
+		var s Sector
+		err := rows.Scan(&s.Name, &s.Percentage, &s.IdHolding)
+		if err != nil {
+			return nil, err
+		}
+		sectors = append(sectors, s)
+	}
+	return sectors, nil
+}
+
 func (database *DB) addRegion(region Region) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
@@ -2240,6 +2314,83 @@ func (database *DB) getRecentNewsForTicker(ticker string, limit int) ([]News, er
 		newsList = append(newsList, n)
 	}
 	return newsList, nil
+}
+
+func (database *DB) upsertRunningSummary(summary RunningSummary) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		INSERT INTO running_summary (id, user_id, window_days, date, summary, sentiment, sector_predictions, theme_predictions)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, window_days, date) DO UPDATE SET
+			summary = excluded.summary,
+			sentiment = excluded.sentiment,
+			sector_predictions = excluded.sector_predictions,
+			theme_predictions = excluded.theme_predictions
+	`, summary.Id, summary.UserID, summary.WindowDays, summary.Date, summary.Summary, summary.Sentiment, summary.SectorPredictions, summary.ThemePredictions)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *DB) getLatestRunningSummary(userID string, windowDays int) (*RunningSummary, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	var summary RunningSummary
+	err := database.QueryRow(`
+		SELECT id, user_id, window_days, date, summary, sentiment, COALESCE(sector_predictions, ''), COALESCE(theme_predictions, '')
+		FROM running_summary
+		WHERE user_id = ? AND window_days = ?
+		ORDER BY date DESC
+		LIMIT 1
+	`, userID, windowDays).Scan(&summary.Id, &summary.UserID, &summary.WindowDays, &summary.Date, &summary.Summary, &summary.Sentiment, &summary.SectorPredictions, &summary.ThemePredictions)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (database *DB) getRunningSummaryHistory(userID string, windowDays int, limit int) ([]RunningSummary, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT id, user_id, window_days, date, summary, sentiment, COALESCE(sector_predictions, ''), COALESCE(theme_predictions, '')
+		FROM running_summary
+		WHERE user_id = ? AND window_days = ?
+		ORDER BY date DESC
+		LIMIT ?
+	`, userID, windowDays, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []RunningSummary
+	for rows.Next() {
+		var s RunningSummary
+		err := rows.Scan(&s.Id, &s.UserID, &s.WindowDays, &s.Date, &s.Summary, &s.Sentiment, &s.SectorPredictions, &s.ThemePredictions)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, nil
 }
 
 func (database *DB) getAllUsers() ([]User, error) {
@@ -2905,6 +3056,22 @@ func updateSentimentsPeriodic(interval time.Duration) {
 			time.Sleep(1 * time.Second)
 		}
 
+		for _, user := range users {
+			go func(u User) {
+				for _, wd := range []int{7, 14, 30} {
+					log.Printf("Updating running summary for user %s (%d-day window)", u.Id, wd)
+					err := updateRunningSummaryForUser(u.Id, wd)
+					if err != nil {
+						log.Printf("Error updating running summary for user %s (%dd): %v", u.Id, wd, err)
+					} else {
+						log.Printf("Successfully updated running summary for user %s (%dd)", u.Id, wd)
+					}
+					time.Sleep(3 * time.Second)
+				}
+			}(user)
+			time.Sleep(2 * time.Second)
+		}
+
 		log.Println("Completed periodic sentiment/summary update cycle")
 	}
 }
@@ -3232,6 +3399,510 @@ func triggerHoldingSummary(c echo.Context) error {
 		"summary":   sentiment.Summary,
 		"date":      sentiment.Date,
 	})
+}
+
+func triggerRunningSummary(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	windowDaysStr := c.FormValue("window_days")
+	windowDays := 30
+	if windowDaysStr != "" {
+		if wd, err := strconv.Atoi(windowDaysStr); err == nil && wd > 0 {
+			windowDays = wd
+		}
+	}
+
+	cooldownKey := userID + "_" + windowDaysStr
+	lastRunningSummaryGenMu.Lock()
+	if devMode != "true" {
+		if last, ok := lastRunningSummaryGen[cooldownKey]; ok && time.Since(last) < runningSummaryCooldown {
+			remaining := runningSummaryCooldown - time.Since(last)
+			lastRunningSummaryGenMu.Unlock()
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"error":           "Please wait before generating another running summary",
+				"retry_after_min": int(remaining.Minutes()) + 1,
+			})
+		}
+	}
+	lastRunningSummaryGenMu.Unlock()
+
+	todayDate := time.Now().UTC().Format("2006-01-02")
+	startDate := time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
+
+	log.Printf("Running summary triggered by user %s for %d-day window ending %s", userID, windowDays, todayDate)
+
+	holdings, hErr := db.getHoldingsByUser(userID)
+	if hErr != nil {
+		log.Printf("Error getting holdings for running summary: %v", hErr)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to get holdings"})
+	}
+
+	tickerSet := make(map[string]bool)
+	var tickers []string
+	for _, h := range holdings {
+		if !tickerSet[h.Ticker] {
+			tickerSet[h.Ticker] = true
+			tickers = append(tickers, h.Ticker)
+		}
+	}
+
+	type HoldingSummary struct {
+		Ticker    string  `json:"ticker"`
+		Summary   string  `json:"summary"`
+		Sentiment float64 `json:"sentiment"`
+	}
+
+	var holdingSummaries []HoldingSummary
+	dbMutex.RLock()
+	for _, ticker := range tickers {
+		rows, qErr := db.Query(`
+			SELECT ticker, summary, sentiment FROM daily_sentiment
+			WHERE ticker = ? AND date >= ? AND date <= ?
+			ORDER BY date DESC
+			LIMIT 1
+		`, ticker, startDate, todayDate)
+		if qErr != nil {
+			continue
+		}
+		if rows.Next() {
+			var t string
+			var s string
+			var sent float64
+			if scanErr := rows.Scan(&t, &s, &sent); scanErr == nil {
+				holdingSummaries = append(holdingSummaries, HoldingSummary{
+					Ticker:    t,
+					Summary:   s,
+					Sentiment: sent,
+				})
+			}
+		}
+		rows.Close()
+	}
+	dbMutex.RUnlock()
+
+	sectorData := make(map[string]interface{})
+	for _, h := range holdings {
+		if !h.Etf {
+			continue
+		}
+		sectors, sErr := db.getSectorsByHolding(h.IdHolding)
+		if sErr != nil {
+			continue
+		}
+		for _, sec := range sectors {
+			if _, exists := sectorData[sec.Name]; !exists {
+				sectorData[sec.Name] = map[string]interface{}{
+					"allocation": 0.0,
+					"tickers":    []string{},
+				}
+			}
+			entry := sectorData[sec.Name].(map[string]interface{})
+			entry["allocation"] = entry["allocation"].(float64) + sec.Percentage
+			entry["tickers"] = append(entry["tickers"].([]string), h.Ticker)
+		}
+	}
+
+	requestBody := map[string]interface{}{
+		"user_id":           userID,
+		"date":              todayDate,
+		"window_days":       windowDays,
+		"holding_summaries": holdingSummaries,
+		"sector_data":       sectorData,
+		"max_tokens":        8192,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+	}
+
+	resp, err := http.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		log.Printf("Error calling running_summary API: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate running summary"})
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("Running summary API returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Running summary API failed"})
+	}
+
+	var result struct {
+		UserID            string                   `json:"user_id"`
+		Date              string                   `json:"date"`
+		WindowDays        int                      `json:"window_days"`
+		Summary           string                   `json:"summary"`
+		Sentiment         float64                  `json:"sentiment"`
+		SectorPredictions []map[string]interface{} `json:"sector_predictions"`
+		ThemePredictions  []map[string]interface{} `json:"theme_predictions"`
+		KeyThemes         []map[string]interface{} `json:"key_themes"`
+		PortfolioOutlook  map[string]interface{}   `json:"portfolio_outlook"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		log.Printf("Error decoding running summary response: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to parse running summary"})
+	}
+
+	sectorPredJSON, _ := json.Marshal(result.SectorPredictions)
+	themePredJSON, _ := json.Marshal(result.ThemePredictions)
+
+	combinedSummary := result.Summary
+
+	if len(result.KeyThemes) > 0 {
+		combinedSummary += "\n\n## Key Themes\n"
+		for _, t := range result.KeyThemes {
+			name, _ := t["theme"].(string)
+			desc, _ := t["description"].(string)
+			if name != "" {
+				combinedSummary += fmt.Sprintf("\n### %s\n%s\n", name, desc)
+			}
+		}
+	}
+
+	if len(result.SectorPredictions) > 0 {
+		combinedSummary += "\n\n## Sector Predictions\n"
+		for _, sp := range result.SectorPredictions {
+			sector, _ := sp["sector"].(string)
+			combinedSummary += fmt.Sprintf("\n### %s\n", sector)
+			if scenarios, ok := sp["scenarios"].([]interface{}); ok {
+				for _, sc := range scenarios {
+					if scMap, ok2 := sc.(map[string]interface{}); ok2 {
+						label, _ := scMap["label"].(string)
+						prob, _ := scMap["probability"].(float64)
+						desc, _ := scMap["description"].(string)
+						combinedSummary += fmt.Sprintf("- **%s** (%d%%): %s\n", label, int(prob), desc)
+					}
+				}
+			}
+		}
+	}
+
+	if result.PortfolioOutlook != nil {
+		combinedSummary += "\n\n## Portfolio Outlook\n"
+		if scenarios, ok := result.PortfolioOutlook["scenarios"].([]interface{}); ok {
+			for _, sc := range scenarios {
+				if scMap, ok2 := sc.(map[string]interface{}); ok2 {
+					label, _ := scMap["label"].(string)
+					prob, _ := scMap["probability"].(float64)
+					desc, _ := scMap["description"].(string)
+					combinedSummary += fmt.Sprintf("- **%s** (%d%%): %s\n", label, int(prob), desc)
+				}
+			}
+		}
+	}
+
+	rs := RunningSummary{
+		Id:                generateID(),
+		UserID:            userID,
+		WindowDays:        windowDays,
+		Date:              result.Date,
+		Summary:           combinedSummary,
+		Sentiment:         result.Sentiment,
+		SectorPredictions: string(sectorPredJSON),
+		ThemePredictions:  string(themePredJSON),
+	}
+
+	if err := db.upsertRunningSummary(rs); err != nil {
+		log.Printf("Error storing running summary: %v", err)
+	}
+
+	lastRunningSummaryGenMu.Lock()
+	lastRunningSummaryGen[cooldownKey] = time.Now()
+	lastRunningSummaryGenMu.Unlock()
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":            "Running summary generated successfully",
+		"id":                 rs.Id,
+		"window_days":        rs.WindowDays,
+		"date":               rs.Date,
+		"sentiment":          rs.Sentiment,
+		"summary":            rs.Summary,
+		"sector_predictions": result.SectorPredictions,
+		"theme_predictions":  result.ThemePredictions,
+		"portfolio_outlook":  result.PortfolioOutlook,
+	})
+}
+
+func getRunningSummary(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	windowDaysStr := c.QueryParam("window_days")
+	windowDays := 30
+	if windowDaysStr != "" {
+		if wd, err := strconv.Atoi(windowDaysStr); err == nil && wd > 0 {
+			windowDays = wd
+		}
+	}
+
+	date := c.QueryParam("date")
+	if date != "" {
+		dbMutex.RLock()
+		var rs RunningSummary
+		err := db.QueryRow(`
+			SELECT id, user_id, window_days, date, summary, sentiment, COALESCE(sector_predictions, ''), COALESCE(theme_predictions, '')
+			FROM running_summary
+			WHERE user_id = ? AND window_days = ? AND date = ?
+		`, userID, windowDays, date).Scan(&rs.Id, &rs.UserID, &rs.WindowDays, &rs.Date, &rs.Summary, &rs.Sentiment, &rs.SectorPredictions, &rs.ThemePredictions)
+		dbMutex.RUnlock()
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "No running summary found for that date"})
+		}
+		return c.JSON(http.StatusOK, formatRunningSummaryResponse(rs))
+	}
+
+	rs, err := db.getLatestRunningSummary(userID, windowDays)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "No running summary available. Generate one first."})
+	}
+
+	return c.JSON(http.StatusOK, formatRunningSummaryResponse(*rs))
+}
+
+func getRunningSummaryHistory(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	windowDaysStr := c.QueryParam("window_days")
+	windowDays := 30
+	if windowDaysStr != "" {
+		if wd, err := strconv.Atoi(windowDaysStr); err == nil && wd > 0 {
+			windowDays = wd
+		}
+	}
+
+	limitStr := c.QueryParam("limit")
+	limit := 90
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 365 {
+			limit = l
+		}
+	}
+
+	summaries, err := db.getRunningSummaryHistory(userID, windowDays, limit)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch running summary history"})
+	}
+
+	var response []map[string]interface{}
+	for _, rs := range summaries {
+		response = append(response, formatRunningSummaryResponse(rs))
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+func formatRunningSummaryResponse(rs RunningSummary) map[string]interface{} {
+	var sectorPredictions []map[string]interface{}
+	var themePredictions []map[string]interface{}
+
+	if rs.SectorPredictions != "" {
+		json.Unmarshal([]byte(rs.SectorPredictions), &sectorPredictions)
+	}
+	if rs.ThemePredictions != "" {
+		json.Unmarshal([]byte(rs.ThemePredictions), &themePredictions)
+	}
+
+	return map[string]interface{}{
+		"id":                 rs.Id,
+		"user_id":            rs.UserID,
+		"window_days":        rs.WindowDays,
+		"date":               rs.Date,
+		"summary":            rs.Summary,
+		"sentiment":          rs.Sentiment,
+		"sector_predictions": sectorPredictions,
+		"theme_predictions":  themePredictions,
+	}
+}
+
+func updateRunningSummaryForUser(userID string, windowDays int) error {
+	todayDate := time.Now().UTC().Format("2006-01-02")
+	startDate := time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
+
+	holdings, hErr := db.getHoldingsByUser(userID)
+	if hErr != nil {
+		return fmt.Errorf("error getting holdings: %v", hErr)
+	}
+
+	tickerSet := make(map[string]bool)
+	var tickers []string
+	for _, h := range holdings {
+		if !tickerSet[h.Ticker] {
+			tickerSet[h.Ticker] = true
+			tickers = append(tickers, h.Ticker)
+		}
+	}
+
+	type HoldingSummary struct {
+		Ticker    string  `json:"ticker"`
+		Summary   string  `json:"summary"`
+		Sentiment float64 `json:"sentiment"`
+	}
+
+	var holdingSummaries []HoldingSummary
+
+	dbMutex.RLock()
+	for _, ticker := range tickers {
+		rows, qErr := db.Query(`
+			SELECT ticker, summary, sentiment FROM daily_sentiment
+			WHERE ticker = ? AND date >= ? AND date <= ?
+			ORDER BY date DESC
+			LIMIT 1
+		`, ticker, startDate, todayDate)
+		if qErr != nil {
+			continue
+		}
+		if rows.Next() {
+			var t string
+			var s string
+			var sent float64
+			if scanErr := rows.Scan(&t, &s, &sent); scanErr == nil {
+				holdingSummaries = append(holdingSummaries, HoldingSummary{
+					Ticker:    t,
+					Summary:   s,
+					Sentiment: sent,
+				})
+			}
+		}
+		rows.Close()
+	}
+	dbMutex.RUnlock()
+
+	if len(holdingSummaries) == 0 {
+		return fmt.Errorf("no holding summaries available for the window")
+	}
+
+	sectorData := make(map[string]interface{})
+	for _, h := range holdings {
+		if !h.Etf {
+			continue
+		}
+		sectors, sErr := db.getSectorsByHolding(h.IdHolding)
+		if sErr != nil {
+			continue
+		}
+		for _, sec := range sectors {
+			if _, exists := sectorData[sec.Name]; !exists {
+				sectorData[sec.Name] = map[string]interface{}{
+					"allocation": 0.0,
+					"tickers":    []string{},
+				}
+			}
+			entry := sectorData[sec.Name].(map[string]interface{})
+			entry["allocation"] = entry["allocation"].(float64) + sec.Percentage
+			entry["tickers"] = append(entry["tickers"].([]string), h.Ticker)
+		}
+	}
+
+	requestBody := map[string]interface{}{
+		"user_id":           userID,
+		"date":              todayDate,
+		"window_days":       windowDays,
+		"holding_summaries": holdingSummaries,
+		"sector_data":       sectorData,
+		"max_tokens":        8192,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	resp, err := http.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("error calling running_summary API: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("running summary API returned status: %s", resp.Status)
+	}
+
+	var result struct {
+		UserID            string                   `json:"user_id"`
+		Date              string                   `json:"date"`
+		WindowDays        int                      `json:"window_days"`
+		Summary           string                   `json:"summary"`
+		Sentiment         float64                  `json:"sentiment"`
+		SectorPredictions []map[string]interface{} `json:"sector_predictions"`
+		ThemePredictions  []map[string]interface{} `json:"theme_predictions"`
+		KeyThemes         []map[string]interface{} `json:"key_themes"`
+		PortfolioOutlook  map[string]interface{}   `json:"portfolio_outlook"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return fmt.Errorf("error decoding running summary response: %v", err)
+	}
+
+	sectorPredJSON, _ := json.Marshal(result.SectorPredictions)
+	themePredJSON, _ := json.Marshal(result.ThemePredictions)
+
+	combinedSummary := result.Summary
+
+	if len(result.KeyThemes) > 0 {
+		combinedSummary += "\n\n## Key Themes\n"
+		for _, t := range result.KeyThemes {
+			name, _ := t["theme"].(string)
+			desc, _ := t["description"].(string)
+			if name != "" {
+				combinedSummary += fmt.Sprintf("\n### %s\n%s\n", name, desc)
+			}
+		}
+	}
+
+	if len(result.SectorPredictions) > 0 {
+		combinedSummary += "\n\n## Sector Predictions\n"
+		for _, sp := range result.SectorPredictions {
+			sector, _ := sp["sector"].(string)
+			combinedSummary += fmt.Sprintf("\n### %s\n", sector)
+			if scenarios, ok := sp["scenarios"].([]interface{}); ok {
+				for _, sc := range scenarios {
+					if scMap, ok2 := sc.(map[string]interface{}); ok2 {
+						label, _ := scMap["label"].(string)
+						prob, _ := scMap["probability"].(float64)
+						desc, _ := scMap["description"].(string)
+						combinedSummary += fmt.Sprintf("- **%s** (%d%%): %s\n", label, int(prob), desc)
+					}
+				}
+			}
+		}
+	}
+
+	if result.PortfolioOutlook != nil {
+		combinedSummary += "\n\n## Portfolio Outlook\n"
+		if scenarios, ok := result.PortfolioOutlook["scenarios"].([]interface{}); ok {
+			for _, sc := range scenarios {
+				if scMap, ok2 := sc.(map[string]interface{}); ok2 {
+					label, _ := scMap["label"].(string)
+					prob, _ := scMap["probability"].(float64)
+					desc, _ := scMap["description"].(string)
+					combinedSummary += fmt.Sprintf("- **%s** (%d%%): %s\n", label, int(prob), desc)
+				}
+			}
+		}
+	}
+
+	rs := RunningSummary{
+		Id:                generateID(),
+		UserID:            userID,
+		WindowDays:        windowDays,
+		Date:              result.Date,
+		Summary:           combinedSummary,
+		Sentiment:         result.Sentiment,
+		SectorPredictions: string(sectorPredJSON),
+		ThemePredictions:  string(themePredJSON),
+	}
+
+	return db.upsertRunningSummary(rs)
 }
 
 // holding actions
@@ -7318,6 +7989,10 @@ func main() {
 	protected.GET("/portfolio/sentiment_history", GetPortfolioSentimentHistory)
 
 	protected.POST("/news/generate-summary", triggerNewsSummary)
+
+	protected.POST("/running-summary/generate", triggerRunningSummary)
+	protected.GET("/running-summary", getRunningSummary)
+	protected.GET("/running-summary/history", getRunningSummaryHistory)
 
 	// Asset endpoints
 	protected.GET("/asset/sentiments", GetAssetSentiments)
