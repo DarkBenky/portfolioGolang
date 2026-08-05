@@ -345,7 +345,7 @@
                 <v-icon size="14" class="mr-1">mdi-robot</v-icon>AI EXPENSE REPORT
               </v-card-title>
               <v-card-text class="pa-2">
-                <p class="text-caption text-grey mb-2">Generate an AI-powered analysis of your spending patterns using DeepSeek via OpenRouter.</p>
+                <p class="text-caption text-grey mb-2">Generate an AI-powered analysis of your spending patterns using DeepSeek.</p>
                 <div class="d-flex ga-2 mb-3">
                   <v-btn color="primary" size="small" variant="tonal" :loading="reportLoading === 'week'" @click="generateReport('week')" prepend-icon="mdi-calendar-week">Weekly</v-btn>
                   <v-btn color="primary" size="small" variant="tonal" :loading="reportLoading === 'month'" @click="generateReport('month')" prepend-icon="mdi-calendar-month">Monthly</v-btn>

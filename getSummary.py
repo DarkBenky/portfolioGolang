@@ -1,38 +1,36 @@
 import requests
 import json
-from env import OPENROUTER_API_KEY, OPENROUTER_MODEL
+from env import DEEPSEEK_API_KEY, DEEPSEEK_MODEL
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
-def _call_openrouter(prompt, max_tokens=2048):
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
+def _call_deepseek(prompt, max_tokens=2048):
+    if not DEEPSEEK_API_KEY:
+        raise RuntimeError("DEEPSEEK_API_KEY not configured")
 
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": DEEPSEEK_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
     }
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "http://localhost:8085",
-        "X-Title": "Portfolio News Summary",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
     }
 
     try:
-        resp = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=90)
+        resp = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=90)
         if not resp.ok:
-            print(f"OpenRouter error body: {resp.text[:500]}")
+            print(f"DeepSeek error body: {resp.text[:500]}")
         resp.raise_for_status()
         data = resp.json()
         if data.get("choices") and len(data["choices"]) > 0:
             return data["choices"][0]["message"]["content"].strip()
-        print(f"OpenRouter empty choices, full response: {json.dumps(data)[:500]}")
+        print(f"DeepSeek empty choices, full response: {json.dumps(data)[:500]}")
         return ""
     except Exception as e:
-        print(f"OpenRouter API error: {e}")
+        print(f"DeepSeek API error: {e}")
         raise
 
 
@@ -99,13 +97,13 @@ Write 1-2 sentences about potential impact on stock price or what investors shou
 Focus only on facts from the articles. Include specific numbers, percentages, dates, and company names. Do not add speculation or make up information."""
 
     try:
-        summary_text = _call_openrouter(prompt, max_tokens)
+        summary_text = _call_deepseek(prompt, max_tokens)
         if not summary_text or len(summary_text) < 50:
             print(f"Warning: Model generated empty or short response. Using fallback.")
             summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
             summary_text += "\n".join([f"- {s}" for s in news_list[:5]])
     except Exception as e:
-        print(f"Error generating summary with OpenRouter: {e}")
+        print(f"Error generating summary with DeepSeek: {e}")
         summary_text = f"## Summary\n{ticker} had {len(news_list)} news items on {date}. Sentiment: {sentiment_label} ({average_sentiment:.2f})\n\n"
         summary_text += "\n".join([f"- {s}" for s in news_list[:5]])
 
@@ -168,11 +166,11 @@ Write 2-3 sentences about how these developments may affect the portfolio and wh
 Keep it focused on the big picture. The detailed per-holding summaries will be appended separately, so do not repeat individual article lists. Only include facts from the provided summaries. Do not speculate or invent information."""
 
     try:
-        ai_overview = _call_openrouter(prompt, max_tokens)
+        ai_overview = _call_deepseek(prompt, max_tokens)
         if not ai_overview or len(ai_overview) < 50:
             ai_overview = f"## Portfolio Summary\nYour portfolio had summarized news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
     except Exception as e:
-        print(f"Error generating portfolio overview with OpenRouter: {e}")
+        print(f"Error generating portfolio overview with DeepSeek: {e}")
         ai_overview = f"## Portfolio Summary\nYour portfolio had summarized news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
 
     combined_summary = f"Portfolio Update - {sentiment_label}\n\n{ai_overview}\n\n---\n\n## Individual Holdings Detail\n\n{per_ticker_detail}"
@@ -267,12 +265,12 @@ Write 2-3 sentences about how these developments may affect the portfolio and wh
 Keep it focused on the big picture. The detailed per-holding news will be appended separately, so do not repeat individual article lists. Only include facts from the provided summaries. Do not speculate or invent information."""
 
     try:
-        ai_overview = _call_openrouter(prompt, max_tokens)
+        ai_overview = _call_deepseek(prompt, max_tokens)
         if not ai_overview or len(ai_overview) < 50:
             print(f"Warning: Model generated empty or short portfolio overview. Using fallback.")
             ai_overview = f"## Portfolio Summary\nYour portfolio had news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
     except Exception as e:
-        print(f"Error generating portfolio overview with OpenRouter: {e}")
+        print(f"Error generating portfolio overview with DeepSeek: {e}")
         ai_overview = f"## Portfolio Summary\nYour portfolio had news across {len(unique_tickers)} holdings on {date}. Overall sentiment: {sentiment_label} ({average_sentiment:.2f}).\n\n## Market Impact\nReview individual holding details below for specific developments affecting your positions."
 
     combined_summary = f"Portfolio Update - {sentiment_label}\n\n{ai_overview}\n\n---\n\n## Individual Holdings Detail\n\n{per_ticker_detail}"
@@ -416,7 +414,7 @@ CRITICAL RULES:
 - Respond ONLY with valid JSON. No markdown, no commentary, no code fences."""
 
     try:
-        raw_response = _call_openrouter(prompt, max_tokens)
+        raw_response = _call_deepseek(prompt, max_tokens)
         json_str = _extract_json_from_text(raw_response)
         if not json_str:
             print(f"Could not extract JSON from AI response. Raw: {raw_response[:500]}")

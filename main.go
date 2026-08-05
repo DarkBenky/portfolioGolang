@@ -7172,7 +7172,7 @@ type CamtRmtInf struct {
 }
 
 func categorizeWithAI(description string, userID string) string {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
 	if apiKey == "" {
 		return "Other"
 	}
@@ -7183,22 +7183,20 @@ Transaction description: %s
 
 Reply with ONLY the category name, nothing else.`, description)
 
-	reqBody := OpenRouterRequest{
-		Model: "deepseek/deepseek-v4-flash",
-		Messages: []OpenRouterMessage{
+	reqBody := DeepSeekRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []DeepSeekMessage{
 			{Role: "user", Content: prompt},
 		},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
 		return "Other"
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "http://localhost:8085")
-	httpReq.Header.Set("X-Title", "Portfolio Expense Tracker")
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -7208,7 +7206,7 @@ Reply with ONLY the category name, nothing else.`, description)
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	var orResp OpenRouterResponse
+	var orResp DeepSeekResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return "Other"
 	}
@@ -7451,22 +7449,22 @@ func deleteBankTransaction(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "Transaction deleted"})
 }
 
-type OpenRouterMessage struct {
+type DeepSeekMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-type OpenRouterRequest struct {
-	Model    string              `json:"model"`
-	Messages []OpenRouterMessage `json:"messages"`
+type DeepSeekRequest struct {
+	Model    string            `json:"model"`
+	Messages []DeepSeekMessage `json:"messages"`
 }
 
-type OpenRouterChoice struct {
-	Message OpenRouterMessage `json:"message"`
+type DeepSeekChoice struct {
+	Message DeepSeekMessage `json:"message"`
 }
 
-type OpenRouterResponse struct {
-	Choices []OpenRouterChoice `json:"choices"`
+type DeepSeekResponse struct {
+	Choices []DeepSeekChoice `json:"choices"`
 }
 
 func computePeriodDates(period string) (string, string) {
@@ -7571,27 +7569,25 @@ Provide a concise report with these sections in plain text (no markdown):
 
 Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, totalIn, totalOut-totalIn, len(dataLines), categoryBreakdown, strings.Join(dataLines, "\n"))
 
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
 	if apiKey == "" {
-		return periodStart, periodEnd, "", fmt.Errorf("OpenRouter API key not configured")
+		return periodStart, periodEnd, "", fmt.Errorf("DeepSeek API key not configured")
 	}
 
-	reqBody := OpenRouterRequest{
-		Model: "deepseek/deepseek-v4-flash",
-		Messages: []OpenRouterMessage{
+	reqBody := DeepSeekRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []DeepSeekMessage{
 			{Role: "user", Content: prompt},
 		},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
 		return periodStart, periodEnd, "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("HTTP-Referer", "http://localhost:8085")
-	httpReq.Header.Set("X-Title", "Portfolio Expense Tracker")
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -7601,7 +7597,7 @@ Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, 
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	var orResp OpenRouterResponse
+	var orResp DeepSeekResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return periodStart, periodEnd, "", fmt.Errorf("failed to parse AI response")
 	}
