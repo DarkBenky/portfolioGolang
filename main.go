@@ -7188,6 +7188,7 @@ Reply with ONLY the category name, nothing else.`, description)
 		Messages: []DeepSeekMessage{
 			{Role: "user", Content: prompt},
 		},
+		Thinking: &DeepSeekThinking{Type: "disabled"},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
@@ -7206,6 +7207,9 @@ Reply with ONLY the category name, nothing else.`, description)
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "Other"
+	}
 	var orResp DeepSeekResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return "Other"
@@ -7457,6 +7461,11 @@ type DeepSeekMessage struct {
 type DeepSeekRequest struct {
 	Model    string            `json:"model"`
 	Messages []DeepSeekMessage `json:"messages"`
+	Thinking *DeepSeekThinking `json:"thinking,omitempty"`
+}
+
+type DeepSeekThinking struct {
+	Type string `json:"type"`
 }
 
 type DeepSeekChoice struct {
@@ -7465,6 +7474,13 @@ type DeepSeekChoice struct {
 
 type DeepSeekResponse struct {
 	Choices []DeepSeekChoice `json:"choices"`
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 
 func computePeriodDates(period string) (string, string) {
@@ -7579,6 +7595,7 @@ Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, 
 		Messages: []DeepSeekMessage{
 			{Role: "user", Content: prompt},
 		},
+		Thinking: &DeepSeekThinking{Type: "disabled"},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
@@ -7589,21 +7606,31 @@ Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return periodStart, periodEnd, "", err
+		return periodStart, periodEnd, "", fmt.Errorf("AI request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return periodStart, periodEnd, "", fmt.Errorf("failed to read AI response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return periodStart, periodEnd, "", fmt.Errorf("AI API error (status %d): %s", resp.StatusCode, truncateStr(string(respBody), 500))
+	}
 	var orResp DeepSeekResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
-		return periodStart, periodEnd, "", fmt.Errorf("failed to parse AI response")
+		return periodStart, periodEnd, "", fmt.Errorf("failed to parse AI response: %v", err)
 	}
 
 	if len(orResp.Choices) == 0 {
 		return periodStart, periodEnd, "", fmt.Errorf("no response from AI model")
+	}
+
+	if orResp.Choices[0].Message.Content == "" {
+		return periodStart, periodEnd, "", fmt.Errorf("AI returned empty content")
 	}
 
 	summary := orResp.Choices[0].Message.Content
