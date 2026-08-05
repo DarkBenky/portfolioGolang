@@ -1,5 +1,6 @@
 venv/
 .env
+main
 __pycache__/
 *.pyc
 Anaconda*.sh

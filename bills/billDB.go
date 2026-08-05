@@ -163,14 +163,17 @@ func DeleteExpense(expenseID int, userID string) error {
 	return err
 }
 
-func UpdateExpense(expense Expense) error {
+func UpdateExpense(expense Expense) (int, error) {
 	if expense.Date == "" {
 		currentTime := time.Now()
 		expense.Date = currentTime.Format("2006-01-02")
 	}
 	query := `UPDATE expenses SET description = ?, amount = ?, category = ?, date = ? WHERE id = ? AND user_id = ?`
-	_, err := db.Exec(query, expense.Description, expense.Amount, expense.Category, expense.Date, expense.ID, expense.UserID)
-	return err
+	if _, err := db.Exec(query, expense.Description, expense.Amount, expense.Category, expense.Date, expense.ID, expense.UserID); err != nil {
+		return 0, err
+	}
+	SaveUserMerchantCategory(expense.Description, expense.Category, expense.UserID)
+	return recategorizeMatching(expense.Description, expense.Category, expense.UserID, "expenses", "", expense.ID)
 }
 
 func GroupExpensesByCategory(userID string) (map[string]float64, error) {
@@ -647,18 +650,77 @@ func GetBankTransactionStats(userID string) (map[string]interface{}, error) {
 	return stats, nil
 }
 
-func UpdateBankTransaction(tx BankTransaction) error {
+func UpdateBankTransaction(tx BankTransaction) (int, error) {
 	query := `UPDATE bank_transactions SET description = ?, category = ?, is_savings_roundup = ? WHERE id = ? AND user_id = ?`
 	savingsInt := 0
 	if tx.IsSavingsRoundup {
 		savingsInt = 1
 	}
-	_, err := db.Exec(query, tx.Description, tx.Category, savingsInt, tx.ID, tx.UserID)
-	if err != nil {
-		return err
+	if _, err := db.Exec(query, tx.Description, tx.Category, savingsInt, tx.ID, tx.UserID); err != nil {
+		return 0, err
 	}
 	SaveUserMerchantCategory(tx.Description, tx.Category, tx.UserID)
-	return nil
+	return recategorizeMatching(tx.Description, tx.Category, tx.UserID, "bank_transactions", "direction = 'DBIT' AND is_savings_roundup = 0", tx.ID)
+}
+
+func recategorizeMatching(desc, category, userID, table, where string, excludeID int) (int, error) {
+	key := NormalizeMerchantKey(desc)
+	if key == "" || category == "" || category == "Other" {
+		return 0, nil
+	}
+
+	selectQuery := fmt.Sprintf(`SELECT id, description FROM %s WHERE user_id = ?`, table)
+	selectArgs := []interface{}{userID}
+	if where != "" {
+		selectQuery += " AND " + where
+	}
+	if excludeID > 0 {
+		selectQuery += " AND id != ?"
+		selectArgs = append(selectArgs, excludeID)
+	}
+
+	rows, err := db.Query(selectQuery, selectArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		var d string
+		if err := rows.Scan(&id, &d); err != nil {
+			continue
+		}
+		if NormalizeMerchantKey(d) == key {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	updateQuery := fmt.Sprintf(`UPDATE %s SET category = ? WHERE user_id = ?`, table)
+	updateArgs := []interface{}{category, userID}
+	if where != "" {
+		updateQuery += " AND " + where
+	}
+	if excludeID > 0 {
+		updateQuery += " AND id != ?"
+		updateArgs = append(updateArgs, excludeID)
+	}
+	updateQuery += fmt.Sprintf(` AND id IN (%s)`, placeholders)
+	for _, id := range ids {
+		updateArgs = append(updateArgs, id)
+	}
+
+	result, err := db.Exec(updateQuery, updateArgs...)
+	if err != nil {
+		return 0, err
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
 }
 
 func DeleteBankTransaction(id int, userID string) error {

@@ -7424,11 +7424,12 @@ func updateBankTransaction(c echo.Context) error {
 	}
 
 	tx.UserID = userID
-	if err := bills.UpdateBankTransaction(tx); err != nil {
+	updated, err := bills.UpdateBankTransaction(tx)
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update transaction"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "Transaction updated"})
+	return c.JSON(http.StatusOK, map[string]interface{}{"message": "Transaction updated", "updated": updated})
 }
 
 func deleteBankTransaction(c echo.Context) error {
@@ -7802,11 +7803,12 @@ func updateExpense(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing or invalid required fields"})
 	}
 
-	if err := bills.UpdateExpense(expense); err != nil {
+	updated, err := bills.UpdateExpense(expense)
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update expense"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"message": "Expense updated successfully"})
+	return c.JSON(http.StatusOK, map[string]interface{}{"message": "Expense updated successfully", "updated": updated})
 }
 
 func deleteExpense(c echo.Context) error {

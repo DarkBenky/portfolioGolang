@@ -901,7 +901,10 @@ async function saveEdit() {
       })
     }
     if (res.ok) {
-      showSnackbar(editForm.value.source === 'bank' ? 'Transaction updated' : (editForm.value.id ? 'Expense updated' : 'Expense added'), 'success')
+      const data = await res.json().catch(() => ({}))
+      const base = editForm.value.source === 'bank' ? 'Transaction updated' : (editForm.value.id ? 'Expense updated' : 'Expense added')
+      const extra = data.updated > 0 ? ` (also updated ${data.updated} past transaction${data.updated === 1 ? '' : 's'})` : ''
+      showSnackbar(base + extra, 'success')
       editDialog.value = false
       await Promise.all([fetchExpenses(), fetchBankTransactions(), fetchSavingsTransactions()])
     } else {
@@ -933,7 +936,9 @@ async function quickRecategorize(item, newCategory) {
     }
     if (res.ok) {
       item.category = newCategory
-      showSnackbar('Category updated', 'success')
+      const data = await res.json().catch(() => ({}))
+      const extra = data.updated > 0 ? ` (also updated ${data.updated} past transaction${data.updated === 1 ? '' : 's'})` : ''
+      showSnackbar('Category updated' + extra, 'success')
     } else {
       showSnackbar('Failed to update category', 'error')
     }
