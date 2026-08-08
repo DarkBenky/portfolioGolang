@@ -35,14 +35,16 @@ import (
 
 // hashPasswordWithSalt creates a SHA-256 hash of password+salt to stay within bcrypt's 72-byte limit
 var (
-	SALT           string
-	JWT_SECRET     string
-	JWT_EXPIRY     = 7 * 24 * time.Hour
-	BASE_URL       string
-	devMode        string
-	db             *DB
-	dbMutex        sync.RWMutex
-	candleInterval int64 = 600 // 10 minutes
+	SALT       string
+	JWT_SECRET string
+	JWT_EXPIRY = 7 * 24 * time.Hour
+	BASE_URL   string
+	devMode    string
+	db         *DB
+	dbMutex    sync.RWMutex
+
+	priceRetention5mSec int64 = 30 * 86400
+	priceRetention1hSec int64 = 365 * 86400
 
 	loginAttempts    = make(map[string][]time.Time)
 	loginAttemptsMu  sync.Mutex
@@ -179,14 +181,13 @@ type News struct {
 }
 
 type Price struct {
-	IdPrice string
-	Ticker  string
-	Date    string
-	Open    float64
-	Close   float64
-	High    float64
-	Low     float64
-	Volume  int64
+	Ticker string
+	Date   int64
+	Open   float64
+	Close  float64
+	High   float64
+	Low    float64
+	Volume int64
 }
 
 func (detail *AssetDetails) hashDetails() string {
@@ -347,9 +348,9 @@ func (database *DB) topGainersLosers(userId string, topN int, interval time.Dura
 			SELECT close
 			FROM prices
 			WHERE ticker = ?
-			AND CAST(date AS INTEGER) >= ?
-			AND CAST(date AS INTEGER) <= ?
-			ORDER BY CAST(date AS INTEGER) ASC
+			AND date >= ?
+			AND date <= ?
+			ORDER BY date ASC
 		`, holding.Ticker, startTimestamp, endTimestamp)
 		if err != nil {
 			continue
@@ -597,14 +598,13 @@ func fetchPrices(ticker string) error {
 		}
 
 		price := Price{
-			IdPrice: generateID(),
-			Ticker:  ticker,
-			Date:    strconv.FormatInt(candle.Timestamp, 10),
-			Open:    candle.Open,
-			High:    candle.High,
-			Low:     candle.Low,
-			Close:   candle.Close,
-			Volume:  int64(candle.Volume),
+			Ticker: ticker,
+			Date:   candle.Timestamp,
+			Open:   candle.Open,
+			High:   candle.High,
+			Low:    candle.Low,
+			Close:  candle.Close,
+			Volume: int64(candle.Volume),
 		}
 		validPrices = append(validPrices, price)
 	}
@@ -1019,6 +1019,11 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec("PRAGMA auto_vacuum=INCREMENTAL;")
+	if err != nil {
+		return nil, err
+	}
+
 	// Create Users table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
@@ -1124,16 +1129,15 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	// Create Prices table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS prices (
-			id_price TEXT PRIMARY KEY,
 			ticker TEXT NOT NULL,
-			date TEXT NOT NULL,
+			date INTEGER NOT NULL,
 			open REAL NOT NULL,
 			close REAL NOT NULL,
 			high REAL NOT NULL,
 			low REAL NOT NULL,
 			volume INTEGER NOT NULL,
-			UNIQUE(ticker, date)
-		)
+			PRIMARY KEY (ticker, date)
+		) WITHOUT ROWID
 	`)
 	if err != nil {
 		return nil, err
@@ -1254,21 +1258,6 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker)`)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date)`)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(ticker, date)`)
-	if err != nil {
-		return nil, err
-	}
-
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_daily_sentiment_ticker ON daily_sentiment(ticker)`)
 	if err != nil {
 		return nil, err
@@ -1325,6 +1314,218 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func migratePricesTable(database *sql.DB) (bool, error) {
+	rows, err := database.Query(`PRAGMA table_info(prices)`)
+	if err != nil {
+		return false, err
+	}
+	hasIDPrice := false
+	for rows.Next() {
+		var cid, name, ctype, notnull, dflt, pk interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+			if s, ok := name.(string); ok && s == "id_price" {
+				hasIDPrice = true
+			}
+		}
+	}
+	rows.Close()
+	if !hasIDPrice {
+		return false, nil
+	}
+
+	log.Println("Migrating prices table to compact schema...")
+	tx, err := database.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`DROP TABLE IF EXISTS prices_new`)
+	if err != nil {
+		return false, err
+	}
+
+	_, err = tx.Exec(`
+		CREATE TABLE prices_new (
+			ticker TEXT NOT NULL,
+			date INTEGER NOT NULL,
+			open REAL NOT NULL,
+			close REAL NOT NULL,
+			high REAL NOT NULL,
+			low REAL NOT NULL,
+			volume INTEGER NOT NULL,
+			PRIMARY KEY (ticker, date)
+		) WITHOUT ROWID
+	`)
+	if err != nil {
+		return false, err
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO prices_new (ticker, date, open, close, high, low, volume)
+		SELECT ticker, CAST(date AS INTEGER), open, close, high, low, volume FROM prices
+	`)
+	if err != nil {
+		return false, err
+	}
+
+	_, err = tx.Exec(`DROP TABLE prices`)
+	if err != nil {
+		return false, err
+	}
+
+	_, err = tx.Exec(`ALTER TABLE prices_new RENAME TO prices`)
+	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	log.Println("Prices table migration complete")
+	return true, nil
+}
+
+func compactTicker(ticker string, cutoff int64, bucketSecs int64) error {
+	rows, err := db.Query(`
+		SELECT date, open, close, high, low, volume
+		FROM prices
+		WHERE ticker = ? AND date < ?
+		ORDER BY date ASC
+	`, ticker, cutoff)
+	if err != nil {
+		return err
+	}
+
+	type aggRow struct {
+		open   float64
+		high   float64
+		low    float64
+		close  float64
+		volume int64
+	}
+
+	buckets := make(map[int64]*aggRow)
+	var bucketList []int64
+
+	for rows.Next() {
+		var date int64
+		var open, closeP, high, low float64
+		var volume int64
+		if err := rows.Scan(&date, &open, &closeP, &high, &low, &volume); err != nil {
+			rows.Close()
+			return err
+		}
+		b := date - (date % bucketSecs)
+		if a, ok := buckets[b]; ok {
+			if high > a.high {
+				a.high = high
+			}
+			if low < a.low {
+				a.low = low
+			}
+			a.close = closeP
+			a.volume += volume
+		} else {
+			buckets[b] = &aggRow{open: open, high: high, low: low, close: closeP, volume: volume}
+			bucketList = append(bucketList, b)
+		}
+	}
+	rows.Close()
+
+	if len(bucketList) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO prices (ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+
+	for _, b := range bucketList {
+		a := buckets[b]
+		if _, err := stmt.Exec(ticker, b, a.open, a.close, a.high, a.low, a.volume); err != nil {
+			stmt.Close()
+			return err
+		}
+	}
+	stmt.Close()
+
+	if _, err := tx.Exec(`DELETE FROM prices WHERE ticker = ? AND date < ? AND date % ? != 0`, ticker, cutoff, bucketSecs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func compactPrices() error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	now := time.Now().UTC().Unix()
+	cutoffHourly := (now - priceRetention5mSec) / 3600 * 3600
+	cutoffDaily := (now - priceRetention1hSec) / 86400 * 86400
+
+	rows, err := db.Query(`SELECT DISTINCT ticker FROM prices`)
+	if err != nil {
+		return err
+	}
+	var tickers []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			rows.Close()
+			return err
+		}
+		tickers = append(tickers, t)
+	}
+	rows.Close()
+
+	for _, ticker := range tickers {
+		if err := compactTicker(ticker, cutoffHourly, 3600); err != nil {
+			return err
+		}
+		if err := compactTicker(ticker, cutoffDaily, 86400); err != nil {
+			return err
+		}
+	}
+
+	_, err = db.Exec(`PRAGMA incremental_vacuum`)
+	return err
+}
+
+func compactPricesPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Starting periodic price compaction...")
+		if err := compactPrices(); err != nil {
+			log.Printf("Error compacting prices: %v", err)
+			continue
+		}
+		log.Println("Completed periodic price compaction")
+	}
+}
+
+func hasOldPriceData(ticker string, cutoff int64) (bool, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM prices WHERE ticker = ? AND date < ?`, ticker, cutoff).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func populateFakeData(database *sql.DB) error {
@@ -2588,16 +2789,16 @@ func (database *DB) addPrices(prices []Price) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, price := range prices {
-		_, err = stmt.Exec(price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
+		_, err = stmt.Exec(price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
 		if err != nil {
-			log.Printf("Error adding price for %s on %s: %v", price.Ticker, price.Date, err)
+			log.Printf("Error adding price for %s on %d: %v", price.Ticker, price.Date, err)
 		}
 	}
 
@@ -2609,24 +2810,6 @@ func (database *DB) addPrices(prices []Price) error {
 	return nil
 }
 
-func addPriceIndexes(database *sql.DB) error {
-	indexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker)`,
-		`CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date)`,
-		`CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices(ticker, date)`,
-	}
-
-	for _, indexSQL := range indexes {
-		_, err := database.Exec(indexSQL)
-		if err != nil {
-			return fmt.Errorf("error creating index: %v", err)
-		}
-	}
-
-	log.Println("Price indexes created successfully")
-	return nil
-}
-
 func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
@@ -2635,11 +2818,11 @@ func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
 	now := time.Now().UTC().Unix()
 
 	err := database.QueryRow(`
-		SELECT MAX(CAST(date AS INTEGER))
+		SELECT MAX(date)
 		FROM prices
 		WHERE ticker = ?
-		AND CAST(date AS INTEGER) > 0
-		AND CAST(date AS INTEGER) <= ?
+		AND date > 0
+		AND date <= ?
 	`, ticker, now).Scan(&lastTimestamp)
 
 	if err != nil && err != sql.ErrNoRows {
@@ -2884,123 +3067,6 @@ func healthCheck(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{
 		"status": "healthy",
 	})
-}
-
-func fillInBetweenPricesPeriodic(interval time.Duration) {
-	// TODO: make the filling better to avoid the big triangles in between missing data
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		log.Println("Starting periodic news fetch for all tickers...")
-
-		tickers, err := db.getUniqueTickers()
-		if err != nil {
-			log.Printf("Error getting unique tickers: %v", err)
-			continue
-		}
-
-		log.Printf("Found %d unique tickers to fetch news for", len(tickers))
-
-		for _, tickerSymbol := range tickers {
-			// Fetch news for each ticker in a goroutine
-			go func(ticker string) {
-				log.Printf("Filling in between prices for %s...", ticker)
-				err := FillInBetweenPrices(ticker)
-				if err != nil {
-					log.Printf("Error filling in between prices for %s: %v", ticker, err)
-				} else {
-					log.Printf("Successfully filled in between prices for %s", ticker)
-				}
-			}(tickerSymbol)
-			// Small delay to avoid overwhelming the API
-			time.Sleep(2500 * time.Millisecond)
-		}
-	}
-}
-
-func FillInBetweenPrices(Ticker string) error {
-	dbMutex.Lock()
-	rows, err := db.Query(`
-		SELECT date, open, close, high, low, volume
-		FROM prices
-		WHERE ticker = ?
-		ORDER BY CAST(date AS INTEGER) ASC
-	`, Ticker)
-	dbMutex.Unlock()
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var existingPrices []Price
-	for rows.Next() {
-		var p Price
-		err := rows.Scan(&p.Date, &p.Open, &p.Close, &p.High, &p.Low, &p.Volume)
-		if err != nil {
-			return err
-		}
-		existingPrices = append(existingPrices, p)
-	}
-
-	var missingPrices []Price
-	for index, price := range existingPrices {
-		if index == 0 {
-			continue
-		}
-		prevPrice := existingPrices[index-1]
-		currentDateInt, _ := strconv.ParseInt(price.Date, 10, 64)
-		prevDateInt, _ := strconv.ParseInt(prevPrice.Date, 10, 64)
-
-		if currentDateInt-prevDateInt > candleInterval*2 {
-			fillsNeeded := (currentDateInt-prevDateInt)/candleInterval - 1
-			for i := int64(1); i <= fillsNeeded; i++ {
-				missingDate := prevDateInt + i*candleInterval
-				interpolatedPrice := prevPrice.Close + (price.Open-prevPrice.Close)*float64(i)/float64(fillsNeeded+1)
-				missingPrice := Price{
-					IdPrice: generateID(),
-					Ticker:  Ticker,
-					Date:    strconv.FormatInt(missingDate, 10),
-					Open:    interpolatedPrice,
-					Close:   interpolatedPrice,
-					High:    interpolatedPrice,
-					Low:     interpolatedPrice,
-					Volume:  0,
-				}
-				missingPrices = append(missingPrices, missingPrice)
-			}
-		}
-	}
-
-	if len(missingPrices) > 0 {
-		dbMutex.Lock()
-		defer dbMutex.Unlock()
-
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (id_price, ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-
-		for _, price := range missingPrices {
-			_, err = stmt.Exec(price.IdPrice, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
-			if err != nil {
-				log.Printf("Error adding interpolated price for %s on %s: %v", Ticker, price.Date, err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // updateSentimentsPeriodic runs once per day to generate daily summaries for tickers and portfolios
@@ -4250,8 +4316,8 @@ func GetPortfolioValue(c echo.Context) error {
 		SELECT ticker, close 
 		FROM prices 
 		WHERE ticker IN (` + buildPlaceholders(len(tickers)) + `) 
-		AND CAST(date AS INTEGER) = (
-			SELECT MAX(CAST(date AS INTEGER)) 
+		AND date = (
+			SELECT MAX(date) 
 			FROM prices p2 
 			WHERE p2.ticker = prices.ticker
 		)
@@ -4368,9 +4434,9 @@ func GetPortfolioValueHistory(c echo.Context) error {
 		SELECT ticker, date, open, high, low, close, volume
 		FROM prices
 		WHERE ticker IN (%s)
-		AND CAST(date AS INTEGER) >= ?
-		AND CAST(date AS INTEGER) <= ?
-		ORDER BY CAST(date AS INTEGER) ASC
+		AND date >= ?
+		AND date <= ?
+		ORDER BY date ASC
 	`, placeholders)
 
 	dbMutex.Lock()
@@ -4395,18 +4461,18 @@ func GetPortfolioValueHistory(c echo.Context) error {
 	bucketData := make(map[int64]map[string]*PriceData)
 
 	for rows.Next() {
-		var ticker, dateStr string
+		var ticker string
+		var date int64
 		var open, high, low, closePrice float64
 		var volume int64
 
-		err := rows.Scan(&ticker, &dateStr, &open, &high, &low, &closePrice, &volume)
+		err := rows.Scan(&ticker, &date, &open, &high, &low, &closePrice, &volume)
 		if err != nil {
 			log.Printf("Error scanning price row: %v", err)
 			continue
 		}
 
-		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
-		bucket := (timestamp / intervalSeconds) * intervalSeconds
+		bucket := (date / intervalSeconds) * intervalSeconds
 
 		if bucketData[bucket] == nil {
 			bucketData[bucket] = make(map[string]*PriceData)
@@ -4694,7 +4760,7 @@ func getPortfolioValueChange(c echo.Context) error {
 		err := db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
-			ORDER BY CAST(date AS INTEGER) DESC 
+			ORDER BY date DESC 
 			LIMIT 1
 		`, holding.Ticker).Scan(&latestPrice)
 		dbMutex.Unlock()
@@ -4709,8 +4775,8 @@ func getPortfolioValueChange(c echo.Context) error {
 		err = db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
-			AND CAST(date AS INTEGER) <= ?
-			ORDER BY CAST(date AS INTEGER) DESC 
+			AND date <= ?
+			ORDER BY date DESC 
 			LIMIT 1
 		`, holding.Ticker, oneDayAgo).Scan(&previousPrice)
 		dbMutex.Unlock()
@@ -4784,7 +4850,7 @@ func getAssetValueChange(c echo.Context) error {
 	err = db.QueryRow(`
 		SELECT close FROM prices 
 		WHERE ticker = ? 
-		ORDER BY CAST(date AS INTEGER) DESC 
+		ORDER BY date DESC 
 		LIMIT 1
 	`, assetTicker).Scan(&latestPrice)
 	dbMutex.Unlock()
@@ -4799,8 +4865,8 @@ func getAssetValueChange(c echo.Context) error {
 	err = db.QueryRow(`
 		SELECT close FROM prices 
 		WHERE ticker = ?
-		AND CAST(date AS INTEGER) <= ?
-		ORDER BY CAST(date AS INTEGER) DESC 
+		AND date <= ?
+		ORDER BY date DESC 
 		LIMIT 1
 	`, assetTicker, oneDayAgo).Scan(&previousPrice)
 	dbMutex.Unlock()
@@ -5234,7 +5300,7 @@ func getPortfolioAllocation(c echo.Context) error {
 		err := db.QueryRow(`
 			SELECT close FROM prices 
 			WHERE ticker = ? 
-			ORDER BY CAST(date AS INTEGER) DESC 
+			ORDER BY date DESC 
 			LIMIT 1
 		`, h.Ticker).Scan(&latestPrice)
 		dbMutex.Unlock()
@@ -5386,7 +5452,7 @@ func GetTickerValue(c echo.Context) error {
 	err = db.QueryRow(`
 		SELECT close FROM prices
 		WHERE ticker = ?
-		ORDER BY CAST(date AS INTEGER) DESC
+		ORDER BY date DESC
 		LIMIT 1
 	`, ticker).Scan(&latestPrice)
 	dbMutex.Unlock()
@@ -5451,9 +5517,9 @@ func GetAssetPriceHistory(c echo.Context) error {
 		SELECT date, open, high, low, close, volume
 		FROM prices
 		WHERE ticker = ?
-		AND CAST(date AS INTEGER) >= ?
-		AND CAST(date AS INTEGER) <= ?
-		ORDER BY CAST(date AS INTEGER) ASC
+		AND date >= ?
+		AND date <= ?
+		ORDER BY date ASC
 	`
 
 	dbMutex.Lock()
@@ -5477,18 +5543,17 @@ func GetAssetPriceHistory(c echo.Context) error {
 	bucketData := make(map[int64]*PriceData)
 
 	for rows.Next() {
-		var dateStr string
+		var date int64
 		var open, high, low, closePrice float64
 		var volume int64
 
-		err := rows.Scan(&dateStr, &open, &high, &low, &closePrice, &volume)
+		err := rows.Scan(&date, &open, &high, &low, &closePrice, &volume)
 		if err != nil {
 			log.Printf("Error scanning price row: %v", err)
 			continue
 		}
 
-		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
-		bucket := (timestamp / intervalSeconds) * intervalSeconds
+		bucket := (date / intervalSeconds) * intervalSeconds
 
 		if bucketData[bucket] == nil {
 			bucketData[bucket] = &PriceData{
@@ -5764,9 +5829,9 @@ func getPortfolioStats(c echo.Context) error {
 		SELECT ticker, date, close
 		FROM prices
 		WHERE ticker IN (%s)
-		AND CAST(date AS INTEGER) >= ?
-		AND CAST(date AS INTEGER) <= ?
-		ORDER BY CAST(date AS INTEGER) ASC
+		AND date >= ?
+		AND date <= ?
+		ORDER BY date ASC
 	`, placeholders)
 
 	dbMutex.Lock()
@@ -5785,13 +5850,13 @@ func getPortfolioStats(c echo.Context) error {
 	dayPrices := make(map[int64][]DayPrice)
 
 	for rows.Next() {
-		var ticker, dateStr string
+		var ticker string
+		var date int64
 		var closePrice float64
-		if err := rows.Scan(&ticker, &dateStr, &closePrice); err != nil {
+		if err := rows.Scan(&ticker, &date, &closePrice); err != nil {
 			continue
 		}
-		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
-		dayBucket := (timestamp / 86400) * 86400
+		dayBucket := (date / 86400) * 86400
 		dayPrices[dayBucket] = append(dayPrices[dayBucket], DayPrice{ticker, closePrice})
 	}
 
@@ -5913,9 +5978,9 @@ func getAssetStats(c echo.Context) error {
 		SELECT date, close
 		FROM prices
 		WHERE ticker = ?
-		AND CAST(date AS INTEGER) >= ?
-		AND CAST(date AS INTEGER) <= ?
-		ORDER BY CAST(date AS INTEGER) ASC
+		AND date >= ?
+		AND date <= ?
+		ORDER BY date ASC
 	`
 
 	dbMutex.Lock()
@@ -5930,14 +5995,13 @@ func getAssetStats(c echo.Context) error {
 	var timestamps []int64
 
 	for rows.Next() {
-		var dateStr string
+		var date int64
 		var closePrice float64
-		if err := rows.Scan(&dateStr, &closePrice); err != nil {
+		if err := rows.Scan(&date, &closePrice); err != nil {
 			continue
 		}
-		timestamp, _ := strconv.ParseInt(dateStr, 10, 64)
 		prices = append(prices, closePrice)
-		timestamps = append(timestamps, timestamp)
+		timestamps = append(timestamps, date)
 	}
 
 	if len(prices) == 0 {
@@ -6408,14 +6472,13 @@ func getOldHistoricPriceData(ticker string) ([]Price, error) {
 	var prices []Price
 	for _, candle := range response.History {
 		price := Price{
-			IdPrice: generateID(),
-			Ticker:  ticker,
-			Date:    strconv.FormatInt(candle.Timestamp, 10),
-			Open:    candle.Open,
-			High:    candle.High,
-			Low:     candle.Low,
-			Close:   candle.Close,
-			Volume:  int64(candle.Volume),
+			Ticker: ticker,
+			Date:   candle.Timestamp,
+			Open:   candle.Open,
+			High:   candle.High,
+			Low:    candle.Low,
+			Close:  candle.Close,
+			Volume: int64(candle.Volume),
 		}
 		prices = append(prices, price)
 	}
@@ -6522,6 +6585,10 @@ func fetchOldPriceDataPeriodic(interval time.Duration) {
 		}
 
 		for _, tickerSymbol := range tickers {
+			hasOld, err := hasOldPriceData(tickerSymbol, time.Now().UTC().Unix()-priceRetention5mSec)
+			if err == nil && hasOld {
+				continue
+			}
 			prices, err := getOldHistoricPriceData(tickerSymbol)
 			if err != nil {
 				log.Printf("Failed to fetch historic price data for %s: %v", tickerSymbol, err)
@@ -6749,7 +6816,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 	benchmarkValues := make(map[int64]float64)
 
 	for _, price := range benchmarkPrices {
-		timestamp, _ := strconv.ParseInt(price.Date, 10, 64)
+		timestamp := price.Date
 		if timestamp >= startTime.Unix() && timestamp <= endTime.Unix() {
 			timestamps = append(timestamps, timestamp)
 			benchmarkValues[timestamp] = price.Close
@@ -6770,7 +6837,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		var startPrice float64
 		minDiff := int64(math.MaxInt64)
 		for _, price := range prices {
-			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			priceTs := price.Date
 			diff := priceTs - startTime.Unix()
 			if diff >= 0 && diff < minDiff {
 				minDiff = diff
@@ -6807,7 +6874,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 			var closestPrice float64
 			minDiff := int64(math.MaxInt64)
 			for _, price := range prices {
-				priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+				priceTs := price.Date
 				diff := int64(math.Abs(float64(ts - priceTs)))
 				if diff < minDiff && priceTs <= ts {
 					minDiff = diff
@@ -6872,7 +6939,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		var endPrice float64
 		var maxTs int64 = -1
 		for _, price := range prices {
-			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			priceTs := price.Date
 			if priceTs <= endTime.Unix() && priceTs > maxTs {
 				maxTs = priceTs
 				endPrice = price.Close
@@ -6892,7 +6959,7 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		var endPrice float64
 		var maxTs int64 = -1
 		for _, price := range prices {
-			priceTs, _ := strconv.ParseInt(price.Date, 10, 64)
+			priceTs := price.Date
 			diff := priceTs - startTime.Unix()
 			if diff >= 0 && diff < minStartDiff {
 				minStartDiff = diff
@@ -6915,14 +6982,14 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 
 		var sortedPrices []Price
 		for _, p := range prices {
-			priceTs, _ := strconv.ParseInt(p.Date, 10, 64)
+			priceTs := p.Date
 			if priceTs >= startTime.Unix() && priceTs <= endTime.Unix() {
 				sortedPrices = append(sortedPrices, p)
 			}
 		}
 		sort.Slice(sortedPrices, func(i, j int) bool {
-			ts1, _ := strconv.ParseInt(sortedPrices[i].Date, 10, 64)
-			ts2, _ := strconv.ParseInt(sortedPrices[j].Date, 10, 64)
+			ts1 := sortedPrices[i].Date
+			ts2 := sortedPrices[j].Date
 			return ts1 < ts2
 		})
 
@@ -7912,9 +7979,9 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	err = addPriceIndexes(sqlDB)
+	migrated, err := migratePricesTable(sqlDB)
 	if err != nil {
-		log.Fatal("Failed to create price indexes:", err)
+		log.Fatal("Failed to migrate prices table:", err)
 	}
 
 	db = &DB{DB: sqlDB}
@@ -7926,6 +7993,24 @@ func main() {
 
 	log.Println("Database initialized successfully")
 
+	if migrated {
+		log.Println("Running initial price compaction...")
+		if err := compactPrices(); err != nil {
+			log.Printf("Error during initial price compaction: %v", err)
+		} else {
+			log.Println("Initial price compaction complete")
+		}
+		_, err = sqlDB.Exec(`PRAGMA auto_vacuum = INCREMENTAL`)
+		if err != nil {
+			log.Printf("Error enabling auto_vacuum: %v", err)
+		}
+		_, err = sqlDB.Exec(`VACUUM`)
+		if err != nil {
+			log.Printf("Error during post-migration vacuum: %v", err)
+		}
+		log.Println("Price table migration and initial compaction complete")
+	}
+
 	log.Println("Running initial historic price data fetch...")
 	go func() {
 		tickers, err := db.getUniqueTickers()
@@ -7935,6 +8020,10 @@ func main() {
 		}
 
 		for _, tickerSymbol := range tickers {
+			hasOld, err := hasOldPriceData(tickerSymbol, time.Now().UTC().Unix()-priceRetention5mSec)
+			if err == nil && hasOld {
+				continue
+			}
 			prices, err := getOldHistoricPriceData(tickerSymbol)
 			if err != nil {
 				log.Printf("Failed to fetch historic price data for %s: %v", tickerSymbol, err)
@@ -7959,7 +8048,7 @@ func main() {
 	go fetchOldPriceDataPeriodic(7 * 24 * time.Hour)
 	go fetchNewsPeriodic(45 * time.Minute)
 	go fetchPricesPeriodic(10 * time.Minute)
-	go fillInBetweenPricesPeriodic(90 * time.Minute)
+	go compactPricesPeriodic(24 * time.Hour)
 	go updateSentimentsPeriodic(24 * time.Hour)
 	go updateETFDataPeriodic(30 * time.Minute)
 	go clearExpiredLoginAttempts()
