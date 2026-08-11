@@ -877,7 +877,7 @@
 <script>
 import CandleChart from './candleChart.vue'
 import SentimentCard from './sentimentCard.vue'
-import { API_BASE_URL, PYTHON_API_URL } from '../config'
+import { API_BASE_URL } from '../config'
 
 export default {
   name: 'HoldingView',
@@ -1144,7 +1144,8 @@ export default {
 
       try {
         const response = await fetch(
-          `${PYTHON_API_URL}/api/convert_currency?amount=1&from_currency=${this.holding.currency}&to_currency=${this.homeCurrency}`
+          `${API_BASE_URL}/api/convert_currency?amount=1&from_currency=${this.holding.currency}&to_currency=${this.homeCurrency}`,
+          { headers: { 'Authorization': `Bearer ${this.authToken}` } }
         )
 
         if (response.ok) {

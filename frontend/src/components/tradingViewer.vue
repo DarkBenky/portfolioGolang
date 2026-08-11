@@ -139,7 +139,19 @@
 import { ref, reactive, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import CandleChart from './candleChart.vue'
 import { list, compute } from './indicators.js'
-import { PYTHON_API_URL } from '../config.js'
+import { API_BASE_URL } from '../config.js'
+
+function getAuthToken() {
+  const nameEQ = 'auth_token='
+  const cookies = document.cookie.split(';')
+  for (let cookie of cookies) {
+    cookie = cookie.trim()
+    if (cookie.indexOf(nameEQ) === 0) {
+      return cookie.substring(nameEQ.length)
+    }
+  }
+  return ''
+}
 
 export default {
   name: 'TradingViewer',
@@ -195,7 +207,8 @@ export default {
       }
       try {
         const res = await fetch(
-          `${PYTHON_API_URL}/api/search?identifier=${encodeURIComponent(q)}&search_type=${type}`
+          `${API_BASE_URL}/api/search?identifier=${encodeURIComponent(q)}&search_type=${type}`,
+          { headers: { 'Authorization': `Bearer ${getAuthToken()}` } }
         )
         searchResults.value = res.ok ? await res.json() : []
       } catch {
@@ -226,7 +239,8 @@ export default {
 
       try {
         const res = await fetch(
-          `${PYTHON_API_URL}/api/get_price?ticker=${encodeURIComponent(activeTicker.value)}&last_updates_unix_timestamp=0&interval=${interval.value}`
+          `${API_BASE_URL}/api/get_price?ticker=${encodeURIComponent(activeTicker.value)}&last_updates_unix_timestamp=0&interval=${interval.value}`,
+          { headers: { 'Authorization': `Bearer ${getAuthToken()}` } }
         )
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()

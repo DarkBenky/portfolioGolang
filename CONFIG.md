@@ -14,6 +14,8 @@ SERVER_HOST=91.98.145.193
 
 SALT="your-salt-here"
 JWT_SECRET="your-jwt-secret-here"
+
+PYTHON_API_KEY="shared-secret-between-go-and-python"
 ```
 
 ### Frontend (.env in frontend directory)
@@ -26,16 +28,22 @@ VITE_BACKEND_PORT=8085
 ## Modes
 
 ### Development Mode (DEV_MODE=true)
-- Backend connects to Python API at `http://localhost:5123/api`
+- Backend connects to Python API at `http://127.0.0.1:5123/api`
 - Frontend connects to Go backend at `http://localhost:8085`
 - CORS allows `http://localhost:5173`
 - All services run on localhost
 
 ### Production Mode (DEV_MODE=false)
-- Backend connects to Python API at `http://{SERVER_HOST}:5123/api`
+- Backend connects to Python API at `http://127.0.0.1:5123/api` (Python is localhost-only)
 - Frontend connects to Go backend at `http://{SERVER_HOST}:8085`
 - CORS allows `http://{SERVER_HOST}:5173`
-- All services use the external server IP
+
+## Security
+
+- The Python API binds to `127.0.0.1` only (see `start_python_server.sh`, `getData.py`). It is NOT reachable from outside the machine; only the Go server (same host) can call it.
+- All Python `/api/*` routes (except `/api/health`) require the `X-API-Key` header matching `PYTHON_API_KEY` in `.env`. The Go server sends this header automatically (all internal Python calls go through `pythonHTTPClient`).
+- The frontend never calls Python directly. Features that previously did (`convert_currency`, `search`, `get_price`) now go through Go proxy endpoints (`/api/convert_currency`, `/api/search`, `/api/get_price`) which require a valid JWT.
+- CORS on Python is restricted to `http://localhost:5173` / `http://127.0.0.1:5173`.
 
 ## Switching Between Modes
 

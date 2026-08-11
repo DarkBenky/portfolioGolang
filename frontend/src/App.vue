@@ -284,6 +284,13 @@
               :active="activeView === 'expenses'"
               @click="activeView = 'expenses'"
             />
+            <v-list-item
+              prepend-icon="mdi-chat"
+              title="Chat"
+              value="chat"
+              :active="activeView === 'chat'"
+              @click="activeView = 'chat'"
+            />
           </v-list>
         </v-navigation-drawer>
 
@@ -1313,6 +1320,9 @@
         <v-container v-if="activeView === 'expenses'" fluid class="pa-0">
           <ExpensesView />
         </v-container>
+        <v-container v-if="activeView === 'chat'" fluid class="pa-0" style="height: calc(100vh - 64px);">
+          <ChatView />
+        </v-container>
       </v-main>
     </template>
   </v-app>
@@ -1321,7 +1331,7 @@
 <script>
 import LoginRegister from './components/loginRegister.vue'
 import ExpensesView from './components/expensesView.vue'
-import { API_BASE_URL, PYTHON_API_URL } from './config'
+import { API_BASE_URL } from './config'
 import { BaselineSeries } from 'lightweight-charts'
 import CandleChart from './components/candleChart.vue'
 import BacktestChart from './components/backtestChart.vue'
@@ -1331,6 +1341,7 @@ import RunningSummaryCard from './components/RunningSummaryCard.vue'
 import RunningSummaryView from './components/RunningSummaryView.vue'
 import NewsFeed from './components/newsFeed.vue'
 import TradingViewer from './components/tradingViewer.vue'
+import ChatView from './components/chatView.vue'
 
 function decodeJwtPayload(token) {
   try {
@@ -1357,7 +1368,8 @@ export default {
     RunningSummaryCard,
     RunningSummaryView,
     NewsFeed,
-    TradingViewer
+    TradingViewer,
+    ChatView
   },
 
   data() {
@@ -1788,7 +1800,8 @@ export default {
       this.conversionPromises[cacheKey] = (async () => {
         try {
           const response = await fetch(
-            `${PYTHON_API_URL}/api/convert_currency?amount=1&from_currency=${fromCurrency}&to_currency=${this.homeCurrency}`
+            `${API_BASE_URL}/api/convert_currency?amount=1&from_currency=${fromCurrency}&to_currency=${this.homeCurrency}`,
+            { headers: { 'Authorization': `Bearer ${this.getCookie('auth_token')}` } }
           )
           
           if (response.ok) {
@@ -1849,7 +1862,8 @@ export default {
         const searchType = isIsin ? 'isin' : 'ticker'
         
         const response = await fetch(
-          `${PYTHON_API_URL}/api/search?identifier=${encodeURIComponent(this.searchQuery)}&search_type=${searchType}`
+          `${API_BASE_URL}/api/search?identifier=${encodeURIComponent(this.searchQuery)}&search_type=${searchType}`,
+          { headers: { 'Authorization': `Bearer ${this.getCookie('auth_token')}` } }
         )
         
         if (response.ok) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
@@ -35,13 +36,14 @@ import (
 
 // hashPasswordWithSalt creates a SHA-256 hash of password+salt to stay within bcrypt's 72-byte limit
 var (
-	SALT       string
-	JWT_SECRET string
-	JWT_EXPIRY = 7 * 24 * time.Hour
-	BASE_URL   string
-	devMode    string
-	db         *DB
-	dbMutex    sync.RWMutex
+	SALT           string
+	JWT_SECRET     string
+	JWT_EXPIRY     = 7 * 24 * time.Hour
+	BASE_URL       string
+	PYTHON_API_KEY string
+	devMode        string
+	db             *DB
+	dbMutex        sync.RWMutex
 
 	priceRetention5mSec int64 = 30 * 86400
 	priceRetention1hSec int64 = 365 * 86400
@@ -62,11 +64,30 @@ var (
 	lastRunningSummaryGen   = make(map[string]time.Time)
 	lastRunningSummaryGenMu sync.Mutex
 	runningSummaryCooldown  = 30 * time.Minute
+
+	lastChatGen   = make(map[string]time.Time)
+	lastChatGenMu sync.Mutex
+	chatCooldown  = 15 * time.Second
+
+	ragReindexMu sync.Mutex
 )
+
+var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}}
 
 func hashPasswordWithSalt(password string) string {
 	hash := sha256.Sum256([]byte(password + SALT))
 	return hex.EncodeToString(hash[:])
+}
+
+type pythonKeyTransport struct {
+	base http.RoundTripper
+}
+
+func (t pythonKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if PYTHON_API_KEY != "" {
+		req.Header.Set("X-API-Key", PYTHON_API_KEY)
+	}
+	return t.base.RoundTrip(req)
 }
 
 type User struct {
@@ -134,6 +155,40 @@ type RunningSummary struct {
 	Sentiment         float64 `json:"sentiment"`
 	SectorPredictions string  `json:"sector_predictions"`
 	ThemePredictions  string  `json:"theme_predictions"`
+}
+
+type Conversation struct {
+	Id        string `json:"id"`
+	UserID    string `json:"user_id"`
+	Title     string `json:"title"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+type ChatMessage struct {
+	Id             string `json:"id"`
+	ConversationID string `json:"conversation_id"`
+	Role           string `json:"role"`
+	Content        string `json:"content"`
+	CreatedAt      int64  `json:"created_at"`
+}
+
+type RagChunk struct {
+	Id        string
+	Source    string
+	Ticker    string
+	UserID    string
+	Date      string
+	Content   string
+	Embedding []float32
+}
+
+type ragItem struct {
+	source  string
+	ticker  string
+	userID  string
+	date    string
+	content string
 }
 
 type Asset struct {
@@ -539,7 +594,7 @@ func fetchPrices(ticker string) error {
 	params.Add("interval", "5m")
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-	resp, err := http.Get(fullURL)
+	resp, err := pythonHTTPClient.Get(fullURL)
 	if err != nil {
 		log.Printf("Error fetching prices for %s: %v", ticker, err)
 		return err
@@ -699,7 +754,7 @@ func fetchNewsAs(actualTicker string, storeAsTicker string, numArticles int) err
 	params.Add("num_articles", strconv.Itoa(numArticles))
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-	resp, err := http.Get(fullURL)
+	resp, err := pythonHTTPClient.Get(fullURL)
 	if err != nil {
 		return err
 	}
@@ -795,7 +850,7 @@ func fetchNews(ticker string, numArticles int) error {
 	params.Add("num_articles", strconv.Itoa(numArticles))
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-	resp, err := http.Get(fullURL)
+	resp, err := pythonHTTPClient.Get(fullURL)
 	if err != nil {
 		log.Printf("Error fetching news for %s: %v", ticker, err)
 		return err
@@ -883,7 +938,7 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 	params.Add("etf_name", name)
 
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-	resp, err := http.Get(fullURL)
+	resp, err := pythonHTTPClient.Get(fullURL)
 	if err != nil {
 		log.Printf("Error fetching ETF data for %s: %v", ticker, err)
 		return err
@@ -1214,6 +1269,76 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		)
 	`)
 
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS conversations (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_messages (
+			id TEXT PRIMARY KEY,
+			conversation_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS rag_chunks (
+			id TEXT PRIMARY KEY,
+			source TEXT NOT NULL,
+			ticker TEXT,
+			user_id TEXT,
+			date TEXT,
+			content TEXT NOT NULL,
+			embedding TEXT NOT NULL,
+			content_hash TEXT NOT NULL UNIQUE,
+			created_at INTEGER NOT NULL
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id, created_at)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_ticker ON rag_chunks(ticker)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_user_id ON rag_chunks(user_id)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_source ON rag_chunks(source)`)
 	if err != nil {
 		return nil, err
 	}
@@ -2548,6 +2673,262 @@ func (database *DB) upsertRunningSummary(summary RunningSummary) error {
 	return nil
 }
 
+func (database *DB) createConversation(userID string, title string) (*Conversation, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	now := time.Now().Unix()
+	conv := &Conversation{
+		Id:        generateID(),
+		UserID:    userID,
+		Title:     title,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_, err := database.Exec(`
+		INSERT INTO conversations (id, user_id, title, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, conv.Id, conv.UserID, conv.Title, conv.CreatedAt, conv.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+func (database *DB) listConversations(userID string) ([]Conversation, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT id, user_id, title, created_at, updated_at
+		FROM conversations
+		WHERE user_id = ?
+		ORDER BY updated_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var convs []Conversation
+	for rows.Next() {
+		var c Conversation
+		if err := rows.Scan(&c.Id, &c.UserID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err == nil {
+			convs = append(convs, c)
+		}
+	}
+	return convs, nil
+}
+
+func (database *DB) getConversation(convID string, userID string) (*Conversation, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	var c Conversation
+	err := database.QueryRow(`
+		SELECT id, user_id, title, created_at, updated_at
+		FROM conversations
+		WHERE id = ? AND user_id = ?
+	`, convID, userID).Scan(&c.Id, &c.UserID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMessage, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`
+		SELECT id, conversation_id, role, content, created_at
+		FROM chat_messages
+		WHERE conversation_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, convID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []ChatMessage
+	for rows.Next() {
+		var m ChatMessage
+		if err := rows.Scan(&m.Id, &m.ConversationID, &m.Role, &m.Content, &m.CreatedAt); err == nil {
+			messages = append(messages, m)
+		}
+	}
+
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
+func (database *DB) addChatMessage(convID string, role string, content string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	now := time.Now().Unix()
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, generateID(), convID, role, content, now)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`UPDATE conversations SET updated_at = ? WHERE id = ?`, now, convID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (database *DB) deleteConversation(convID string, userID string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM chat_messages WHERE conversation_id = ?`, convID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM conversations WHERE id = ? AND user_id = ?`, convID, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (database *DB) upsertRagChunk(chunk RagChunk) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	embJSON, err := json.Marshal(chunk.Embedding)
+	if err != nil {
+		return err
+	}
+	hash := sha256Hex(chunk.Content)
+
+	_, err = database.Exec(`
+		INSERT INTO rag_chunks (id, source, ticker, user_id, date, content, embedding, content_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(content_hash) DO UPDATE SET
+			source = excluded.source,
+			ticker = excluded.ticker,
+			user_id = excluded.user_id,
+			date = excluded.date,
+			content = excluded.content,
+			embedding = excluded.embedding,
+			created_at = excluded.created_at
+	`, chunk.Id, chunk.Source, chunk.Ticker, chunk.UserID, chunk.Date, chunk.Content, string(embJSON), hash, time.Now().Unix())
+	return err
+}
+
+func (database *DB) getRagChunkHashes() (map[string]bool, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	rows, err := database.Query(`SELECT content_hash FROM rag_chunks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	hashes := make(map[string]bool)
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err == nil {
+			hashes[h] = true
+		}
+	}
+	return hashes, nil
+}
+
+func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]RagChunk, error) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	query := `SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding FROM rag_chunks WHERE 1=1`
+	var args []interface{}
+	if userID != "" {
+		query += ` AND (user_id = ? OR user_id = '')`
+		args = append(args, userID)
+	}
+	if len(tickers) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(tickers)), ",")
+		query += ` AND (ticker IN (` + placeholders + `) OR ticker = '')`
+		for _, t := range tickers {
+			args = append(args, t)
+		}
+	}
+
+	rows, err := database.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chunks []RagChunk
+	for rows.Next() {
+		var c RagChunk
+		var embJSON string
+		if err := rows.Scan(&c.Id, &c.Source, &c.Ticker, &c.UserID, &c.Date, &c.Content, &embJSON); err != nil {
+			continue
+		}
+		if err := json.Unmarshal([]byte(embJSON), &c.Embedding); err != nil {
+			continue
+		}
+		chunks = append(chunks, c)
+	}
+	return chunks, nil
+}
+
+func (database *DB) deleteRagChunksExceptHashes(keep map[string]bool) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	if len(keep) == 0 {
+		_, err := database.Exec(`DELETE FROM rag_chunks`)
+		return err
+	}
+
+	rows, err := database.Query(`SELECT content_hash FROM rag_chunks`)
+	if err != nil {
+		return err
+	}
+	var toDelete []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err == nil && !keep[h] {
+			toDelete = append(toDelete, h)
+		}
+	}
+	rows.Close()
+
+	for _, h := range toDelete {
+		if _, err := database.Exec(`DELETE FROM rag_chunks WHERE content_hash = ?`, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (database *DB) getLatestRunningSummary(userID string, windowDays int) (*RunningSummary, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
@@ -3217,7 +3598,7 @@ func updateTickerDailySentiment(tickerSymbol string, todayDate string) error {
 		return fmt.Errorf("error marshaling request: %v", err)
 	}
 
-	resp, err := http.Post(BASE_URL+"/summarize_ticker", "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := pythonHTTPClient.Post(BASE_URL+"/summarize_ticker", "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("error calling summarize API: %v", err)
 	}
@@ -3302,7 +3683,7 @@ func updatePortfolioDailySentiment(userID string, todayDate string) error {
 		return fmt.Errorf("error marshaling request: %v", err)
 	}
 
-	resp, err := http.Post(BASE_URL+"/summarize_portfolio", "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := pythonHTTPClient.Post(BASE_URL+"/summarize_portfolio", "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("error calling summarize API: %v", err)
 	}
@@ -3400,6 +3781,8 @@ func triggerNewsSummary(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Summary generated but failed to retrieve"})
 	}
 
+	triggerRagReindex()
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":   "News summary generated successfully",
 		"sentiment": sentiment.Sentiment,
@@ -3457,6 +3840,8 @@ func triggerHoldingSummary(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Summary generated but failed to retrieve"})
 	}
+
+	triggerRagReindex()
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":   "Holding summary generated successfully",
@@ -3584,7 +3969,7 @@ func triggerRunningSummary(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
 	}
 
-	resp, err := http.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := pythonHTTPClient.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		log.Printf("Error calling running_summary API: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate running summary"})
@@ -3681,6 +4066,8 @@ func triggerRunningSummary(c echo.Context) error {
 	lastRunningSummaryGenMu.Lock()
 	lastRunningSummaryGen[cooldownKey] = time.Now()
 	lastRunningSummaryGenMu.Unlock()
+
+	triggerRagReindex()
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":            "Running summary generated successfully",
@@ -3882,7 +4269,7 @@ func updateRunningSummaryForUser(userID string, windowDays int) error {
 		return fmt.Errorf("error marshaling request: %v", err)
 	}
 
-	resp, err := http.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := pythonHTTPClient.Post(BASE_URL+"/running_summary", "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("error calling running_summary API: %v", err)
 	}
@@ -6250,7 +6637,7 @@ func GetAssetSentiments(c echo.Context) error {
 
 func fetchAssetDetails(isin string) error {
 	url := fmt.Sprintf("%s/stock/%s", BASE_URL, isin)
-	resp, err := http.Get(url)
+	resp, err := pythonHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("Error fetching asset details for %s: %v", isin, err)
 		return err
@@ -6434,7 +6821,7 @@ func getLatestAssetDetailsEndpoint(c echo.Context) error {
 
 func getOldHistoricPriceData(ticker string) ([]Price, error) {
 	url := fmt.Sprintf("%s/stock/history/%s", BASE_URL, ticker)
-	resp, err := http.Get(url)
+	resp, err := pythonHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("Error fetching historic price data for %s: %v", ticker, err)
 		return nil, err
@@ -6490,7 +6877,7 @@ func getOldHistoricPriceData(ticker string) ([]Price, error) {
 func convertIsinToTicker(isin string) (string, error) {
 	encodedIsin := url.QueryEscape(isin)
 	url := fmt.Sprintf("%s/isin_to_ticker?isin=%s", BASE_URL, encodedIsin)
-	resp, err := http.Get(url)
+	resp, err := pythonHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("Error converting ISIN to ticker for %s: %v", isin, err)
 		return "", err
@@ -6524,7 +6911,7 @@ func convertIsinToTicker(isin string) (string, error) {
 func convertTickerToIsin(ticker string) (string, error) {
 	encodedTicker := url.QueryEscape(ticker)
 	url := fmt.Sprintf("%s/ticker_to_isin?ticker=%s", BASE_URL, encodedTicker)
-	resp, err := http.Get(url)
+	resp, err := pythonHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("Error converting ticker to ISIN for %s: %v", ticker, err)
 		return "", err
@@ -6553,6 +6940,24 @@ func convertTickerToIsin(ticker string) (string, error) {
 	}
 
 	return response.ISIN, nil
+}
+
+func pythonProxyHandler(pythonPath string) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		target := BASE_URL + pythonPath
+		if c.Request().URL.RawQuery != "" {
+			target += "?" + c.Request().URL.RawQuery
+		}
+		resp, err := pythonHTTPClient.Get(target)
+		if err != nil {
+			log.Printf("Python proxy error for %s: %v", pythonPath, err)
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Python API unreachable"})
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get("Content-Type"))
+		return c.Blob(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
 }
 
 func fetchOldPriceDataPeriodic(interval time.Duration) {
@@ -7530,6 +7935,7 @@ type DeepSeekRequest struct {
 	Model    string            `json:"model"`
 	Messages []DeepSeekMessage `json:"messages"`
 	Thinking *DeepSeekThinking `json:"thinking,omitempty"`
+	Stream   bool              `json:"stream,omitempty"`
 }
 
 type DeepSeekThinking struct {
@@ -7542,6 +7948,640 @@ type DeepSeekChoice struct {
 
 type DeepSeekResponse struct {
 	Choices []DeepSeekChoice `json:"choices"`
+}
+
+type DeepSeekDelta struct {
+	Content string `json:"content"`
+}
+
+type DeepSeekChunk struct {
+	Choices []struct {
+		Delta DeepSeekDelta `json:"delta"`
+	} `json:"choices"`
+}
+
+func openRouterKey() string {
+	return os.Getenv("OPENROUTER_API_KEY")
+}
+
+func embeddingModelName() string {
+	model := os.Getenv("OPENROUTER_EMBEDDING_MODEL")
+	if model == "" {
+		return "perplexity/pplx-embed-v1-0.6b"
+	}
+	return model
+}
+
+func sha256Hex(s string) string {
+	hash := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+func embedTexts(texts []string, maxRetries int) ([][]float32, error) {
+	apiKey := openRouterKey()
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not configured")
+	}
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	reqBody := map[string]interface{}{
+		"model": embeddingModelName(),
+		"input": texts,
+	}
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/embeddings", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return nil, err
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			var result struct {
+				Data []struct {
+					Embedding []float32 `json:"embedding"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(respBody, &result); err != nil {
+				return nil, err
+			}
+
+			embeddings := make([][]float32, 0, len(result.Data))
+			for _, item := range result.Data {
+				embeddings = append(embeddings, item.Embedding)
+			}
+			return embeddings, nil
+		}
+
+		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < maxRetries {
+			var backoff time.Duration
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, convErr := strconv.Atoi(ra); convErr == nil && secs > 0 {
+					backoff = time.Duration(secs) * time.Second
+				}
+			}
+			if backoff == 0 {
+				backoff = time.Duration(15<<attempt) * time.Second
+			}
+			log.Printf("Embeddings API returned %d, retrying in %v", resp.StatusCode, backoff)
+			time.Sleep(backoff)
+			continue
+		}
+
+		return nil, fmt.Errorf("embeddings API returned status %d: %s", resp.StatusCode, truncateStr(string(respBody), 300))
+	}
+
+	return nil, fmt.Errorf("embeddings API retry exhausted")
+}
+
+func chunkText(text string, chunkSize int, overlap int) []string {
+	var chunks []string
+	start := 0
+	textLen := len(text)
+	for start < textLen {
+		end := start + chunkSize
+		if end > textLen {
+			end = textLen
+		}
+		chunks = append(chunks, text[start:end])
+		if end == textLen {
+			break
+		}
+		start = end - overlap
+		if start < 0 {
+			start = 0
+		}
+	}
+	return chunks
+}
+
+func cosineSim(a, b []float32) float32 {
+	var dot, normA, normB float64
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
+}
+
+func buildRagItems() ([]ragItem, error) {
+	var items []ragItem
+
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	newsRows, err := db.Query(`SELECT COALESCE(ticker,''), COALESCE(published_at,''), title, COALESCE(summary,''), COALESCE(text,'') FROM news`)
+	if err == nil {
+		for newsRows.Next() {
+			var ticker, publishedAt, title, summary, text string
+			if err := newsRows.Scan(&ticker, &publishedAt, &title, &summary, &text); err == nil {
+				content := strings.TrimSpace(title + ". " + summary + " " + text)
+				if content != "" {
+					items = append(items, ragItem{source: "news", ticker: ticker, date: publishedAt, content: content})
+				}
+			}
+		}
+		newsRows.Close()
+	}
+
+	dsRows, err := db.Query(`SELECT ticker, date, summary FROM daily_sentiment`)
+	if err == nil {
+		for dsRows.Next() {
+			var ticker, date, summary string
+			if err := dsRows.Scan(&ticker, &date, &summary); err == nil && strings.TrimSpace(summary) != "" {
+				items = append(items, ragItem{source: "daily_sentiment", ticker: ticker, date: date, content: summary})
+			}
+		}
+		dsRows.Close()
+	}
+
+	pdsRows, err := db.Query(`SELECT user_id, date, summary FROM portfolio_daily_sentiment`)
+	if err == nil {
+		for pdsRows.Next() {
+			var userID, date, summary string
+			if err := pdsRows.Scan(&userID, &date, &summary); err == nil && strings.TrimSpace(summary) != "" {
+				items = append(items, ragItem{source: "portfolio_daily_sentiment", userID: userID, date: date, content: summary})
+			}
+		}
+		pdsRows.Close()
+	}
+
+	rsRows, err := db.Query(`SELECT user_id, date, summary FROM running_summary`)
+	if err == nil {
+		for rsRows.Next() {
+			var userID, date, summary string
+			if err := rsRows.Scan(&userID, &date, &summary); err == nil && strings.TrimSpace(summary) != "" {
+				items = append(items, ragItem{source: "running_summary", userID: userID, date: date, content: summary})
+			}
+		}
+		rsRows.Close()
+	}
+
+	adRows, err := db.Query(`SELECT ticker, market_cap, country, sector, eps, pe_ratio, dividend_yield, revenue, net_income, profit_margin FROM asset_details`)
+	if err == nil {
+		for adRows.Next() {
+			var ticker, marketCap, country, sector, eps, peRatio, dividendYield, revenue, netIncome, profitMargin string
+			if err := adRows.Scan(&ticker, &marketCap, &country, &sector, &eps, &peRatio, &dividendYield, &revenue, &netIncome, &profitMargin); err == nil && strings.TrimSpace(ticker) != "" {
+				content := fmt.Sprintf("Fundamentals for %s: market cap %s, country %s, sector %s, EPS %s, P/E %s, dividend yield %s, revenue %s, net income %s, profit margin %s", ticker, marketCap, country, sector, eps, peRatio, dividendYield, revenue, netIncome, profitMargin)
+				items = append(items, ragItem{source: "asset_details", ticker: ticker, content: content})
+			}
+		}
+		adRows.Close()
+	}
+
+	return items, nil
+}
+
+func reindexRag() error {
+	ragReindexMu.Lock()
+	defer ragReindexMu.Unlock()
+
+	if openRouterKey() == "" {
+		return fmt.Errorf("OPENROUTER_API_KEY not configured, skipping RAG reindex")
+	}
+
+	items, err := buildRagItems()
+	if err != nil {
+		return err
+	}
+
+	existing, err := db.getRagChunkHashes()
+	if err != nil {
+		return err
+	}
+
+	type pending struct {
+		item    ragItem
+		content string
+	}
+
+	var toEmbed []pending
+	currentHashes := make(map[string]bool)
+
+	for _, item := range items {
+		for _, chunk := range chunkText(item.content, 512, 64) {
+			chunk = strings.TrimSpace(chunk)
+			if chunk == "" {
+				continue
+			}
+			hash := sha256Hex(chunk)
+			currentHashes[hash] = true
+			if existing[hash] {
+				continue
+			}
+			toEmbed = append(toEmbed, pending{item: item, content: chunk})
+		}
+	}
+
+	const batchSize = 64
+	for i := 0; i < len(toEmbed); i += batchSize {
+		end := i + batchSize
+		if end > len(toEmbed) {
+			end = len(toEmbed)
+		}
+		batch := toEmbed[i:end]
+		texts := make([]string, 0, len(batch))
+		for _, p := range batch {
+			texts = append(texts, p.content)
+		}
+		embeddings, err := embedTexts(texts, 4)
+		if err != nil {
+			return err
+		}
+		for j, emb := range embeddings {
+			chunk := RagChunk{
+				Id:        generateID(),
+				Source:    batch[j].item.source,
+				Ticker:    batch[j].item.ticker,
+				UserID:    batch[j].item.userID,
+				Date:      batch[j].item.date,
+				Content:   batch[j].content,
+				Embedding: emb,
+			}
+			if err := db.upsertRagChunk(chunk); err != nil {
+				return err
+			}
+		}
+		log.Printf("RAG reindex: embedded %d new chunks", len(batch))
+		time.Sleep(1 * time.Second)
+	}
+
+	if err := db.deleteRagChunksExceptHashes(currentHashes); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func reindexRagPeriodic(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if err := reindexRag(); err != nil {
+			log.Printf("Periodic RAG reindex error: %v", err)
+		}
+	}
+}
+
+func ragSearch(query string, userID string, tickers []string, k int) ([]RagChunk, error) {
+	if openRouterKey() == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not configured")
+	}
+	queryEmbeddings, err := embedTexts([]string{query}, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(queryEmbeddings) == 0 {
+		return nil, fmt.Errorf("no query embedding returned")
+	}
+
+	chunks, err := db.getRagChunksForSearch(userID, tickers)
+	if err != nil {
+		return nil, err
+	}
+
+	type scored struct {
+		chunk RagChunk
+		score float32
+	}
+	var results []scored
+	for _, chunk := range chunks {
+		results = append(results, scored{chunk: chunk, score: cosineSim(queryEmbeddings[0], chunk.Embedding)})
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
+	if len(results) > k {
+		results = results[:k]
+	}
+
+	top := make([]RagChunk, 0, len(results))
+	for _, r := range results {
+		top = append(top, r.chunk)
+	}
+	return top, nil
+}
+
+func buildChatContext(userID string, question string) string {
+	var sb strings.Builder
+	sb.WriteString("USER PORTFOLIO CONTEXT\n")
+
+	holdings, err := db.getHoldingsByUser(userID)
+	if err == nil && len(holdings) > 0 {
+		sb.WriteString("\nHOLDINGS\n")
+		var tickers []string
+		for _, h := range holdings {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %g shares at %g, ETF=%v, TER=%g\n", h.Name, h.Ticker, h.Quantity, h.PurchasePrice, h.Etf, h.TER))
+			tickers = append(tickers, h.Ticker)
+		}
+
+		sb.WriteString("\nLATEST PRICES\n")
+		for _, t := range tickers {
+			var close float64
+			dbMutex.RLock()
+			err := db.QueryRow(`SELECT close FROM prices WHERE ticker = ? ORDER BY date DESC LIMIT 1`, t).Scan(&close)
+			dbMutex.RUnlock()
+			if err == nil {
+				sb.WriteString(fmt.Sprintf("- %s: %.4f\n", t, close))
+			}
+		}
+
+		sb.WriteString("\nRECENT NEWS (last 3 per ticker)\n")
+		for _, t := range tickers {
+			newsList, nErr := db.getRecentNewsForTicker(t, 3)
+			if nErr != nil {
+				continue
+			}
+			for _, n := range newsList {
+				sb.WriteString(fmt.Sprintf("- [%s] %s\n", t, n.Title))
+				if n.Summary != "" {
+					sb.WriteString(fmt.Sprintf("  Summary: %s\n", truncateStr(n.Summary, 300)))
+				}
+			}
+		}
+
+		sb.WriteString("\nLATEST DAILY SENTIMENT PER TICKER\n")
+		for _, t := range tickers {
+			ds, dsErr := db.getHoldingDailySummary(t, time.Now().UTC().Format("2006-01-02"))
+			if dsErr == nil && ds != nil {
+				sb.WriteString(fmt.Sprintf("- %s (%.3f): %s\n", t, ds.Sentiment, truncateStr(ds.Summary, 600)))
+			}
+		}
+
+		sb.WriteString("\nLATEST ASSET DETAILS\n")
+		for _, t := range tickers {
+			detail, dErr := db.getLatestAssetDetails(t)
+			if dErr == nil && detail != nil {
+				sb.WriteString(fmt.Sprintf("- %s: mcap=%s country=%s sector=%s pe=%s divYield=%s\n", t, detail.MarketCap, detail.Country, detail.Sector, detail.PeRatio, detail.DividendYield))
+			}
+		}
+	}
+
+	portfolioSummary, pErr := db.getPortfolioDailySummary(userID, time.Now().UTC().Format("2006-01-02"))
+	if pErr == nil && portfolioSummary != nil {
+		sb.WriteString("\nPORTFOLIO DAILY SUMMARY\n")
+		sb.WriteString(fmt.Sprintf("(%.3f) %s\n", portfolioSummary.Sentiment, truncateStr(portfolioSummary.Summary, 1200)))
+	}
+
+	runningSummary, rErr := db.getLatestRunningSummary(userID, 30)
+	if rErr == nil && runningSummary != nil {
+		sb.WriteString("\nRUNNING SUMMARY (30d)\n")
+		sb.WriteString(truncateStr(runningSummary.Summary, 2000))
+		sb.WriteString("\n")
+	}
+
+	ragChunks, ragErr := ragSearch(question, userID, nil, 6)
+	if ragErr == nil && len(ragChunks) > 0 {
+		sb.WriteString("\nRETRIEVED CONTEXT FROM STORED REPORTS AND NEWS\n")
+		for i, chunk := range ragChunks {
+			label := chunk.Source
+			if chunk.Ticker != "" {
+				label = chunk.Source + " " + chunk.Ticker
+			}
+			sb.WriteString(fmt.Sprintf("[%d] (%s, %s): %s\n", i+1, label, chunk.Date, truncateStr(chunk.Content, 500)))
+		}
+	}
+
+	return truncateStr(sb.String(), 12000)
+}
+
+func buildSystemPrompt(userID string, question string) string {
+	context := buildChatContext(userID, question)
+	return fmt.Sprintf(`You are a helpful investment assistant for a personal portfolio tracker. Answer questions about the user's portfolio and investments using the provided context. Be honest about uncertainty and do not give absolute financial advice. If the context does not contain enough information, say so.
+
+%s`, context)
+}
+
+func writeSSE(c echo.Context, payload string) {
+	line := "data: " + payload + "\n\n"
+	_, _ = c.Response().Write([]byte(line))
+	c.Response().Flush()
+}
+
+func chatHandler(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+	userID := claims.UserID
+
+	lastChatGenMu.Lock()
+	if devMode != "true" {
+		if last, ok := lastChatGen[userID]; ok && time.Since(last) < chatCooldown {
+			remaining := chatCooldown - time.Since(last)
+			lastChatGenMu.Unlock()
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"error":           "Please wait before sending another message",
+				"retry_after_sec": int(remaining.Seconds()) + 1,
+			})
+		}
+	}
+	lastChatGenMu.Unlock()
+
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+		Message        string `json:"message"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+	req.Message = strings.TrimSpace(req.Message)
+	if req.Message == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Message is required"})
+	}
+
+	var conversation *Conversation
+	if req.ConversationID != "" {
+		conv, err := db.getConversation(req.ConversationID, userID)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Conversation not found"})
+		}
+		conversation = conv
+	} else {
+		conv, err := db.createConversation(userID, truncateStr(req.Message, 50))
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create conversation"})
+		}
+		conversation = conv
+	}
+
+	if err := db.addChatMessage(conversation.Id, "user", req.Message); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save message"})
+	}
+
+	history, _ := db.getConversationMessages(conversation.Id, 20)
+	messages := []DeepSeekMessage{
+		{Role: "system", Content: buildSystemPrompt(userID, req.Message)},
+	}
+	for _, m := range history {
+		messages = append(messages, DeepSeekMessage{Role: m.Role, Content: m.Content})
+	}
+
+	lastChatGenMu.Lock()
+	lastChatGen[userID] = time.Now()
+	lastChatGenMu.Unlock()
+
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	if apiKey == "" {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DeepSeek API key not configured"})
+	}
+
+	reqBody := DeepSeekRequest{
+		Model:    "deepseek-v4-flash",
+		Messages: messages,
+		Stream:   true,
+		Thinking: &DeepSeekThinking{Type: "disabled"},
+	}
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+	}
+
+	httpReq, err := http.NewRequestWithContext(c.Request().Context(), "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to contact model"})
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Model API error: " + truncateStr(string(respBody), 300)})
+	}
+
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+	c.Response().WriteHeader(http.StatusOK)
+	c.Response().Flush()
+
+	var fullAnswer strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk DeepSeekChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta.Content
+		if delta == "" {
+			continue
+		}
+		fullAnswer.WriteString(delta)
+		eventJSON, _ := json.Marshal(map[string]string{"delta": delta})
+		writeSSE(c, string(eventJSON))
+	}
+
+	if fullAnswer.Len() > 0 {
+		_ = db.addChatMessage(conversation.Id, "assistant", fullAnswer.String())
+	}
+
+	writeSSE(c, "[DONE]")
+	return nil
+}
+
+func listConversationsHandler(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	convs, err := db.listConversations(claims.UserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to list conversations"})
+	}
+	if convs == nil {
+		convs = []Conversation{}
+	}
+	return c.JSON(http.StatusOK, convs)
+}
+
+func getConversationHandler(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	convID := c.Param("id")
+	conv, err := db.getConversation(convID, claims.UserID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Conversation not found"})
+	}
+	messages, err := db.getConversationMessages(convID, 200)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load messages"})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"conversation": conv, "messages": messages})
+}
+
+func deleteConversationHandler(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	convID := c.Param("id")
+	if err := db.deleteConversation(convID, claims.UserID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete conversation"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Conversation deleted"})
+}
+
+func reindexRagHandler(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	log.Printf("RAG reindex triggered by user %s", claims.UserID)
+	go func() {
+		if err := reindexRag(); err != nil {
+			log.Printf("RAG reindex error: %v", err)
+		}
+	}()
+	return c.JSON(http.StatusOK, map[string]string{"message": "RAG reindex started"})
+}
+
+func triggerRagReindex() {
+	go func() {
+		if err := reindexRag(); err != nil {
+			log.Printf("RAG reindex error: %v", err)
+		}
+	}()
 }
 
 func truncateStr(s string, max int) string {
@@ -7959,12 +8999,9 @@ func main() {
 	devMode = os.Getenv("DEV_MODE")
 	pythonPort := os.Getenv("BACKEND_PYTHON_PORT")
 	serverHost := os.Getenv("SERVER_HOST")
+	PYTHON_API_KEY = os.Getenv("PYTHON_API_KEY")
 
-	if devMode == "true" {
-		BASE_URL = "http://localhost:" + pythonPort + "/api"
-	} else {
-		BASE_URL = "http://" + serverHost + ":" + pythonPort + "/api"
-	}
+	BASE_URL = "http://127.0.0.1:" + pythonPort + "/api"
 
 	if SALT == "" || JWT_SECRET == "" {
 		log.Fatal("Required environment variables (SALT, JWT_SECRET) not set")
@@ -7972,6 +9009,9 @@ func main() {
 
 	log.Printf("Running in dev mode: %s", devMode)
 	log.Printf("Python API URL: %s", BASE_URL)
+	if PYTHON_API_KEY == "" {
+		log.Printf("WARNING: PYTHON_API_KEY not set, Python API calls will be unauthenticated")
+	}
 
 	sqlDB, err := initDB(false)
 	if err != nil {
@@ -8054,6 +9094,15 @@ func main() {
 	go clearExpiredLoginAttempts()
 	go fetchAssetDetailsPeriodic(1 * time.Hour)
 	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
+
+	go func() {
+		if err := reindexRag(); err != nil {
+			log.Printf("Initial RAG reindex error: %v", err)
+		} else {
+			log.Println("Initial RAG reindex complete")
+		}
+	}()
+	go reindexRagPeriodic(30 * time.Minute)
 
 	e := echo.New()
 
@@ -8142,6 +9191,18 @@ func main() {
 	protected.GET("/expenses/reports", getExpenseReports)
 	protected.GET("/expenses/report/:id", getExpenseReport)
 	protected.POST("/expenses/report/generate", generateExpenseReport)
+
+	// Python API proxies (Python binds to 127.0.0.1 only)
+	protected.GET("/convert_currency", pythonProxyHandler("/convert_currency"))
+	protected.GET("/search", pythonProxyHandler("/search"))
+	protected.GET("/get_price", pythonProxyHandler("/get_price"))
+
+	// Chat endpoints
+	protected.POST("/chat", chatHandler)
+	protected.GET("/chat/conversations", listConversationsHandler)
+	protected.GET("/chat/conversations/:id", getConversationHandler)
+	protected.DELETE("/chat/conversations/:id", deleteConversationHandler)
+	protected.POST("/chat/reindex", reindexRagHandler)
 
 	startAutoReportScheduler()
 

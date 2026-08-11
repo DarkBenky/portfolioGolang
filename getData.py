@@ -10,7 +10,7 @@ from getNews import creteSentimentAnalyzer, getSentiment, getNews
 from getPrice import convertCurrency, getPrice, getPriceDataOld
 from getSummary import summarize_daily_news, summarize_daily_portfolio_news, summarize_portfolio_from_holdings, generate_running_summary
 from getStock import get_stock_data
-from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT
+from env import BACKEND_PYTHON, BACKEND_PYTHON_PORT, PYTHON_API_KEY
 from datetime import datetime, timezone
 from collections import deque
 from flask_cors import CORS
@@ -24,8 +24,14 @@ except Exception:
 
 app = flask.Flask(__name__)
 
-# Enable CORS for all routes
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
+
+@app.before_request
+def require_api_key():
+    if flask.request.path.startswith('/api') and flask.request.path != '/api/health':
+        provided = flask.request.headers.get('X-API-Key', '')
+        if not PYTHON_API_KEY or provided != PYTHON_API_KEY:
+            return flask.jsonify({'error': 'Unauthorized'}), 401
 
 model = creteSentimentAnalyzer()
 
@@ -517,4 +523,4 @@ def api_convert_currency():
     })
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=BACKEND_PYTHON_PORT, threaded=True)
+    app.run(debug=False, host='127.0.0.1', port=BACKEND_PYTHON_PORT, threaded=True)

@@ -9,6 +9,7 @@ BACKEND_PYTHON_PORT = os.getenv("BACKEND_PYTHON_PORT")
 SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+PYTHON_API_KEY = os.getenv("PYTHON_API_KEY", "")
 
 if DEV_MODE:
     BACKEND_GO = f"http://localhost:{BACKEND_GO_PORT}"

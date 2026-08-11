@@ -26,7 +26,7 @@ echo "Starting Python backend with auto-restart..."
 
 while true; do
     echo "[$(date)] Starting gunicorn on port $PORT"
-    gunicorn -w 1 --threads 10 --timeout 120 --keep-alive 5 -b 0.0.0.0:"$PORT" getData:app
+    gunicorn -w 1 --threads 10 --timeout 120 --keep-alive 5 -b 127.0.0.1:"$PORT" getData:app
 
     EXIT_CODE=$?
     echo "[$(date)] gunicorn exited with code $EXIT_CODE"
