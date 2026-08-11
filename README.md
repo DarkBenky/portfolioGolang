@@ -1,4 +1,3 @@
 # TODO
 
-- [ ] benchmark if new gemma is faster then current model
-    - [ ] update model if faster
+- [ ] add support for conversation with model about current portfolio like for example what could I invest in right now ... 
