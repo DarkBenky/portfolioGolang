@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"sync"
@@ -8136,6 +8137,28 @@ func executeWebSearchWithCache(query string, userID string) (string, []SearchRes
 	return formatSearchResults(results), results
 }
 
+func extractWebSearchQueries(content string) []string {
+	re := regexp.MustCompile(`(?s)<invoke\s+name="web_search">.*?<parameter\s+name="query">(.*?)</parameter>.*?</invoke>`)
+	var queries []string
+	for _, m := range re.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			q := strings.Join(strings.Fields(m[1]), " ")
+			if q != "" {
+				queries = append(queries, q)
+			}
+		}
+	}
+	return queries
+}
+
+func stripWebSearchDSML(content string) string {
+	invokeRe := regexp.MustCompile(`(?s)<invoke\s+name="web_search">.*?</invoke>`)
+	content = invokeRe.ReplaceAllString(content, "")
+	markerRe := regexp.MustCompile(`(?s)<｜DSML｜｜invoke>.*`)
+	content = markerRe.ReplaceAllString(content, "")
+	return strings.TrimSpace(content)
+}
+
 type DeepSeekDelta struct {
 	Content string `json:"content"`
 }
@@ -8658,7 +8681,7 @@ func buildChatContext(userID string, question string) string {
 
 func buildSystemPrompt(userID string, question string) string {
 	context := buildChatContext(userID, question)
-	return fmt.Sprintf(`You are a helpful investment assistant for a personal portfolio tracker. Answer questions about the user's portfolio and investments using the provided context. Be honest about uncertainty and do not give absolute financial advice. If the context does not contain enough information, say so.
+	return fmt.Sprintf(`You are a helpful investment assistant for a personal portfolio tracker. Answer questions about the user's portfolio and investments using the provided context. Be honest about uncertainty and do not give absolute financial advice. If the context does not contain enough information, say so. If you need current web information, use the web_search tool. Always reply in plain text; never include raw tool-call or XML markup in your answer.
 
 %s`, context)
 }
@@ -8792,13 +8815,30 @@ func chatHandler(c echo.Context) error {
 	var finalAnswer string
 	var turnSearchResults []SearchResult
 
-	for round := 0; round < 3; round++ {
+	const maxToolRounds = 5
+	for round := 0; round < maxToolRounds; round++ {
 		msg, err := deepSeekChat(c.Request().Context(), messages, tools, "auto")
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
 		if len(msg.ToolCalls) == 0 {
-			finalAnswer = msg.Content
+			dsmlQueries := extractWebSearchQueries(msg.Content)
+			if len(dsmlQueries) > 0 {
+				for _, q := range dsmlQueries {
+					statusJSON, _ := json.Marshal(map[string]string{"status": "Searching the web..."})
+					writeSSE(c, string(statusJSON))
+					result, searchResults := executeWebSearchWithCache(q, userID)
+					if len(searchResults) > 0 {
+						turnSearchResults = append(turnSearchResults, searchResults...)
+						resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
+						writeSSE(c, string(resJSON))
+					}
+					messages = append(messages, DeepSeekMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
+				}
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			finalAnswer = strings.TrimSpace(stripWebSearchDSML(msg.Content))
 			break
 		}
 
@@ -8832,10 +8872,10 @@ func chatHandler(c echo.Context) error {
 	if finalAnswer == "" {
 		msg, err := deepSeekChat(c.Request().Context(), messages, nil, "")
 		if err == nil {
-			finalAnswer = strings.TrimSpace(msg.Content)
+			finalAnswer = strings.TrimSpace(stripWebSearchDSML(msg.Content))
 		}
 	}
-	if finalAnswer == "" {
+	if strings.TrimSpace(stripWebSearchDSML(finalAnswer)) == "" {
 		finalAnswer = "I could not generate an answer. Please try again."
 	}
 
