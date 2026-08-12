@@ -8176,7 +8176,7 @@ func openRouterKey() string {
 func embeddingModelName() string {
 	model := os.Getenv("OPENROUTER_EMBEDDING_MODEL")
 	if model == "" {
-		return "perplexity/pplx-embed-v1-0.6b"
+		return "openai/text-embedding-3-small"
 	}
 	return model
 }
@@ -8184,11 +8184,11 @@ func embeddingModelName() string {
 func ragEmbedBatchSize() int {
 	size := os.Getenv("RAG_EMBED_BATCH_SIZE")
 	if size == "" {
-		return 8
+		return 64
 	}
 	n, err := strconv.Atoi(size)
 	if err != nil || n < 1 {
-		return 8
+		return 64
 	}
 	return n
 }
