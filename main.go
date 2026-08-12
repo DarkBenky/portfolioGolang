@@ -8489,6 +8489,84 @@ func ragSearch(query string, userID string, tickers []string, k int) ([]RagChunk
 	return top, nil
 }
 
+func buildSpendingContext(userID string) string {
+	var sb strings.Builder
+
+	expenses, err := bills.GetExpensesByUserID(userID)
+	if err == nil && len(expenses) > 0 {
+		var total float64
+		for _, e := range expenses {
+			total += e.Amount
+		}
+		sb.WriteString(fmt.Sprintf("- Total manual expenses: %.2f (%d entries)\n", total, len(expenses)))
+
+		if byCat, catErr := bills.GroupExpensesByCategory(userID); catErr == nil && len(byCat) > 0 {
+			sb.WriteString("  By category:\n")
+			catKeys := make([]string, 0, len(byCat))
+			for k := range byCat {
+				catKeys = append(catKeys, k)
+			}
+			sort.Strings(catKeys)
+			for _, k := range catKeys {
+				sb.WriteString(fmt.Sprintf("  - %s: %.2f\n", k, byCat[k]))
+			}
+		}
+
+		if byMonth, mErr := bills.GroupExpensesByMonth(userID); mErr == nil && len(byMonth) > 0 {
+			sb.WriteString("  By month:\n")
+			monthKeys := make([]string, 0, len(byMonth))
+			for k := range byMonth {
+				monthKeys = append(monthKeys, k)
+			}
+			sort.Strings(monthKeys)
+			for _, k := range monthKeys {
+				sb.WriteString(fmt.Sprintf("  - %s: %.2f\n", k, byMonth[k]))
+			}
+		}
+	}
+
+	stats, sErr := bills.GetBankTransactionStats(userID)
+	if sErr == nil && len(stats) > 0 {
+		sb.WriteString("BANK TRANSACTIONS\n")
+		if v, ok := stats["total_in"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("- Total in: %.2f\n", v))
+		}
+		if v, ok := stats["total_out"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("- Total out: %.2f\n", v))
+		}
+		if v, ok := stats["net"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("- Net: %.2f\n", v))
+		}
+		if v, ok := stats["total_savings"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("- Savings roundups: %.2f\n", v))
+		}
+		if byCat, ok := stats["by_category"].(map[string]float64); ok && len(byCat) > 0 {
+			sb.WriteString("  By category:\n")
+			catKeys := make([]string, 0, len(byCat))
+			for k := range byCat {
+				catKeys = append(catKeys, k)
+			}
+			sort.Strings(catKeys)
+			for _, k := range catKeys {
+				sb.WriteString(fmt.Sprintf("  - %s: %.2f\n", k, byCat[k]))
+			}
+		}
+	}
+
+	reports, rErr := bills.GetExpenseReports(userID)
+	if rErr == nil && len(reports) > 0 {
+		sb.WriteString("LATEST EXPENSE REPORTS\n")
+		for i, r := range reports {
+			if i >= 2 {
+				break
+			}
+			sb.WriteString(fmt.Sprintf("[%s %s to %s] %s\n", r.Period, r.PeriodStart, r.PeriodEnd, truncateStr(r.Summary, 800)))
+		}
+	}
+
+	return sb.String()
+}
+
 func buildChatContext(userID string, question string) string {
 	var sb strings.Builder
 	sb.WriteString("USER PORTFOLIO CONTEXT\n")
@@ -8555,6 +8633,12 @@ func buildChatContext(userID string, question string) string {
 		sb.WriteString("\nRUNNING SUMMARY (30d)\n")
 		sb.WriteString(truncateStr(runningSummary.Summary, 2000))
 		sb.WriteString("\n")
+	}
+
+	spending := buildSpendingContext(userID)
+	if strings.TrimSpace(spending) != "" {
+		sb.WriteString("\nSPENDING\n")
+		sb.WriteString(spending)
 	}
 
 	ragChunks, ragErr := ragSearch(question, userID, nil, 6)
