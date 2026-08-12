@@ -49,11 +49,18 @@
                 <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="formatMarkdown(msg.content)"></div>
                 <div v-else class="white-space-pre-wrap">{{ msg.content }}</div>
                 <div v-if="msg.role === 'assistant' && msg.search_results && msg.search_results.length" class="search-results">
-                  <div class="text-caption font-weight-bold">Web sources</div>
-                  <div v-for="(sr, si) in msg.search_results" :key="'m' + si" class="search-result-item">
-                    <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
-                    <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                  <div class="search-results-header" @click="toggleSources(msg.id)">
+                    <span class="text-caption font-weight-bold">Web sources ({{ msg.search_results.length }})</span>
+                    <v-icon size="small">{{ sourcesOpen[msg.id] ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
                   </div>
+                  <v-expand-transition>
+                    <div v-show="sourcesOpen[msg.id]">
+                      <div v-for="(sr, si) in msg.search_results" :key="'m' + si" class="search-result-item">
+                        <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
+                        <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                      </div>
+                    </div>
+                  </v-expand-transition>
                 </div>
               </div>
             </div>
@@ -65,11 +72,18 @@
                   <span class="text-caption text-grey">Thinking</span>
                 </div>
                 <div v-if="streamSearchResults.length" class="search-results">
-                  <div class="text-caption font-weight-bold">Web sources</div>
-                  <div v-for="(sr, si) in streamSearchResults" :key="'s' + si" class="search-result-item">
-                    <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
-                    <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                  <div class="search-results-header" @click="streamSourcesOpen = !streamSourcesOpen">
+                    <span class="text-caption font-weight-bold">Web sources ({{ streamSearchResults.length }})</span>
+                    <v-icon size="small">{{ streamSourcesOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
                   </div>
+                  <v-expand-transition>
+                    <div v-show="streamSourcesOpen">
+                      <div v-for="(sr, si) in streamSearchResults" :key="'s' + si" class="search-result-item">
+                        <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
+                        <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                      </div>
+                    </div>
+                  </v-expand-transition>
                 </div>
               </div>
             </div>
@@ -133,6 +147,8 @@ const input = ref('')
 const streaming = ref(false)
 const streamContent = ref('')
 const streamSearchResults = ref([])
+const sourcesOpen = ref({})
+const streamSourcesOpen = ref(false)
 const error = ref('')
 const messagesArea = ref(null)
 let lastSentMessage = ''
@@ -163,9 +179,15 @@ async function loadConversations() {
   }
 }
 
+function toggleSources(id) {
+  sourcesOpen.value[id] = !sourcesOpen.value[id]
+}
+
 async function selectConversation(id) {
   activeConversationId.value = id
   error.value = ''
+  sourcesOpen.value = {}
+  streamSourcesOpen.value = false
   try {
     const res = await apiFetch(`/api/chat/conversations/${id}`)
     if (res.ok) {
@@ -194,6 +216,8 @@ async function newConversation() {
   messages.value = []
   input.value = ''
   error.value = ''
+  sourcesOpen.value = {}
+  streamSourcesOpen.value = false
 }
 
 async function removeConversation(id) {
@@ -352,6 +376,14 @@ onMounted(async () => {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.search-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
 }
 
 .search-result-item {
