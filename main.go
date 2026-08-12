@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -8584,6 +8585,53 @@ func writeSSE(c echo.Context, payload string) {
 	c.Response().Flush()
 }
 
+func deepSeekChat(ctx context.Context, messages []DeepSeekMessage, tools []DeepSeekTool, toolChoice string) (*DeepSeekMessage, error) {
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("DEEPSEEK_API_KEY not configured")
+	}
+	reqBody := DeepSeekRequest{
+		Model:      "deepseek-v4-flash",
+		Messages:   messages,
+		Stream:     false,
+		Thinking:   &DeepSeekThinking{Type: "disabled"},
+		Tools:      tools,
+		ToolChoice: toolChoice,
+	}
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	respBody, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("model API error: %s", truncateStr(string(respBody), 300))
+	}
+	var orResp DeepSeekResponse
+	if err := json.Unmarshal(respBody, &orResp); err != nil {
+		return nil, err
+	}
+	if len(orResp.Choices) == 0 {
+		return nil, fmt.Errorf("empty model response")
+	}
+	return &orResp.Choices[0].Message, nil
+}
+
 func chatHandler(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
@@ -8661,57 +8709,16 @@ func chatHandler(c echo.Context) error {
 	var turnSearchResults []SearchResult
 
 	for round := 0; round < 3; round++ {
-		reqBody := DeepSeekRequest{
-			Model:      "deepseek-v4-flash",
-			Messages:   messages,
-			Stream:     false,
-			Thinking:   &DeepSeekThinking{Type: "disabled"},
-			Tools:      tools,
-			ToolChoice: "auto",
-		}
-		jsonBody, err := json.Marshal(reqBody)
+		msg, err := deepSeekChat(c.Request().Context(), messages, tools, "auto")
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
-
-		httpReq, err := http.NewRequestWithContext(c.Request().Context(), "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-		client := &http.Client{}
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to contact model"})
-		}
-
-		respBody, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read model response"})
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Model API error: " + truncateStr(string(respBody), 300)})
-		}
-
-		var orResp DeepSeekResponse
-		if err := json.Unmarshal(respBody, &orResp); err != nil {
-			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to parse model response"})
-		}
-		if len(orResp.Choices) == 0 {
-			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Empty model response"})
-		}
-
-		msg := orResp.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
 			finalAnswer = msg.Content
 			break
 		}
 
-		messages = append(messages, msg)
+		messages = append(messages, *msg)
 		for _, tc := range msg.ToolCalls {
 			if tc.Function.Name != "web_search" {
 				continue
@@ -8738,6 +8745,12 @@ func chatHandler(c echo.Context) error {
 		}
 	}
 
+	if finalAnswer == "" {
+		msg, err := deepSeekChat(c.Request().Context(), messages, nil, "")
+		if err == nil {
+			finalAnswer = strings.TrimSpace(msg.Content)
+		}
+	}
 	if finalAnswer == "" {
 		finalAnswer = "I could not generate an answer. Please try again."
 	}
