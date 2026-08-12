@@ -169,6 +169,7 @@ type ChatMessage struct {
 	ConversationID string `json:"conversation_id"`
 	Role           string `json:"role"`
 	Content        string `json:"content"`
+	SearchResults  string `json:"search_results"`
 	CreatedAt      int64  `json:"created_at"`
 }
 
@@ -1292,6 +1293,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 			conversation_id TEXT NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
+			search_results TEXT,
 			created_at INTEGER NOT NULL,
 			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 		)
@@ -1327,6 +1329,11 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec(`ALTER TABLE chat_messages ADD COLUMN search_results TEXT`)
+	if err != nil {
+		// column already exists on fresh databases
+	}
+
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_ticker ON rag_chunks(ticker)`)
 	if err != nil {
 		return nil, err
@@ -1338,6 +1345,24 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_source ON rag_chunks(source)`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS web_searches (
+			query_hash TEXT PRIMARY KEY,
+			query TEXT NOT NULL,
+			user_id TEXT,
+			results TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_web_searches_created_at ON web_searches(created_at)`)
 	if err != nil {
 		return nil, err
 	}
@@ -2740,7 +2765,7 @@ func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMes
 	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
-		SELECT id, conversation_id, role, content, created_at
+		SELECT id, conversation_id, role, content, COALESCE(search_results,''), created_at
 		FROM chat_messages
 		WHERE conversation_id = ?
 		ORDER BY created_at DESC
@@ -2754,7 +2779,7 @@ func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMes
 	var messages []ChatMessage
 	for rows.Next() {
 		var m ChatMessage
-		if err := rows.Scan(&m.Id, &m.ConversationID, &m.Role, &m.Content, &m.CreatedAt); err == nil {
+		if err := rows.Scan(&m.Id, &m.ConversationID, &m.Role, &m.Content, &m.SearchResults, &m.CreatedAt); err == nil {
 			messages = append(messages, m)
 		}
 	}
@@ -2766,7 +2791,7 @@ func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMes
 	return messages, nil
 }
 
-func (database *DB) addChatMessage(convID string, role string, content string) error {
+func (database *DB) addChatMessage(convID string, role string, content string, searchResults string) error {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 
@@ -2778,9 +2803,9 @@ func (database *DB) addChatMessage(convID string, role string, content string) e
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, generateID(), convID, role, content, now)
+		INSERT INTO chat_messages (id, conversation_id, role, content, search_results, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, generateID(), convID, role, content, searchResults, now)
 	if err != nil {
 		return err
 	}
@@ -2857,6 +2882,46 @@ func (database *DB) getRagChunkHashes() (map[string]bool, error) {
 		}
 	}
 	return hashes, nil
+}
+
+func (database *DB) getCachedWebSearch(query string, maxAgeSeconds int64) ([]SearchResult, bool) {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+
+	hash := sha256Hex(query)
+	var resultsJSON string
+	var createdAt int64
+	err := database.QueryRow(`SELECT results, created_at FROM web_searches WHERE query_hash = ?`, hash).Scan(&resultsJSON, &createdAt)
+	if err != nil {
+		return nil, false
+	}
+	if time.Now().Unix()-createdAt > maxAgeSeconds {
+		return nil, false
+	}
+	var results []SearchResult
+	if err := json.Unmarshal([]byte(resultsJSON), &results); err != nil {
+		return nil, false
+	}
+	return results, true
+}
+
+func (database *DB) saveWebSearch(query string, userID string, results []SearchResult) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	resultsJSON, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+	_, err = database.Exec(`
+		INSERT INTO web_searches (query_hash, query, user_id, results, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(query_hash) DO UPDATE SET
+			user_id = excluded.user_id,
+			results = excluded.results,
+			created_at = excluded.created_at
+	`, sha256Hex(query), query, userID, string(resultsJSON), time.Now().Unix())
+	return err
 }
 
 func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]RagChunk, error) {
@@ -7996,38 +8061,48 @@ func webSearchTool() DeepSeekTool {
 	}
 }
 
-func executeWebSearch(query string) string {
+type SearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet"`
+}
+
+func webSearchResults(query string) ([]SearchResult, bool) {
 	target := BASE_URL + "/web_search?q=" + url.QueryEscape(query)
 	resp, err := pythonHTTPClient.Get(target)
 	if err != nil {
 		log.Printf("web_search error: %v", err)
-		return "Web search failed, no results available."
+		return nil, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("web_search status %d", resp.StatusCode)
-		return "Web search failed, no results available."
+		return nil, false
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "Web search failed, no results available."
+		return nil, false
 	}
-	var results []struct {
-		Title   string `json:"title"`
-		URL     string `json:"url"`
-		Snippet string `json:"snippet"`
-	}
+	var results []SearchResult
 	if err := json.Unmarshal(body, &results); err != nil {
-		return "Web search failed, no results available."
+		return nil, false
 	}
+	var cleaned []SearchResult
+	for _, r := range results {
+		if r.Title == "" && r.Snippet == "" {
+			continue
+		}
+		cleaned = append(cleaned, r)
+	}
+	return cleaned, true
+}
+
+func formatSearchResults(results []SearchResult) string {
 	if len(results) == 0 {
 		return "No results found for the query. Do not search again; answer using the provided context and note that live web results were unavailable."
 	}
 	var sb strings.Builder
 	for _, r := range results {
-		if r.Title == "" && r.Snippet == "" {
-			continue
-		}
 		sb.WriteString("- " + truncateStr(r.Title, 120))
 		if r.Snippet != "" {
 			sb.WriteString(": " + truncateStr(r.Snippet, 300))
@@ -8037,10 +8112,27 @@ func executeWebSearch(query string) string {
 		}
 		sb.WriteString("\n")
 	}
-	if sb.Len() == 0 {
-		return "No results found for the query. Do not search again; answer using the provided context and note that live web results were unavailable."
-	}
 	return truncateStr(sb.String(), 4000)
+}
+
+const webSearchCacheMaxAge int64 = 7 * 24 * 3600
+
+func executeWebSearchWithCache(query string, userID string) (string, []SearchResult) {
+	normQuery := strings.ToLower(strings.TrimSpace(query))
+	if normQuery == "" {
+		return "Web search failed, no results available.", nil
+	}
+	if cached, ok := db.getCachedWebSearch(normQuery, webSearchCacheMaxAge); ok {
+		return formatSearchResults(cached), cached
+	}
+	results, ok := webSearchResults(query)
+	if !ok {
+		return "Web search failed, no results available.", nil
+	}
+	if len(results) > 0 {
+		_ = db.saveWebSearch(normQuery, userID, results)
+	}
+	return formatSearchResults(results), results
 }
 
 type DeepSeekDelta struct {
@@ -8247,6 +8339,22 @@ func buildRagItems() ([]ragItem, error) {
 			}
 		}
 		adRows.Close()
+	}
+
+	wsRows, err := db.Query(`SELECT user_id, query, results, created_at FROM web_searches`)
+	if err == nil {
+		for wsRows.Next() {
+			var userID, query, resultsJSON string
+			var createdAt int64
+			if err := wsRows.Scan(&userID, &query, &resultsJSON, &createdAt); err == nil && strings.TrimSpace(resultsJSON) != "" {
+				var results []SearchResult
+				if json.Unmarshal([]byte(resultsJSON), &results) == nil && len(results) > 0 {
+					content := fmt.Sprintf("Web search for %q:\n%s", query, formatSearchResults(results))
+					items = append(items, ragItem{source: "web_search", userID: userID, date: time.Unix(createdAt, 0).Format("2006-01-02"), content: content})
+				}
+			}
+		}
+		wsRows.Close()
 	}
 
 	return items, nil
@@ -8521,7 +8629,7 @@ func chatHandler(c echo.Context) error {
 		conversation = conv
 	}
 
-	if err := db.addChatMessage(conversation.Id, "user", req.Message); err != nil {
+	if err := db.addChatMessage(conversation.Id, "user", req.Message, ""); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save message"})
 	}
 
@@ -8550,6 +8658,7 @@ func chatHandler(c echo.Context) error {
 
 	tools := []DeepSeekTool{webSearchTool()}
 	var finalAnswer string
+	var turnSearchResults []SearchResult
 
 	for round := 0; round < 3; round++ {
 		reqBody := DeepSeekRequest{
@@ -8613,7 +8722,12 @@ func chatHandler(c echo.Context) error {
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 			statusJSON, _ := json.Marshal(map[string]string{"status": "Searching the web..."})
 			writeSSE(c, string(statusJSON))
-			result := executeWebSearch(args.Query)
+			result, searchResults := executeWebSearchWithCache(args.Query, userID)
+			if len(searchResults) > 0 {
+				turnSearchResults = append(turnSearchResults, searchResults...)
+				resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
+				writeSSE(c, string(resJSON))
+			}
 			messages = append(messages, DeepSeekMessage{
 				Role:       "tool",
 				ToolCallID: tc.Id,
@@ -8638,7 +8752,8 @@ func chatHandler(c echo.Context) error {
 		writeSSE(c, string(eventJSON))
 	}
 
-	_ = db.addChatMessage(conversation.Id, "assistant", finalAnswer)
+	searchResultsJSON, _ := json.Marshal(turnSearchResults)
+	_ = db.addChatMessage(conversation.Id, "assistant", finalAnswer, string(searchResultsJSON))
 	writeSSE(c, "[DONE]")
 	return nil
 }

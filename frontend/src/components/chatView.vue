@@ -48,6 +48,13 @@
               <div class="message-bubble" :class="msg.role === 'user' ? 'message-bubble-user' : 'message-bubble-assistant'">
                 <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="formatMarkdown(msg.content)"></div>
                 <div v-else class="white-space-pre-wrap">{{ msg.content }}</div>
+                <div v-if="msg.role === 'assistant' && msg.search_results && msg.search_results.length" class="search-results">
+                  <div class="text-caption font-weight-bold">Web sources</div>
+                  <div v-for="(sr, si) in msg.search_results" :key="'m' + si" class="search-result-item">
+                    <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
+                    <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                  </div>
+                </div>
               </div>
             </div>
             <div v-if="streaming" class="message-row justify-start">
@@ -56,6 +63,13 @@
                 <div v-else class="d-flex align-center">
                   <v-progress-circular size="16" indeterminate color="primary" class="mr-2"></v-progress-circular>
                   <span class="text-caption text-grey">Thinking</span>
+                </div>
+                <div v-if="streamSearchResults.length" class="search-results">
+                  <div class="text-caption font-weight-bold">Web sources</div>
+                  <div v-for="(sr, si) in streamSearchResults" :key="'s' + si" class="search-result-item">
+                    <a :href="sr.url" target="_blank" rel="noopener">{{ sr.title || sr.url }}</a>
+                    <div v-if="sr.snippet" class="text-caption text-grey">{{ sr.snippet }}</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -118,6 +132,7 @@ const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
 const streamContent = ref('')
+const streamSearchResults = ref([])
 const error = ref('')
 const messagesArea = ref(null)
 let lastSentMessage = ''
@@ -155,7 +170,18 @@ async function selectConversation(id) {
     const res = await apiFetch(`/api/chat/conversations/${id}`)
     if (res.ok) {
       const data = await res.json()
-      messages.value = data.messages || []
+      messages.value = (data.messages || []).map(m => {
+        if (m.search_results && typeof m.search_results === 'string') {
+          try {
+            m.search_results = JSON.parse(m.search_results)
+          } catch (e) {
+            m.search_results = []
+          }
+        } else if (!m.search_results) {
+          m.search_results = []
+        }
+        return m
+      })
       scrollToBottom()
     }
   } catch (e) {
@@ -204,6 +230,7 @@ async function sendMessage() {
   error.value = ''
   streaming.value = true
   streamContent.value = ''
+  streamSearchResults.value = []
 
   messages.value.push({ id: 'user-' + Date.now(), role: 'user', content: text })
   scrollToBottom()
@@ -266,6 +293,9 @@ async function sendMessage() {
             } else if (parsed.status) {
               streamContent.value += `\n\n_${parsed.status}_\n\n`
               scrollToBottom()
+            } else if (parsed.search_results) {
+              streamSearchResults.value.push(...parsed.search_results)
+              scrollToBottom()
             } else if (parsed.error) {
               error.value = parsed.error
             }
@@ -275,7 +305,7 @@ async function sendMessage() {
     }
 
     if (streamContent.value.trim()) {
-      messages.value.push({ id: 'assistant-' + Date.now(), role: 'assistant', content: streamContent.value })
+      messages.value.push({ id: 'assistant-' + Date.now(), role: 'assistant', content: streamContent.value, search_results: streamSearchResults.value })
       scrollToBottom()
     }
   } catch (e) {
@@ -316,6 +346,26 @@ onMounted(async () => {
 .chat-sidebar-card {
   height: 100%;
   border-right: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.search-results {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.search-result-item {
+  margin-top: 6px;
+}
+
+.search-result-item a {
+  color: var(--v-theme-primary);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.search-result-item a:hover {
+  text-decoration: underline;
 }
 
 .chat-main {
