@@ -8681,7 +8681,7 @@ func buildChatContext(userID string, question string) string {
 
 func buildSystemPrompt(userID string, question string) string {
 	context := buildChatContext(userID, question)
-	return fmt.Sprintf(`You are a helpful investment assistant for a personal portfolio tracker. Answer questions about the user's portfolio and investments using the provided context. Be honest about uncertainty and do not give absolute financial advice. If the context does not contain enough information, say so. If you need current web information, use the web_search tool. Always reply in plain text; never include raw tool-call or XML markup in your answer.
+	return fmt.Sprintf(`You are a helpful finance assistant for a personal portfolio and expense tracker. Answer questions about the user's portfolio, investments, and spending using the provided context. The context includes a SPENDING section with the user's manual expenses, bank transaction stats, and expense reports. When the user asks about spending, expenses, or where their money goes, answer from that SPENDING data. Be honest about uncertainty and do not give absolute financial advice. If the context does not contain enough information, say so. If you need current web information, use the web_search tool. Always reply in plain text; never include raw tool-call or XML markup in your answer.
 
 %s`, context)
 }
