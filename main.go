@@ -8592,7 +8592,13 @@ func buildSpendingContext(userID string) string {
 
 func buildChatContext(userID string, question string) string {
 	var sb strings.Builder
-	sb.WriteString("USER PORTFOLIO CONTEXT\n")
+	sb.WriteString("USER PORTFOLIO AND SPENDING CONTEXT\n")
+
+	spending := buildSpendingContext(userID)
+	if strings.TrimSpace(spending) != "" {
+		sb.WriteString("\nSPENDING\n")
+		sb.WriteString(spending)
+	}
 
 	holdings, err := db.getHoldingsByUser(userID)
 	if err == nil && len(holdings) > 0 {
@@ -8658,12 +8664,6 @@ func buildChatContext(userID string, question string) string {
 		sb.WriteString("\n")
 	}
 
-	spending := buildSpendingContext(userID)
-	if strings.TrimSpace(spending) != "" {
-		sb.WriteString("\nSPENDING\n")
-		sb.WriteString(spending)
-	}
-
 	ragChunks, ragErr := ragSearch(question, userID, nil, 6)
 	if ragErr == nil && len(ragChunks) > 0 {
 		sb.WriteString("\nRETRIEVED CONTEXT FROM STORED REPORTS AND NEWS\n")
@@ -8676,7 +8676,7 @@ func buildChatContext(userID string, question string) string {
 		}
 	}
 
-	return truncateStr(sb.String(), 12000)
+	return truncateStr(sb.String(), 16000)
 }
 
 func buildSystemPrompt(userID string, question string) string {
