@@ -8181,6 +8181,18 @@ func embeddingModelName() string {
 	return model
 }
 
+func ragEmbedBatchSize() int {
+	size := os.Getenv("RAG_EMBED_BATCH_SIZE")
+	if size == "" {
+		return 8
+	}
+	n, err := strconv.Atoi(size)
+	if err != nil || n < 1 {
+		return 8
+	}
+	return n
+}
+
 func sha256Hex(s string) string {
 	hash := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(hash[:])
@@ -8250,6 +8262,9 @@ func embedTexts(texts []string, maxRetries int) ([][]float32, error) {
 			}
 			if backoff == 0 {
 				backoff = time.Duration(15<<attempt) * time.Second
+				if backoff > 2*time.Minute {
+					backoff = 2 * time.Minute
+				}
 			}
 			log.Printf("Embeddings API returned %d, retrying in %v", resp.StatusCode, backoff)
 			time.Sleep(backoff)
@@ -8425,7 +8440,7 @@ func reindexRag() error {
 		}
 	}
 
-	const batchSize = 64
+	batchSize := ragEmbedBatchSize()
 	for i := 0; i < len(toEmbed); i += batchSize {
 		end := i + batchSize
 		if end > len(toEmbed) {
@@ -8436,7 +8451,7 @@ func reindexRag() error {
 		for _, p := range batch {
 			texts = append(texts, p.content)
 		}
-		embeddings, err := embedTexts(texts, 4)
+		embeddings, err := embedTexts(texts, 8)
 		if err != nil {
 			return err
 		}
@@ -8497,8 +8512,12 @@ func ragSearch(query string, userID string, tickers []string, k int) ([]RagChunk
 		score float32
 	}
 	var results []scored
+	queryEmb := queryEmbeddings[0]
 	for _, chunk := range chunks {
-		results = append(results, scored{chunk: chunk, score: cosineSim(queryEmbeddings[0], chunk.Embedding)})
+		if len(chunk.Embedding) != len(queryEmb) {
+			continue
+		}
+		results = append(results, scored{chunk: chunk, score: cosineSim(queryEmb, chunk.Embedding)})
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 	if len(results) > k {
