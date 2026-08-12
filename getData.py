@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from collections import deque
 from flask_cors import CORS
 import atexit
+import warnings
+
+warnings.filterwarnings("ignore", message=r".*duckduckgo_search.*renamed.*")
 
 try:
     _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)

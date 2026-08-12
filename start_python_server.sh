@@ -16,9 +16,9 @@ if ! command -v gunicorn &>/dev/null; then
     pip install gunicorn
 fi
 
-if ! python -c "import duckduckgo_search" 2>/dev/null; then
-    echo "[$(date)] Installing duckduckgo_search..."
-    pip install duckduckgo_search
+if ! python -c "import ddgs" 2>/dev/null; then
+    echo "[$(date)] Installing ddgs..."
+    pip install ddgs
 fi
 
 set -a
