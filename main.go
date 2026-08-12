@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
@@ -7927,19 +7926,46 @@ func deleteBankTransaction(c echo.Context) error {
 }
 
 type DeepSeekMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string             `json:"role"`
+	Content    string             `json:"content"`
+	ToolCalls  []DeepSeekToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Name       string             `json:"name,omitempty"`
 }
 
 type DeepSeekRequest struct {
-	Model    string            `json:"model"`
-	Messages []DeepSeekMessage `json:"messages"`
-	Thinking *DeepSeekThinking `json:"thinking,omitempty"`
-	Stream   bool              `json:"stream,omitempty"`
+	Model      string            `json:"model"`
+	Messages   []DeepSeekMessage `json:"messages"`
+	Thinking   *DeepSeekThinking `json:"thinking,omitempty"`
+	Stream     bool              `json:"stream,omitempty"`
+	Tools      []DeepSeekTool    `json:"tools,omitempty"`
+	ToolChoice string            `json:"tool_choice,omitempty"`
 }
 
 type DeepSeekThinking struct {
 	Type string `json:"type"`
+}
+
+type DeepSeekTool struct {
+	Type     string               `json:"type"`
+	Function DeepSeekToolFunction `json:"function"`
+}
+
+type DeepSeekToolFunction struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+type DeepSeekToolCall struct {
+	Id       string                   `json:"id"`
+	Type     string                   `json:"type"`
+	Function DeepSeekToolCallFunction `json:"function"`
+}
+
+type DeepSeekToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type DeepSeekChoice struct {
@@ -7948,6 +7974,73 @@ type DeepSeekChoice struct {
 
 type DeepSeekResponse struct {
 	Choices []DeepSeekChoice `json:"choices"`
+}
+
+func webSearchTool() DeepSeekTool {
+	return DeepSeekTool{
+		Type: "function",
+		Function: DeepSeekToolFunction{
+			Name:        "web_search",
+			Description: "Search the web for current information about companies, markets, news, or events. Use this when the provided context does not contain the information needed to answer the question.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "The search query to run.",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+	}
+}
+
+func executeWebSearch(query string) string {
+	target := BASE_URL + "/web_search?q=" + url.QueryEscape(query)
+	resp, err := pythonHTTPClient.Get(target)
+	if err != nil {
+		log.Printf("web_search error: %v", err)
+		return "Web search failed, no results available."
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("web_search status %d", resp.StatusCode)
+		return "Web search failed, no results available."
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "Web search failed, no results available."
+	}
+	var results []struct {
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Snippet string `json:"snippet"`
+	}
+	if err := json.Unmarshal(body, &results); err != nil {
+		return "Web search failed, no results available."
+	}
+	if len(results) == 0 {
+		return "No results found for the query. Do not search again; answer using the provided context and note that live web results were unavailable."
+	}
+	var sb strings.Builder
+	for _, r := range results {
+		if r.Title == "" && r.Snippet == "" {
+			continue
+		}
+		sb.WriteString("- " + truncateStr(r.Title, 120))
+		if r.Snippet != "" {
+			sb.WriteString(": " + truncateStr(r.Snippet, 300))
+		}
+		if r.URL != "" {
+			sb.WriteString(" (" + r.URL + ")")
+		}
+		sb.WriteString("\n")
+	}
+	if sb.Len() == 0 {
+		return "No results found for the query. Do not search again; answer using the provided context and note that live web results were unavailable."
+	}
+	return truncateStr(sb.String(), 4000)
 }
 
 type DeepSeekDelta struct {
@@ -8449,75 +8542,103 @@ func chatHandler(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DeepSeek API key not configured"})
 	}
 
-	reqBody := DeepSeekRequest{
-		Model:    "deepseek-v4-flash",
-		Messages: messages,
-		Stream:   true,
-		Thinking: &DeepSeekThinking{Type: "disabled"},
-	}
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
-	}
-
-	httpReq, err := http.NewRequestWithContext(c.Request().Context(), "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to contact model"})
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Model API error: " + truncateStr(string(respBody), 300)})
-	}
-
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("X-Accel-Buffering", "no")
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
-	var fullAnswer strings.Builder
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	tools := []DeepSeekTool{webSearchTool()}
+	var finalAnswer string
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
+	for round := 0; round < 3; round++ {
+		reqBody := DeepSeekRequest{
+			Model:      "deepseek-v4-flash",
+			Messages:   messages,
+			Stream:     false,
+			Thinking:   &DeepSeekThinking{Type: "disabled"},
+			Tools:      tools,
+			ToolChoice: "auto",
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
+		jsonBody, err := json.Marshal(reqBody)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+		}
+
+		httpReq, err := http.NewRequestWithContext(c.Request().Context(), "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to build request"})
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+		client := &http.Client{}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to contact model"})
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read model response"})
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Model API error: " + truncateStr(string(respBody), 300)})
+		}
+
+		var orResp DeepSeekResponse
+		if err := json.Unmarshal(respBody, &orResp); err != nil {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to parse model response"})
+		}
+		if len(orResp.Choices) == 0 {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "Empty model response"})
+		}
+
+		msg := orResp.Choices[0].Message
+		if len(msg.ToolCalls) == 0 {
+			finalAnswer = msg.Content
 			break
 		}
-		var chunk DeepSeekChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
+
+		messages = append(messages, msg)
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name != "web_search" {
+				continue
+			}
+			var args struct {
+				Query string `json:"query"`
+			}
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			statusJSON, _ := json.Marshal(map[string]string{"status": "Searching the web..."})
+			writeSSE(c, string(statusJSON))
+			result := executeWebSearch(args.Query)
+			messages = append(messages, DeepSeekMessage{
+				Role:       "tool",
+				ToolCallID: tc.Id,
+				Name:       tc.Function.Name,
+				Content:    result,
+			})
+			time.Sleep(5 * time.Second)
 		}
-		if len(chunk.Choices) == 0 {
-			continue
+	}
+
+	if finalAnswer == "" {
+		finalAnswer = "I could not generate an answer. Please try again."
+	}
+
+	const chunkSize = 40
+	for i := 0; i < len(finalAnswer); i += chunkSize {
+		end := i + chunkSize
+		if end > len(finalAnswer) {
+			end = len(finalAnswer)
 		}
-		delta := chunk.Choices[0].Delta.Content
-		if delta == "" {
-			continue
-		}
-		fullAnswer.WriteString(delta)
-		eventJSON, _ := json.Marshal(map[string]string{"delta": delta})
+		eventJSON, _ := json.Marshal(map[string]string{"delta": finalAnswer[i:end]})
 		writeSSE(c, string(eventJSON))
 	}
 
-	if fullAnswer.Len() > 0 {
-		_ = db.addChatMessage(conversation.Id, "assistant", fullAnswer.String())
-	}
-
+	_ = db.addChatMessage(conversation.Id, "assistant", finalAnswer)
 	writeSSE(c, "[DONE]")
 	return nil
 }

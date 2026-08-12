@@ -263,6 +263,9 @@ async function sendMessage() {
             if (parsed.delta) {
               streamContent.value += parsed.delta
               scrollToBottom()
+            } else if (parsed.status) {
+              streamContent.value += `\n\n_${parsed.status}_\n\n`
+              scrollToBottom()
             } else if (parsed.error) {
               error.value = parsed.error
             }

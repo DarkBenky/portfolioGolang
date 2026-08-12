@@ -501,6 +501,34 @@ def api_stock_history(ticker):
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
     
+@app.route('/api/web_search', methods=['GET'])
+def api_web_search():
+    query = flask.request.args.get('q', '').strip()
+    if not query:
+        return flask.jsonify({'error': 'q parameter is required'}), 400
+
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+        results = []
+        for attempt in range(2):
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=5):
+                    results.append({
+                        'title': r.get('title', ''),
+                        'url': r.get('href', ''),
+                        'snippet': r.get('body', '')
+                    })
+            if results:
+                break
+            import time
+            time.sleep(6 * (attempt + 1))
+        return flask.jsonify(results)
+    except Exception as e:
+        return flask.jsonify({'error': str(e)}), 500
+
 @app.route('/api/convert_currency', methods=['GET'])
 def api_convert_currency():
     amount = float(flask.request.args.get('amount', '0'))
