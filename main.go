@@ -2965,30 +2965,44 @@ func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]Ra
 	return chunks, nil
 }
 
-func (database *DB) deleteRagChunksExceptHashes(keep map[string]bool) error {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
-
-	if len(keep) == 0 {
-		_, err := database.Exec(`DELETE FROM rag_chunks`)
-		return err
+func (database *DB) deleteRagChunkHashes(hashes []string) error {
+	if len(hashes) == 0 {
+		return nil
 	}
-
-	rows, err := database.Query(`SELECT content_hash FROM rag_chunks`)
-	if err != nil {
-		return err
-	}
-	var toDelete []string
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err == nil && !keep[h] {
-			toDelete = append(toDelete, h)
+	const batchSize = 500
+	for i := 0; i < len(hashes); i += batchSize {
+		end := i + batchSize
+		if end > len(hashes) {
+			end = len(hashes)
 		}
-	}
-	rows.Close()
+		batch := hashes[i:end]
 
-	for _, h := range toDelete {
-		if _, err := database.Exec(`DELETE FROM rag_chunks WHERE content_hash = ?`, h); err != nil {
+		dbMutex.Lock()
+		tx, err := database.Begin()
+		if err == nil {
+			stmt, prepErr := tx.Prepare(`DELETE FROM rag_chunks WHERE content_hash = ?`)
+			if prepErr == nil {
+				failed := false
+				for _, h := range batch {
+					if _, execErr := stmt.Exec(h); execErr != nil {
+						failed = true
+						break
+					}
+				}
+				stmt.Close()
+				if failed {
+					tx.Rollback()
+					err = fmt.Errorf("failed to delete rag chunks")
+				} else {
+					err = tx.Commit()
+				}
+			} else {
+				tx.Rollback()
+				err = prepErr
+			}
+		}
+		dbMutex.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -8450,6 +8464,17 @@ func reindexRag() error {
 		}
 	}
 
+	var stale []string
+	for h := range existing {
+		if !currentHashes[h] {
+			stale = append(stale, h)
+		}
+	}
+
+	if len(toEmbed) == 0 && len(stale) == 0 {
+		return nil
+	}
+
 	batchSize := ragEmbedBatchSize()
 	for i := 0; i < len(toEmbed); i += batchSize {
 		end := i + batchSize
@@ -8483,7 +8508,7 @@ func reindexRag() error {
 		time.Sleep(1 * time.Second)
 	}
 
-	if err := db.deleteRagChunksExceptHashes(currentHashes); err != nil {
+	if err := db.deleteRagChunkHashes(stale); err != nil {
 		return err
 	}
 
@@ -8745,7 +8770,7 @@ func llmChat(ctx context.Context, messages []LLMMessage, tools []LLMTool, toolCh
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -9497,13 +9522,6 @@ func main() {
 	go fetchAssetDetailsPeriodic(1 * time.Hour)
 	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
 
-	go func() {
-		if err := reindexRag(); err != nil {
-			log.Printf("Initial RAG reindex error: %v", err)
-		} else {
-			log.Println("Initial RAG reindex complete")
-		}
-	}()
 	go reindexRagPeriodic(30 * time.Minute)
 
 	e := echo.New()
