@@ -7726,6 +7726,7 @@ Reply with ONLY the category name, nothing else.`, description)
 		Messages: []LLMMessage{
 			{Role: "user", Content: prompt},
 		},
+		Reasoning: &LLMReasoning{Enabled: false},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
@@ -7999,12 +8000,17 @@ type LLMMessage struct {
 	Name       string        `json:"name,omitempty"`
 }
 
+type LLMReasoning struct {
+	Enabled bool `json:"enabled"`
+}
+
 type LLMRequest struct {
-	Model      string       `json:"model"`
-	Messages   []LLMMessage `json:"messages"`
-	Stream     bool         `json:"stream,omitempty"`
-	Tools      []LLMTool    `json:"tools,omitempty"`
-	ToolChoice string       `json:"tool_choice,omitempty"`
+	Model      string        `json:"model"`
+	Messages   []LLMMessage  `json:"messages"`
+	Stream     bool          `json:"stream,omitempty"`
+	Tools      []LLMTool     `json:"tools,omitempty"`
+	ToolChoice string        `json:"tool_choice,omitempty"`
+	Reasoning  *LLMReasoning `json:"reasoning,omitempty"`
 }
 
 type LLMTool struct {
@@ -8726,6 +8732,7 @@ func llmChat(ctx context.Context, messages []LLMMessage, tools []LLMTool, toolCh
 		Stream:     false,
 		Tools:      tools,
 		ToolChoice: toolChoice,
+		Reasoning:  &LLMReasoning{Enabled: false},
 	}
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -9098,6 +9105,7 @@ Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, 
 		Messages: []LLMMessage{
 			{Role: "user", Content: prompt},
 		},
+		Reasoning: &LLMReasoning{Enabled: false},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)

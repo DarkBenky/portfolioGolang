@@ -12,6 +12,7 @@ def _call_openrouter(prompt, max_tokens=2048):
         "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
+        "reasoning": {"enabled": False},
     }
 
     headers = {
