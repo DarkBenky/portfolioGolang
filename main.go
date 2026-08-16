@@ -2926,12 +2926,33 @@ func (database *DB) saveWebSearch(query string, userID string, results []SearchR
 	return err
 }
 
+func (database *DB) pruneOldRagChunks(retentionDays int) error {
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	start := cutoff.AddDate(0, 0, -730)
+	for start.Before(cutoff) {
+		end := start.AddDate(0, 0, 30)
+		if end.After(cutoff) {
+			end = cutoff
+		}
+		dbMutex.Lock()
+		_, err := database.Exec(`DELETE FROM rag_chunks WHERE date >= ? AND date < ?`, strconv.FormatInt(start.Unix(), 10), strconv.FormatInt(end.Unix(), 10))
+		dbMutex.Unlock()
+		if err != nil {
+			return err
+		}
+		start = end
+	}
+	return nil
+}
+
 func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]RagChunk, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
 
-	query := `SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding FROM rag_chunks WHERE 1=1`
-	var args []interface{}
+	cutoff := strconv.FormatInt(time.Now().UTC().AddDate(0, 0, -90).Unix(), 10)
+
+	query := `SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding FROM rag_chunks WHERE date >= ?`
+	args := []interface{}{cutoff}
 	if userID != "" {
 		query += ` AND (user_id = ? OR user_id = '')`
 		args = append(args, userID)
@@ -2943,6 +2964,7 @@ func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]Ra
 			args = append(args, t)
 		}
 	}
+	query += ` ORDER BY date DESC LIMIT 2000`
 
 	rows, err := database.Query(query, args...)
 	if err != nil {
@@ -2962,6 +2984,38 @@ func (database *DB) getRagChunksForSearch(userID string, tickers []string) ([]Ra
 		}
 		chunks = append(chunks, c)
 	}
+
+	emptyQuery := `SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding FROM rag_chunks WHERE date = ''`
+	emptyArgs := []interface{}{}
+	if userID != "" {
+		emptyQuery += ` AND (user_id = ? OR user_id = '')`
+		emptyArgs = append(emptyArgs, userID)
+	}
+	if len(tickers) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(tickers)), ",")
+		emptyQuery += ` AND (ticker IN (` + placeholders + `) OR ticker = '')`
+		for _, t := range tickers {
+			emptyArgs = append(emptyArgs, t)
+		}
+	}
+	emptyQuery += ` LIMIT 500`
+
+	emptyRows, emptyErr := database.Query(emptyQuery, emptyArgs...)
+	if emptyErr == nil {
+		for emptyRows.Next() {
+			var c RagChunk
+			var embJSON string
+			if err := emptyRows.Scan(&c.Id, &c.Source, &c.Ticker, &c.UserID, &c.Date, &c.Content, &embJSON); err != nil {
+				continue
+			}
+			if err := json.Unmarshal([]byte(embJSON), &c.Embedding); err != nil {
+				continue
+			}
+			chunks = append(chunks, c)
+		}
+		emptyRows.Close()
+	}
+
 	return chunks, nil
 }
 
@@ -8345,7 +8399,8 @@ func buildRagItems() ([]ragItem, error) {
 	dbMutex.RLock()
 	defer dbMutex.RUnlock()
 
-	newsRows, err := db.Query(`SELECT COALESCE(ticker,''), COALESCE(published_at,''), title, COALESCE(summary,''), COALESCE(text,'') FROM news`)
+	newsCutoff := strconv.FormatInt(time.Now().UTC().AddDate(0, 0, -90).Unix(), 10)
+	newsRows, err := db.Query(`SELECT COALESCE(ticker,''), COALESCE(published_at,''), title, COALESCE(summary,''), COALESCE(text,'') FROM news WHERE published_at >= ?`, newsCutoff)
 	if err == nil {
 		for newsRows.Next() {
 			var ticker, publishedAt, title, summary, text string
@@ -8469,6 +8524,10 @@ func reindexRag() error {
 		if !currentHashes[h] {
 			stale = append(stale, h)
 		}
+	}
+
+	if err := db.pruneOldRagChunks(90); err != nil {
+		return err
 	}
 
 	if len(toEmbed) == 0 && len(stale) == 0 {
@@ -9459,6 +9518,10 @@ func main() {
 	}
 
 	log.Println("Database initialized successfully")
+
+	if _, err := sqlDB.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_date ON rag_chunks(date)`); err != nil {
+		log.Printf("Error creating rag_chunks date index: %v", err)
+	}
 
 	if migrated {
 		log.Println("Running initial price compaction...")
