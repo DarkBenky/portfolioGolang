@@ -7710,7 +7710,7 @@ type CamtRmtInf struct {
 }
 
 func categorizeWithAI(description string, userID string) string {
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	apiKey := openRouterKey()
 	if apiKey == "" {
 		return "Other"
 	}
@@ -7721,16 +7721,15 @@ Transaction description: %s
 
 Reply with ONLY the category name, nothing else.`, description)
 
-	reqBody := DeepSeekRequest{
-		Model: "deepseek-v4-flash",
-		Messages: []DeepSeekMessage{
+	reqBody := LLMRequest{
+		Model: chatModelName(),
+		Messages: []LLMMessage{
 			{Role: "user", Content: prompt},
 		},
-		Thinking: &DeepSeekThinking{Type: "disabled"},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequest("POST", openRouterChatURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "Other"
 	}
@@ -7748,7 +7747,7 @@ Reply with ONLY the category name, nothing else.`, description)
 	if resp.StatusCode != http.StatusOK {
 		return "Other"
 	}
-	var orResp DeepSeekResponse
+	var orResp LLMResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return "Other"
 	}
@@ -7992,61 +7991,56 @@ func deleteBankTransaction(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "Transaction deleted"})
 }
 
-type DeepSeekMessage struct {
-	Role       string             `json:"role"`
-	Content    string             `json:"content"`
-	ToolCalls  []DeepSeekToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string             `json:"tool_call_id,omitempty"`
-	Name       string             `json:"name,omitempty"`
+type LLMMessage struct {
+	Role       string        `json:"role"`
+	Content    string        `json:"content"`
+	ToolCalls  []LLMToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+	Name       string        `json:"name,omitempty"`
 }
 
-type DeepSeekRequest struct {
-	Model      string            `json:"model"`
-	Messages   []DeepSeekMessage `json:"messages"`
-	Thinking   *DeepSeekThinking `json:"thinking,omitempty"`
-	Stream     bool              `json:"stream,omitempty"`
-	Tools      []DeepSeekTool    `json:"tools,omitempty"`
-	ToolChoice string            `json:"tool_choice,omitempty"`
+type LLMRequest struct {
+	Model      string       `json:"model"`
+	Messages   []LLMMessage `json:"messages"`
+	Stream     bool         `json:"stream,omitempty"`
+	Tools      []LLMTool    `json:"tools,omitempty"`
+	ToolChoice string       `json:"tool_choice,omitempty"`
 }
 
-type DeepSeekThinking struct {
-	Type string `json:"type"`
+type LLMTool struct {
+	Type     string          `json:"type"`
+	Function LLMToolFunction `json:"function"`
 }
 
-type DeepSeekTool struct {
-	Type     string               `json:"type"`
-	Function DeepSeekToolFunction `json:"function"`
-}
-
-type DeepSeekToolFunction struct {
+type LLMToolFunction struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
-type DeepSeekToolCall struct {
-	Id       string                   `json:"id"`
-	Type     string                   `json:"type"`
-	Function DeepSeekToolCallFunction `json:"function"`
+type LLMToolCall struct {
+	Id       string              `json:"id"`
+	Type     string              `json:"type"`
+	Function LLMToolCallFunction `json:"function"`
 }
 
-type DeepSeekToolCallFunction struct {
+type LLMToolCallFunction struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-type DeepSeekChoice struct {
-	Message DeepSeekMessage `json:"message"`
+type LLMChoice struct {
+	Message LLMMessage `json:"message"`
 }
 
-type DeepSeekResponse struct {
-	Choices []DeepSeekChoice `json:"choices"`
+type LLMResponse struct {
+	Choices []LLMChoice `json:"choices"`
 }
 
-func webSearchTool() DeepSeekTool {
-	return DeepSeekTool{
+func webSearchTool() LLMTool {
+	return LLMTool{
 		Type: "function",
-		Function: DeepSeekToolFunction{
+		Function: LLMToolFunction{
 			Name:        "web_search",
 			Description: "Search the web for current information about companies, markets, news, or events. Use this when the provided context does not contain the information needed to answer the question.",
 			Parameters: map[string]interface{}{
@@ -8159,18 +8153,28 @@ func stripWebSearchDSML(content string) string {
 	return strings.TrimSpace(content)
 }
 
-type DeepSeekDelta struct {
+type LLMDelta struct {
 	Content string `json:"content"`
 }
 
-type DeepSeekChunk struct {
+type LLMChunk struct {
 	Choices []struct {
-		Delta DeepSeekDelta `json:"delta"`
+		Delta LLMDelta `json:"delta"`
 	} `json:"choices"`
 }
 
 func openRouterKey() string {
 	return os.Getenv("OPENROUTER_API_KEY")
+}
+
+const openRouterChatURL = "https://openrouter.ai/api/v1/chat/completions"
+
+func chatModelName() string {
+	model := os.Getenv("OPENROUTER_MODEL")
+	if model == "" {
+		return "qwen/qwen3.7-flash"
+	}
+	return model
 }
 
 func embeddingModelName() string {
@@ -8711,16 +8715,15 @@ func writeSSE(c echo.Context, payload string) {
 	c.Response().Flush()
 }
 
-func deepSeekChat(ctx context.Context, messages []DeepSeekMessage, tools []DeepSeekTool, toolChoice string) (*DeepSeekMessage, error) {
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+func llmChat(ctx context.Context, messages []LLMMessage, tools []LLMTool, toolChoice string) (*LLMMessage, error) {
+	apiKey := openRouterKey()
 	if apiKey == "" {
-		return nil, fmt.Errorf("DEEPSEEK_API_KEY not configured")
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not configured")
 	}
-	reqBody := DeepSeekRequest{
-		Model:      "deepseek-v4-flash",
+	reqBody := LLMRequest{
+		Model:      chatModelName(),
 		Messages:   messages,
 		Stream:     false,
-		Thinking:   &DeepSeekThinking{Type: "disabled"},
 		Tools:      tools,
 		ToolChoice: toolChoice,
 	}
@@ -8728,7 +8731,7 @@ func deepSeekChat(ctx context.Context, messages []DeepSeekMessage, tools []DeepS
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", openRouterChatURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
@@ -8748,7 +8751,7 @@ func deepSeekChat(ctx context.Context, messages []DeepSeekMessage, tools []DeepS
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("model API error: %s", truncateStr(string(respBody), 300))
 	}
-	var orResp DeepSeekResponse
+	var orResp LLMResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return nil, err
 	}
@@ -8808,20 +8811,20 @@ func chatHandler(c echo.Context) error {
 	}
 
 	history, _ := db.getConversationMessages(conversation.Id, 20)
-	messages := []DeepSeekMessage{
+	messages := []LLMMessage{
 		{Role: "system", Content: buildSystemPrompt(userID, req.Message)},
 	}
 	for _, m := range history {
-		messages = append(messages, DeepSeekMessage{Role: m.Role, Content: m.Content})
+		messages = append(messages, LLMMessage{Role: m.Role, Content: m.Content})
 	}
 
 	lastChatGenMu.Lock()
 	lastChatGen[userID] = time.Now()
 	lastChatGenMu.Unlock()
 
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	apiKey := openRouterKey()
 	if apiKey == "" {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "DeepSeek API key not configured"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "OpenRouter API key not configured"})
 	}
 
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
@@ -8830,13 +8833,13 @@ func chatHandler(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
-	tools := []DeepSeekTool{webSearchTool()}
+	tools := []LLMTool{webSearchTool()}
 	var finalAnswer string
 	var turnSearchResults []SearchResult
 
 	const maxToolRounds = 5
 	for round := 0; round < maxToolRounds; round++ {
-		msg, err := deepSeekChat(c.Request().Context(), messages, tools, "auto")
+		msg, err := llmChat(c.Request().Context(), messages, tools, "auto")
 		if err != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 		}
@@ -8852,7 +8855,7 @@ func chatHandler(c echo.Context) error {
 						resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
 						writeSSE(c, string(resJSON))
 					}
-					messages = append(messages, DeepSeekMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
+					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
 				}
 				time.Sleep(5 * time.Second)
 				continue
@@ -8878,7 +8881,7 @@ func chatHandler(c echo.Context) error {
 				resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
 				writeSSE(c, string(resJSON))
 			}
-			messages = append(messages, DeepSeekMessage{
+			messages = append(messages, LLMMessage{
 				Role:       "tool",
 				ToolCallID: tc.Id,
 				Name:       tc.Function.Name,
@@ -8889,7 +8892,7 @@ func chatHandler(c echo.Context) error {
 	}
 
 	if finalAnswer == "" {
-		msg, err := deepSeekChat(c.Request().Context(), messages, nil, "")
+		msg, err := llmChat(c.Request().Context(), messages, nil, "")
 		if err == nil {
 			finalAnswer = strings.TrimSpace(stripWebSearchDSML(msg.Content))
 		}
@@ -9085,21 +9088,20 @@ Provide a concise report with these sections in plain text (no markdown):
 
 Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, totalIn, totalOut-totalIn, len(dataLines), categoryBreakdown, strings.Join(dataLines, "\n"))
 
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	apiKey := openRouterKey()
 	if apiKey == "" {
-		return periodStart, periodEnd, "", fmt.Errorf("DeepSeek API key not configured")
+		return periodStart, periodEnd, "", fmt.Errorf("OpenRouter API key not configured")
 	}
 
-	reqBody := DeepSeekRequest{
-		Model: "deepseek-v4-flash",
-		Messages: []DeepSeekMessage{
+	reqBody := LLMRequest{
+		Model: chatModelName(),
+		Messages: []LLMMessage{
 			{Role: "user", Content: prompt},
 		},
-		Thinking: &DeepSeekThinking{Type: "disabled"},
 	}
 
 	jsonBody, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequest("POST", "https://api.deepseek.com/chat/completions", bytes.NewReader(jsonBody))
+	httpReq, err := http.NewRequest("POST", openRouterChatURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return periodStart, periodEnd, "", err
 	}
@@ -9120,7 +9122,7 @@ Keep it concise, maximum 500 words.`, periodStart, periodEnd, period, totalOut, 
 	if resp.StatusCode != http.StatusOK {
 		return periodStart, periodEnd, "", fmt.Errorf("AI API error (status %d): %s", resp.StatusCode, truncateStr(string(respBody), 500))
 	}
-	var orResp DeepSeekResponse
+	var orResp LLMResponse
 	if err := json.Unmarshal(respBody, &orResp); err != nil {
 		return periodStart, periodEnd, "", fmt.Errorf("failed to parse AI response: %v", err)
 	}

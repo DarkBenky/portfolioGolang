@@ -7,8 +7,8 @@ DEV_MODE = os.getenv("DEV_MODE", "true") == "true"
 BACKEND_GO_PORT = os.getenv("BACKEND_GO_PORT")
 BACKEND_PYTHON_PORT = os.getenv("BACKEND_PYTHON_PORT")
 SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.7-flash")
 PYTHON_API_KEY = os.getenv("PYTHON_API_KEY", "")
 
 if DEV_MODE:
