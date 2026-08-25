@@ -50,7 +50,7 @@
                 <div v-if="task.last_report_summary" class="text-caption mt-1">
                   {{ truncate(task.last_report_summary, 120) }}
                 </div>
-                <div class="d-flex mt-2">
+                <div class="d-flex flex-wrap align-center mt-2">
                   <v-btn
                     size="x-small"
                     variant="tonal"
@@ -60,10 +60,23 @@
                   >
                     Generate now
                   </v-btn>
-                  <v-btn size="x-small" variant="tonal" class="ml-1" @click="openEdit(task)">Edit</v-btn>
-                  <v-btn size="x-small" variant="tonal" color="error" class="ml-1" @click="deleteTask(task)">
-                    Delete
-                  </v-btn>
+                  <v-btn
+                    size="x-small"
+                    variant="tonal"
+                    icon="mdi-pencil"
+                    title="Edit"
+                    class="ml-1"
+                    @click="openEdit(task)"
+                  ></v-btn>
+                  <v-btn
+                    size="x-small"
+                    variant="tonal"
+                    color="error"
+                    icon="mdi-delete"
+                    title="Delete"
+                    class="ml-1"
+                    @click="deleteTask(task)"
+                  ></v-btn>
                 </div>
               </v-card-text>
             </v-card>
@@ -73,23 +86,30 @@
 
       <v-col cols="12" md="8">
         <v-card elevation="0" outlined>
-          <v-card-title class="text-h6">Reports</v-card-title>
+          <v-card-title class="d-flex align-center">
+            <span class="text-h6">Reports</span>
+            <v-spacer></v-spacer>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadReports">Refresh</v-btn>
+          </v-card-title>
           <v-divider></v-divider>
           <v-card-text>
             <v-row>
-              <v-col cols="12" md="5">
+              <v-col cols="12" md="4">
                 <v-date-picker
                   v-model="selectedDate"
                   :events="reportDates"
                   event-color="primary"
                   show-adjacent-months
+                  class="mx-auto"
+                  style="max-width: 340px;"
                 ></v-date-picker>
               </v-col>
-              <v-col cols="12" md="7">
-                <div class="d-flex align-center mb-2">
+              <v-col cols="12" md="8">
+                <div class="d-flex align-center mb-3">
                   <span class="text-subtitle-1 font-weight-bold">{{ selectedDate }}</span>
-                  <v-spacer></v-spacer>
-                  <v-btn size="small" variant="tonal" @click="loadReports">Refresh</v-btn>
+                  <v-chip v-if="reports.length" size="x-small" variant="tonal" class="ml-2">
+                    {{ reports.length }} report(s)
+                  </v-chip>
                 </div>
                 <v-alert v-if="reports.length === 0" type="info" variant="tonal">
                   No reports for this day.
@@ -99,31 +119,33 @@
                     <v-card-title class="d-flex align-center py-2">
                       <span class="text-subtitle-1">{{ report.subject }}</span>
                       <v-spacer></v-spacer>
-                      <v-chip
-                        size="x-small"
-                        variant="tonal"
-                        :color="reportColor(report.status)"
-                      >
+                      <v-chip size="x-small" variant="tonal" :color="reportColor(report.status)">
                         {{ report.status }}
                       </v-chip>
                     </v-card-title>
                     <v-card-text>
-                      <div v-if="report.summary" class="text-body-2 mb-2">
-                        <strong>Summary:</strong> {{ report.summary }}
+                      <div v-if="report.status === 'running'" class="d-flex align-center mb-2">
+                        <v-progress-circular size="16" indeterminate color="primary" class="mr-2"></v-progress-circular>
+                        <span class="text-caption text-grey">Generating report...</span>
                       </div>
-                      <div
-                        class="markdown-content"
-                        v-html="formatMarkdown(truncate(report.content, expandedReports[report.id] ? undefined : 1200))"
-                      ></div>
-                      <v-btn
-                        v-if="report.content && report.content.length > 1200"
-                        size="x-small"
-                        variant="text"
-                        color="primary"
-                        @click="expandedReports[report.id] = !expandedReports[report.id]"
-                      >
-                        {{ expandedReports[report.id] ? 'Show less' : 'Show more' }}
-                      </v-btn>
+                      <template v-else>
+                        <div v-if="report.summary" class="text-body-2 mb-2">
+                          <strong>Summary:</strong> {{ report.summary }}
+                        </div>
+                        <div
+                          class="markdown-content"
+                          v-html="formatMarkdown(truncate(report.content, expandedReports[report.id] ? undefined : 1200))"
+                        ></div>
+                        <v-btn
+                          v-if="report.content && report.content.length > 1200"
+                          size="x-small"
+                          variant="text"
+                          color="primary"
+                          @click="toggleExpand(report.id)"
+                        >
+                          {{ expandedReports[report.id] ? 'Show less' : 'Show more' }}
+                        </v-btn>
+                      </template>
                     </v-card-text>
                   </v-card>
                 </div>
@@ -225,6 +247,7 @@ const editingId = ref(null)
 const form = ref({ subject: '', sub_topics: [], daily_hour: 9 })
 const newSubTopic = ref('')
 const expandedReports = ref({})
+let reportsPollTimer = null
 const hourOptions = Array.from({ length: 24 }, (_, i) => ({ title: String(i).padStart(2, '0') + ':00', value: i }))
 
 async function apiFetch(path, options = {}) {
@@ -262,14 +285,28 @@ async function loadCalendarDates() {
 }
 
 async function loadReports() {
+  if (reportsPollTimer) {
+    clearTimeout(reportsPollTimer)
+    reportsPollTimer = null
+  }
   try {
     const res = await apiFetch(`/api/situation/reports?date=${selectedDate.value}`)
     if (res.ok) {
       reports.value = await res.json()
+      if (reports.value.some(r => r.status === 'running')) {
+        reportsPollTimer = setTimeout(() => {
+          loadReports()
+          loadTasks()
+        }, 4000)
+      }
     }
   } catch (e) {
     console.error('Failed to load reports', e)
   }
+}
+
+function toggleExpand(reportId) {
+  expandedReports.value[reportId] = !expandedReports.value[reportId]
 }
 
 function openCreate() {
