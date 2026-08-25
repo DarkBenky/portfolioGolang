@@ -46,7 +46,11 @@
               :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
             >
               <div class="message-bubble" :class="msg.role === 'user' ? 'message-bubble-user' : 'message-bubble-assistant'">
-                <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="formatMarkdown(msg.content)"></div>
+                <div v-if="msg.role === 'assistant' && msg.content" class="markdown-content" v-html="formatMarkdown(msg.content)"></div>
+                <div v-else-if="msg.role === 'assistant'" class="d-flex align-center">
+                  <v-progress-circular size="16" indeterminate color="primary" class="mr-2"></v-progress-circular>
+                  <span class="text-caption text-grey">Generating</span>
+                </div>
                 <div v-else class="white-space-pre-wrap">{{ msg.content }}</div>
                 <div v-if="msg.role === 'assistant' && msg.search_results && msg.search_results.length" class="search-results">
                   <div class="search-results-header" @click="toggleSources(msg.id)">
@@ -152,6 +156,7 @@ const streamSourcesOpen = ref(false)
 const error = ref('')
 const messagesArea = ref(null)
 let lastSentMessage = ''
+let pollTimer = null
 
 async function apiFetch(path, options = {}) {
   const token = getCookie('auth_token')
@@ -188,6 +193,10 @@ async function selectConversation(id) {
   error.value = ''
   sourcesOpen.value = {}
   streamSourcesOpen.value = false
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
   try {
     const res = await apiFetch(`/api/chat/conversations/${id}`)
     if (res.ok) {
@@ -205,6 +214,13 @@ async function selectConversation(id) {
         return m
       })
       scrollToBottom()
+      if (messages.value.some(m => m.status === 'streaming')) {
+        pollTimer = setTimeout(() => {
+          if (activeConversationId.value === id) {
+            selectConversation(id)
+          }
+        }, 3000)
+      }
     }
   } catch (e) {
     console.error('Failed to load conversation', e)
@@ -212,6 +228,10 @@ async function selectConversation(id) {
 }
 
 async function newConversation() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
   activeConversationId.value = null
   messages.value = []
   input.value = ''

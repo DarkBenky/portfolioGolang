@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -172,6 +173,7 @@ type ChatMessage struct {
 	Role           string `json:"role"`
 	Content        string `json:"content"`
 	SearchResults  string `json:"search_results"`
+	Status         string `json:"status"`
 	CreatedAt      int64  `json:"created_at"`
 }
 
@@ -1332,6 +1334,11 @@ func initDB(fakeData bool) (*sql.DB, error) {
 	}
 
 	_, err = db.Exec(`ALTER TABLE chat_messages ADD COLUMN search_results TEXT`)
+	if err != nil {
+		// column already exists on fresh databases
+	}
+
+	_, err = db.Exec(`ALTER TABLE chat_messages ADD COLUMN status TEXT DEFAULT ''`)
 	if err != nil {
 		// column already exists on fresh databases
 	}
@@ -2767,7 +2774,7 @@ func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMes
 	defer dbMutex.RUnlock()
 
 	rows, err := database.Query(`
-		SELECT id, conversation_id, role, content, COALESCE(search_results,''), created_at
+		SELECT id, conversation_id, role, content, COALESCE(search_results,''), COALESCE(status,''), created_at
 		FROM chat_messages
 		WHERE conversation_id = ?
 		ORDER BY created_at DESC
@@ -2781,7 +2788,7 @@ func (database *DB) getConversationMessages(convID string, limit int) ([]ChatMes
 	var messages []ChatMessage
 	for rows.Next() {
 		var m ChatMessage
-		if err := rows.Scan(&m.Id, &m.ConversationID, &m.Role, &m.Content, &m.SearchResults, &m.CreatedAt); err == nil {
+		if err := rows.Scan(&m.Id, &m.ConversationID, &m.Role, &m.Content, &m.SearchResults, &m.Status, &m.CreatedAt); err == nil {
 			messages = append(messages, m)
 		}
 	}
@@ -2839,6 +2846,29 @@ func (database *DB) deleteConversation(convID string, userID string) error {
 	}
 
 	return tx.Commit()
+}
+
+func (database *DB) createPendingAssistantMessage(convID string) (string, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	id := generateID()
+	_, err := database.Exec(`
+		INSERT INTO chat_messages (id, conversation_id, role, content, search_results, status, created_at)
+		VALUES (?, ?, 'assistant', '', '', 'streaming', ?)
+	`, id, convID, time.Now().Unix())
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (database *DB) updateChatMessage(id string, content string, searchResults string, status string) error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	_, err := database.Exec(`
+		UPDATE chat_messages SET content = ?, search_results = ?, status = ? WHERE id = ?
+	`, content, searchResults, status, id)
+	return err
 }
 
 func (database *DB) upsertRagChunk(chunk RagChunk) error {
@@ -8475,6 +8505,29 @@ func buildRagItems() ([]ragItem, error) {
 		wsRows.Close()
 	}
 
+	srRows, err := db.Query(`SELECT user_id, date, COALESCE(summary,''), COALESCE(content,'') FROM situation_reports WHERE status = 'completed'`)
+	if err == nil {
+		for srRows.Next() {
+			var userID, date, summary, content string
+			if err := srRows.Scan(&userID, &date, &summary, &content); err == nil && strings.TrimSpace(content) != "" {
+				items = append(items, ragItem{source: "situation_report", userID: userID, date: date, content: content})
+			}
+		}
+		srRows.Close()
+	}
+
+	snRows, err := db.Query(`SELECT user_id, date, COALESCE(title,''), COALESCE(summary,''), COALESCE(text,'') FROM situation_news`)
+	if err == nil {
+		for snRows.Next() {
+			var userID, date, title, summary, text string
+			if err := snRows.Scan(&userID, &date, &title, &summary, &text); err == nil && strings.TrimSpace(title+summary+text) != "" {
+				content := strings.TrimSpace(title + ". " + summary + " " + text)
+				items = append(items, ragItem{source: "situation_news", userID: userID, date: date, content: content})
+			}
+		}
+		snRows.Close()
+	}
+
 	return items, nil
 }
 
@@ -8852,6 +8905,125 @@ func llmChat(ctx context.Context, messages []LLMMessage, tools []LLMTool, toolCh
 	return &orResp.Choices[0].Message, nil
 }
 
+type streamDelta struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	ToolCalls []struct {
+		Index    int    `json:"index"`
+		Id       string `json:"id"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
+}
+
+type streamChunk struct {
+	Choices []struct {
+		Delta streamDelta `json:"delta"`
+	} `json:"choices"`
+}
+
+func streamLLMChat(ctx context.Context, messages []LLMMessage, tools []LLMTool, toolChoice string, onDelta func(string)) (*LLMMessage, error) {
+	apiKey := openRouterKey()
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not configured")
+	}
+	reqBody := LLMRequest{
+		Model:      chatModelName(),
+		Messages:   messages,
+		Stream:     true,
+		Tools:      tools,
+		ToolChoice: toolChoice,
+		Reasoning:  &LLMReasoning{Enabled: false},
+	}
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", openRouterChatURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("model API error: %s", truncateStr(string(body), 300))
+	}
+
+	msg := &LLMMessage{Role: "assistant"}
+	toolAccum := make(map[int]*LLMToolCall)
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
+		if data == "[DONE]" {
+			break
+		}
+		var chunk streamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta
+		if delta.Content != "" {
+			msg.Content += delta.Content
+			if onDelta != nil {
+				onDelta(delta.Content)
+			}
+		}
+		for _, tc := range delta.ToolCalls {
+			existing, ok := toolAccum[tc.Index]
+			if !ok {
+				existing = &LLMToolCall{Id: tc.Id, Type: "function"}
+				toolAccum[tc.Index] = existing
+			}
+			if tc.Id != "" {
+				existing.Id = tc.Id
+			}
+			if tc.Function.Name != "" {
+				existing.Function.Name = tc.Function.Name
+			}
+			if tc.Function.Arguments != "" {
+				existing.Function.Arguments += tc.Function.Arguments
+			}
+		}
+	}
+
+	if len(toolAccum) > 0 {
+		msg.ToolCalls = make([]LLMToolCall, 0, len(toolAccum))
+		for i := 0; i < len(toolAccum); i++ {
+			if tc, ok := toolAccum[i]; ok {
+				msg.ToolCalls = append(msg.ToolCalls, *tc)
+			}
+		}
+	}
+	return msg, nil
+}
+
 func chatHandler(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
@@ -8924,15 +9096,33 @@ func chatHandler(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
+	ctx := context.Background()
+	assistantMsgID, _ := db.createPendingAssistantMessage(conversation.Id)
+	streamed := ""
+	lastSaved := 0
+	writeDelta := func(d string) {
+		if d == "" {
+			return
+		}
+		streamed += d
+		eventJSON, _ := json.Marshal(map[string]string{"delta": d})
+		writeSSE(c, string(eventJSON))
+		if len(streamed)-lastSaved >= 100 {
+			lastSaved = len(streamed)
+			_ = db.updateChatMessage(assistantMsgID, streamed, "", "streaming")
+		}
+	}
+
 	tools := []LLMTool{webSearchTool()}
 	var finalAnswer string
 	var turnSearchResults []SearchResult
 
 	const maxToolRounds = 5
 	for round := 0; round < maxToolRounds; round++ {
-		msg, err := llmChat(c.Request().Context(), messages, tools, "auto")
+		msg, err := streamLLMChat(ctx, messages, tools, "auto", writeDelta)
 		if err != nil {
-			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+			_ = db.updateChatMessage(assistantMsgID, streamed, "", "failed")
+			return writeChatErrorSSE(c)
 		}
 		if len(msg.ToolCalls) == 0 {
 			dsmlQueries := extractWebSearchQueries(msg.Content)
@@ -8948,7 +9138,7 @@ func chatHandler(c echo.Context) error {
 					}
 					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
 				}
-				time.Sleep(5 * time.Second)
+				time.Sleep(3 * time.Second)
 				continue
 			}
 			finalAnswer = strings.TrimSpace(stripWebSearchDSML(msg.Content))
@@ -8978,32 +9168,31 @@ func chatHandler(c echo.Context) error {
 				Name:       tc.Function.Name,
 				Content:    result,
 			})
-			time.Sleep(5 * time.Second)
+			time.Sleep(3 * time.Second)
 		}
 	}
 
 	if finalAnswer == "" {
-		msg, err := llmChat(c.Request().Context(), messages, nil, "")
-		if err == nil {
-			finalAnswer = strings.TrimSpace(stripWebSearchDSML(msg.Content))
+		fMsg, err := streamLLMChat(ctx, messages, nil, "", writeDelta)
+		if err == nil && fMsg != nil {
+			finalAnswer = strings.TrimSpace(stripWebSearchDSML(fMsg.Content))
 		}
 	}
 	if strings.TrimSpace(stripWebSearchDSML(finalAnswer)) == "" {
 		finalAnswer = "I could not generate an answer. Please try again."
-	}
-
-	const chunkSize = 40
-	for i := 0; i < len(finalAnswer); i += chunkSize {
-		end := i + chunkSize
-		if end > len(finalAnswer) {
-			end = len(finalAnswer)
-		}
-		eventJSON, _ := json.Marshal(map[string]string{"delta": finalAnswer[i:end]})
+		eventJSON, _ := json.Marshal(map[string]string{"delta": finalAnswer})
 		writeSSE(c, string(eventJSON))
 	}
 
 	searchResultsJSON, _ := json.Marshal(turnSearchResults)
-	_ = db.addChatMessage(conversation.Id, "assistant", finalAnswer, string(searchResultsJSON))
+	_ = db.updateChatMessage(assistantMsgID, finalAnswer, string(searchResultsJSON), "done")
+	writeSSE(c, "[DONE]")
+	return nil
+}
+
+func writeChatErrorSSE(c echo.Context) error {
+	eventJSON, _ := json.Marshal(map[string]string{"error": "Model request failed. Please try again."})
+	writeSSE(c, string(eventJSON))
 	writeSSE(c, "[DONE]")
 	return nil
 }
@@ -9517,6 +9706,10 @@ func main() {
 		log.Fatal("Failed to initialize bills database:", err)
 	}
 
+	if err := createSituationTables(sqlDB); err != nil {
+		log.Fatal("Failed to initialize situation tables:", err)
+	}
+
 	log.Println("Database initialized successfully")
 
 	if _, err := sqlDB.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_date ON rag_chunks(date)`); err != nil {
@@ -9586,6 +9779,7 @@ func main() {
 	// go fillMissingTickerIsinPeriodic(5 * time.Minute)
 
 	go reindexRagPeriodic(30 * time.Minute)
+	go situationSchedulerPeriodic(30 * time.Minute)
 
 	e := echo.New()
 
@@ -9686,6 +9880,17 @@ func main() {
 	protected.GET("/chat/conversations/:id", getConversationHandler)
 	protected.DELETE("/chat/conversations/:id", deleteConversationHandler)
 	protected.POST("/chat/reindex", reindexRagHandler)
+
+	// Situation report endpoints
+	protected.GET("/situation/tasks", listSituationTasksHandler)
+	protected.POST("/situation/tasks", createSituationTaskHandler)
+	protected.PUT("/situation/tasks/:id", updateSituationTaskHandler)
+	protected.DELETE("/situation/tasks/:id", deleteSituationTaskHandler)
+	protected.POST("/situation/tasks/:id/pause", pauseSituationTaskHandler)
+	protected.POST("/situation/tasks/:id/resume", resumeSituationTaskHandler)
+	protected.POST("/situation/tasks/:id/generate", generateSituationTaskHandler)
+	protected.GET("/situation/reports", getSituationReportsHandler)
+	protected.GET("/situation/reports/history", getSituationReportHistoryHandler)
 
 	startAutoReportScheduler()
 

@@ -291,6 +291,13 @@
               :active="activeView === 'chat'"
               @click="activeView = 'chat'"
             />
+            <v-list-item
+              prepend-icon="mdi-radar"
+              title="Situations"
+              value="situations"
+              :active="activeView === 'situations'"
+              @click="activeView = 'situations'"
+            />
           </v-list>
         </v-navigation-drawer>
 
@@ -1323,6 +1330,9 @@
         <v-container v-if="activeView === 'chat'" fluid class="pa-0" style="height: calc(100vh - 64px);">
           <ChatView />
         </v-container>
+        <v-container v-if="activeView === 'situations'" fluid class="pa-0">
+          <SituationView />
+        </v-container>
       </v-main>
     </template>
   </v-app>
@@ -1342,6 +1352,7 @@ import RunningSummaryView from './components/RunningSummaryView.vue'
 import NewsFeed from './components/newsFeed.vue'
 import TradingViewer from './components/tradingViewer.vue'
 import ChatView from './components/chatView.vue'
+import SituationView from './components/situationView.vue'
 
 function decodeJwtPayload(token) {
   try {
@@ -1369,7 +1380,8 @@ export default {
     RunningSummaryView,
     NewsFeed,
     TradingViewer,
-    ChatView
+    ChatView,
+    SituationView
   },
 
   data() {
