@@ -1,17 +1,14 @@
 import { fileURLToPath, URL } from 'node:url'
 
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
-  const devMode = env.VITE_DEV_MODE === 'true'
-  
   return {
     plugins: [
       vue(),
-      vueDevTools(),
+      ...(mode === 'development' ? [vueDevTools()] : []),
     ],
     resolve: {
       alias: {
@@ -19,9 +16,14 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      host: devMode ? 'localhost' : '0.0.0.0',
+      host: '127.0.0.1',
       port: 5173,
       strictPort: true,
+      fs: {
+        strict: true,
+        allow: [searchForWorkspaceRoot(process.cwd())],
+      },
+      allowedHosts: ['localhost', '127.0.0.1'],
     },
   }
 })

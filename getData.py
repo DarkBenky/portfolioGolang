@@ -1,4 +1,5 @@
 import resource
+import secrets
 import yfinance as yf
 import flask
 from functools import lru_cache
@@ -33,7 +34,7 @@ CORS(app, resources={r"/api/*": {"origins": ["http://localhost:5173", "http://12
 def require_api_key():
     if flask.request.path.startswith('/api') and flask.request.path != '/api/health':
         provided = flask.request.headers.get('X-API-Key', '')
-        if not PYTHON_API_KEY or provided != PYTHON_API_KEY:
+        if not PYTHON_API_KEY or not secrets.compare_digest(provided, PYTHON_API_KEY):
             return flask.jsonify({'error': 'Unauthorized'}), 401
 
 model = creteSentimentAnalyzer()

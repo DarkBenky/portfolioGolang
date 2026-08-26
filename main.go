@@ -9787,6 +9787,10 @@ func main() {
 
 	e := echo.New()
 
+	e.Use(middleware.Recover())
+	e.Use(middleware.Secure())
+	e.Use(middleware.BodyLimit("20M"))
+
 	var allowOrigins []string
 	if devMode == "true" {
 		allowOrigins = []string{"http://localhost:5173"}
