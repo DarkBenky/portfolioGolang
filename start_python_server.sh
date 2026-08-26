@@ -33,6 +33,10 @@ echo "Starting Python backend with auto-restart..."
 
 while true; do
     rm -f gunicorn.ctl
+    if fuser -k "$PORT"/tcp 2>/dev/null; then
+        echo "[$(date)] Killed stale process on port $PORT"
+        sleep 2
+    fi
     echo "[$(date)] Starting gunicorn on port $PORT"
     gunicorn -w 1 --threads 10 --timeout 120 --keep-alive 5 -b 127.0.0.1:"$PORT" getData:app &
     GUNICORN_PID=$!
