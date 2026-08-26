@@ -86,71 +86,70 @@
 
       <v-col cols="12" md="8">
         <v-card elevation="0" outlined>
-          <v-card-title class="d-flex align-center">
+          <v-card-title class="d-flex align-center flex-wrap">
             <span class="text-h6">Reports</span>
             <v-spacer></v-spacer>
+            <v-menu :close-on-content-click="false" location="bottom end">
+              <template v-slot:activator="{ props }">
+                <v-btn v-bind="props" size="small" variant="tonal" class="mr-2" prepend-icon="mdi-calendar">
+                  {{ selectedDate }}
+                </v-btn>
+              </template>
+              <v-date-picker
+                v-model="selectedDate"
+                :events="reportDates"
+                event-color="primary"
+                show-adjacent-months
+              ></v-date-picker>
+            </v-menu>
             <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadReports">Refresh</v-btn>
           </v-card-title>
           <v-divider></v-divider>
           <v-card-text>
-            <v-row>
-              <v-col cols="12" md="4">
-                <v-date-picker
-                  v-model="selectedDate"
-                  :events="reportDates"
-                  event-color="primary"
-                  show-adjacent-months
-                  class="mx-auto"
-                  style="max-width: 340px;"
-                ></v-date-picker>
-              </v-col>
-              <v-col cols="12" md="8">
-                <div class="d-flex align-center mb-3">
-                  <span class="text-subtitle-1 font-weight-bold">{{ selectedDate }}</span>
-                  <v-chip v-if="reports.length" size="x-small" variant="tonal" class="ml-2">
-                    {{ reports.length }} report(s)
+            <div class="d-flex align-center mb-3">
+              <v-chip v-if="reports.length" size="x-small" variant="tonal">
+                {{ reports.length }} report(s) for {{ selectedDate }}
+              </v-chip>
+              <span v-else class="text-caption text-grey">No reports for {{ selectedDate }}</span>
+            </div>
+            <v-alert v-if="reports.length === 0" type="info" variant="tonal" class="mb-3">
+              No reports for this day. Pick a marked date in the calendar or generate a report.
+            </v-alert>
+            <div v-for="report in reports" :key="report.id" class="mb-3">
+              <v-card outlined>
+                <v-card-title class="d-flex align-center py-2">
+                  <span class="text-subtitle-1">{{ report.subject }}</span>
+                  <v-spacer></v-spacer>
+                  <v-chip size="x-small" variant="tonal" :color="reportColor(report.status)">
+                    {{ report.status }}
                   </v-chip>
-                </div>
-                <v-alert v-if="reports.length === 0" type="info" variant="tonal">
-                  No reports for this day.
-                </v-alert>
-                <div v-for="report in reports" :key="report.id" class="mb-3">
-                  <v-card outlined>
-                    <v-card-title class="d-flex align-center py-2">
-                      <span class="text-subtitle-1">{{ report.subject }}</span>
-                      <v-spacer></v-spacer>
-                      <v-chip size="x-small" variant="tonal" :color="reportColor(report.status)">
-                        {{ report.status }}
-                      </v-chip>
-                    </v-card-title>
-                    <v-card-text>
-                      <div v-if="report.status === 'running'" class="d-flex align-center mb-2">
-                        <v-progress-circular size="16" indeterminate color="primary" class="mr-2"></v-progress-circular>
-                        <span class="text-caption text-grey">Generating report...</span>
-                      </div>
-                      <template v-else>
-                        <div v-if="report.summary" class="text-body-2 mb-2">
-                          <strong>Summary:</strong> {{ report.summary }}
-                        </div>
-                        <div
-                          class="markdown-content"
-                          v-html="formatMarkdown(truncate(report.content, expandedReports[report.id] ? undefined : 1200))"
-                        ></div>
-                        <v-btn
-                          v-if="report.content && report.content.length > 1200"
-                          size="x-small"
-                          variant="text"
-                          color="primary"
-                          @click="toggleExpand(report.id)"
-                        >
-                          {{ expandedReports[report.id] ? 'Show less' : 'Show more' }}
-                        </v-btn>
-                      </template>
-                    </v-card-text>
-                  </v-card>
-                </div>
-              </v-col>
-            </v-row>
+                </v-card-title>
+                <v-card-text>
+                  <div v-if="report.status === 'running'" class="d-flex align-center mb-2">
+                    <v-progress-circular size="16" indeterminate color="primary" class="mr-2"></v-progress-circular>
+                    <span class="text-caption text-grey">Generating report...</span>
+                  </div>
+                  <template v-else>
+                    <div v-if="report.summary" class="text-body-2 mb-2">
+                      <strong>Summary:</strong> {{ report.summary }}
+                    </div>
+                    <div
+                      class="markdown-content"
+                      v-html="formatMarkdown(truncate(report.content, expandedReports[report.id] ? undefined : 1200))"
+                    ></div>
+                    <v-btn
+                      v-if="report.content && report.content.length > 1200"
+                      size="x-small"
+                      variant="text"
+                      color="primary"
+                      @click="toggleExpand(report.id)"
+                    >
+                      {{ expandedReports[report.id] ? 'Show less' : 'Show more' }}
+                    </v-btn>
+                  </template>
+                </v-card-text>
+              </v-card>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
@@ -422,3 +421,10 @@ onMounted(async () => {
   await loadReports()
 })
 </script>
+
+<style scoped>
+.markdown-content {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+</style>
