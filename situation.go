@@ -50,6 +50,11 @@ var (
 	situationRun   = map[string]bool{}
 )
 
+const (
+	situationMaxSearches = 8
+	situationRunTimeout  = 8 * time.Minute
+)
+
 func createSituationTables(sqlDB *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS situation_tasks (
@@ -393,7 +398,7 @@ func (database *DB) saveSituationNews(taskID string, userID string, date string,
 }
 
 func buildSituationSystemPrompt(task *SituationTask) string {
-	return "You are an intelligence analyst producing a daily situation report on a single subject. You have a web_search tool. Your report must cover the subject and every one of its sub-topics. Use current, dated, sourced information. Do not make up facts."
+	return "You are an intelligence analyst producing a daily situation report. Today is " + time.Now().UTC().Format("2006-01-02") + ". You have a web_search tool. Your report must cover the subject and every one of its sub-topics. Use current, dated, sourced information. Do not make up facts."
 }
 
 func buildSituationGatherPrompt(task *SituationTask) string {
@@ -459,7 +464,7 @@ func generateSituationReport(task *SituationTask) {
 	today := time.Now().UTC().Format("2006-01-02")
 
 	existing, _ := db.getSituationReport(task.Id, today)
-	if existing != nil && existing.Status == "running" {
+	if existing != nil && existing.Status == "running" && time.Since(time.Unix(existing.UpdatedAt, 0)) < 15*time.Minute {
 		return
 	}
 
@@ -479,7 +484,9 @@ func generateSituationReport(task *SituationTask) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), situationRunTimeout)
+	defer cancel()
+
 	messages := []LLMMessage{
 		{Role: "system", Content: buildSituationSystemPrompt(task)},
 		{Role: "user", Content: buildSituationGatherPrompt(task)},
@@ -487,18 +494,25 @@ func generateSituationReport(task *SituationTask) {
 	tools := []LLMTool{webSearchTool()}
 	var gathered []SearchResult
 	var finalAnswer string
+	failed := false
+	searches := 0
 	maxRounds := 6
 
 	for round := 0; round < maxRounds; round++ {
 		msg, err := llmChat(ctx, messages, tools, "auto")
 		if err != nil {
 			log.Printf("situation: llm error: %v", err)
+			failed = true
 			break
 		}
 		if len(msg.ToolCalls) == 0 {
 			dsmlQueries := extractWebSearchQueries(msg.Content)
-			if len(dsmlQueries) > 0 {
+			if len(dsmlQueries) > 0 && searches < situationMaxSearches {
 				for _, q := range dsmlQueries {
+					if searches >= situationMaxSearches {
+						break
+					}
+					searches++
 					result, results := executeWebSearchWithCache(q, userID)
 					gathered = append(gathered, results...)
 					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
@@ -513,6 +527,10 @@ func generateSituationReport(task *SituationTask) {
 			if tc.Function.Name != "web_search" {
 				continue
 			}
+			if searches >= situationMaxSearches {
+				break
+			}
+			searches++
 			var args struct {
 				Query string `json:"query"`
 			}
@@ -531,11 +549,14 @@ func generateSituationReport(task *SituationTask) {
 	content := finalAnswer
 	summary := ""
 	composeMessages := []LLMMessage{
-		{Role: "system", Content: "You are an analyst producing a situation report. Output ONLY a JSON object with keys \"summary\" and \"report\". No extra text."},
+		{Role: "system", Content: "You are an analyst producing a situation report for " + time.Now().UTC().Format("2006-01-02") + ". Output ONLY a JSON object with keys \"summary\" and \"report\". No extra text."},
 		{Role: "user", Content: buildSituationComposePrompt(task, gathered)},
 	}
 	compMsg, err := llmChat(ctx, composeMessages, nil, "")
-	if err == nil && compMsg != nil {
+	if err != nil {
+		log.Printf("situation: compose error: %v", err)
+		failed = true
+	} else if compMsg != nil {
 		rep, sum := parseSituationReportJSON(compMsg.Content)
 		if strings.TrimSpace(rep) != "" {
 			content = rep
@@ -553,13 +574,17 @@ func generateSituationReport(task *SituationTask) {
 
 	searchJSON, _ := json.Marshal(gathered)
 	status := "completed"
+	if failed {
+		status = "failed"
+	}
 	if err := db.updateSituationReportResult(report.Id, content, summary, status, len(gathered), string(searchJSON)); err != nil {
 		log.Printf("situation: failed to save report: %v", err)
-		_ = db.updateSituationReportResult(report.Id, content, summary, "failed", len(gathered), string(searchJSON))
 	}
 	_ = db.saveSituationNews(task.Id, userID, today, gathered)
 	_ = db.updateSituationTaskLastRun(task.Id, today)
-	triggerRagReindex()
+	if !failed {
+		triggerRagReindex()
+	}
 }
 
 func situationSchedulerPeriodic(interval time.Duration) {
@@ -579,14 +604,37 @@ func situationSchedulerTick() {
 		return
 	}
 	for _, t := range tasks {
-		if t.LastRunDate == today {
+		if !situationTaskDue(&t, today, hour) {
 			continue
 		}
-		if hour < t.DailyHour {
-			continue
-		}
-		_ = db.updateSituationTaskLastRun(t.Id, today)
 		go generateSituationReport(&t)
+	}
+}
+
+func situationTaskDue(t *SituationTask, today string, hour int) bool {
+	if t.LastRunDate != today {
+		return hour >= t.DailyHour
+	}
+	report, err := db.getSituationReport(t.Id, today)
+	if err != nil || report == nil {
+		return hour >= t.DailyHour
+	}
+	if report.Status == "completed" {
+		return false
+	}
+	age := time.Since(time.Unix(report.UpdatedAt, 0))
+	if report.Status == "running" && age < 15*time.Minute {
+		return false
+	}
+	if report.Status == "failed" && age < 30*time.Minute {
+		return false
+	}
+	return true
+}
+
+func recoverStaleSituationReports() {
+	if _, err := db.Exec(`UPDATE situation_reports SET status = 'failed' WHERE status = 'running'`); err != nil {
+		log.Printf("situation: failed to mark stale reports: %v", err)
 	}
 }
 

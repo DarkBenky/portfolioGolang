@@ -76,6 +76,8 @@ var (
 
 var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}}
 
+var pythonWebSearchClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 45 * time.Second}
+
 func hashPasswordWithSalt(password string) string {
 	hash := sha256.Sum256([]byte(password + SALT))
 	return hex.EncodeToString(hash[:])
@@ -8169,7 +8171,7 @@ type SearchResult struct {
 
 func webSearchResults(query string) ([]SearchResult, bool) {
 	target := BASE_URL + "/web_search?q=" + url.QueryEscape(query)
-	resp, err := pythonHTTPClient.Get(target)
+	resp, err := pythonWebSearchClient.Get(target)
 	if err != nil {
 		log.Printf("web_search error: %v", err)
 		return nil, false
@@ -9709,6 +9711,8 @@ func main() {
 	if err := createSituationTables(sqlDB); err != nil {
 		log.Fatal("Failed to initialize situation tables:", err)
 	}
+
+	recoverStaleSituationReports()
 
 	log.Println("Database initialized successfully")
 
