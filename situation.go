@@ -398,19 +398,19 @@ func (database *DB) saveSituationNews(taskID string, userID string, date string,
 }
 
 func buildSituationSystemPrompt(task *SituationTask) string {
-	return "You are an intelligence analyst producing a daily situation report. Today is " + time.Now().UTC().Format("2006-01-02") + ". You have a web_search tool. Your report must cover the subject and every one of its sub-topics. Use current, dated, sourced information. Do not make up facts."
+	return "You are an intelligence analyst producing a daily situation report on a single subject. Today is " + time.Now().UTC().Format("2006-01-02") + ". You have a web_search tool. The sub-topics are areas to investigate, not mandatory sections. Include a section only when you have concrete, dated findings. Use specific facts: dates, locations, numbers, names. Never invent events and never write generic filler."
 }
 
 func buildSituationGatherPrompt(task *SituationTask) string {
 	var sb strings.Builder
 	sb.WriteString("SUBJECT: " + task.Subject + "\n")
 	if len(task.SubTopics) > 0 {
-		sb.WriteString("SUB-TOPICS:\n")
+		sb.WriteString("SUB-TOPICS (areas to investigate, not required sections):\n")
 		for _, st := range task.SubTopics {
 			sb.WriteString("- " + st + "\n")
 		}
 	}
-	sb.WriteString("\nRun a broad web search on the subject first to capture the latest developments. Then run a targeted web search for each sub-topic. Use the web_search tool. Gather concrete, dated facts.")
+	sb.WriteString("\nRun web searches for the subject and for each sub-topic. Look for specific, dated events: dates, locations, numbers, names, weapons deliveries, policy changes, casualties. Search for current dates, not past years. Use the web_search tool. Gather concrete facts; note when you find nothing for a sub-topic.")
 	return sb.String()
 }
 
@@ -418,14 +418,14 @@ func buildSituationComposePrompt(task *SituationTask, results []SearchResult) st
 	var sb strings.Builder
 	sb.WriteString("SUBJECT: " + task.Subject + "\n")
 	if len(task.SubTopics) > 0 {
-		sb.WriteString("SUB-TOPICS:\n")
+		sb.WriteString("SUB-TOPICS (areas to investigate, not required sections):\n")
 		for _, st := range task.SubTopics {
 			sb.WriteString("- " + st + "\n")
 		}
 	}
-	sb.WriteString("\nThe following web search results were gathered today:\n")
+	sb.WriteString("\nWeb search results gathered today:\n")
 	sb.WriteString(formatSearchResults(results))
-	sb.WriteString("\n\nWrite the situation report. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown with a section (## header) for each sub-topic and a final Prospects section. Do not include any text outside the JSON.")
+	sb.WriteString("\n\nWrite the situation report. Rules: include a section (## header) ONLY for sub-topics with specific, dated findings in the results above; skip sub-topics with no concrete information and do not invent or generalize. Use concrete facts with dates, locations and numbers. If NO web results were gathered, write a short report stating that no specific developments were found. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown. Do not include any text outside the JSON.")
 	return sb.String()
 }
 
