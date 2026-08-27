@@ -321,11 +321,7 @@ async function loadReports() {
       if (reports.value.some(r => r.status === 'running')) {
         reportsPollTimer = setTimeout(() => {
           loadReports()
- 
-
-function toggleSources(reportId) {
-  sourcesOpen.value[reportId] = !sourcesOpen.value[reportId]
-}         loadTasks()
+          loadTasks()
         }, 4000)
       }
     }
@@ -336,6 +332,10 @@ function toggleSources(reportId) {
 
 function toggleExpand(reportId) {
   expandedReports.value[reportId] = !expandedReports.value[reportId]
+}
+
+function toggleSources(reportId) {
+  sourcesOpen.value[reportId] = !sourcesOpen.value[reportId]
 }
 
 function openCreate() {
