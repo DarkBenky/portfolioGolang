@@ -146,6 +146,20 @@
                     >
                       {{ expandedReports[report.id] ? 'Show less' : 'Show more' }}
                     </v-btn>
+                    <div v-if="report.search_results && report.search_results.length" class="mt-3">
+                      <div class="d-flex align-center sources-header" @click="toggleSources(report.id)">
+                        <span class="text-caption font-weight-bold">Sources used ({{ report.search_results.length }})</span>
+                        <v-icon size="small" class="ml-1">
+                          {{ sourcesOpen[report.id] ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+                        </v-icon>
+                      </div>
+                      <div v-if="sourcesOpen[report.id]" class="mt-1">
+                        <div v-for="(src, si) in report.search_results" :key="si" class="mb-1">
+                          <a :href="src.url" target="_blank" rel="noopener">{{ src.title || src.url }}</a>
+                          <div v-if="src.snippet" class="text-caption text-grey">{{ src.snippet }}</div>
+                        </div>
+                      </div>
+                    </div>
                   </template>
                 </v-card-text>
               </v-card>
@@ -246,6 +260,7 @@ const editingId = ref(null)
 const form = ref({ subject: '', sub_topics: [], daily_hour: 9 })
 const newSubTopic = ref('')
 const expandedReports = ref({})
+const sourcesOpen = ref({})
 let reportsPollTimer = null
 const hourOptions = Array.from({ length: 24 }, (_, i) => ({ title: String(i).padStart(2, '0') + ':00', value: i }))
 
@@ -291,11 +306,26 @@ async function loadReports() {
   try {
     const res = await apiFetch(`/api/situation/reports?date=${selectedDate.value}`)
     if (res.ok) {
-      reports.value = await res.json()
+      reports.value = (await res.json()).map(r => {
+        if (typeof r.search_results === 'string') {
+          try {
+            r.search_results = JSON.parse(r.search_results)
+          } catch (e) {
+            r.search_results = []
+          }
+        } else if (!Array.isArray(r.search_results)) {
+          r.search_results = []
+        }
+        return r
+      })
       if (reports.value.some(r => r.status === 'running')) {
         reportsPollTimer = setTimeout(() => {
           loadReports()
-          loadTasks()
+ 
+
+function toggleSources(reportId) {
+  sourcesOpen.value[reportId] = !sourcesOpen.value[reportId]
+}         loadTasks()
         }, 4000)
       }
     }
@@ -423,6 +453,17 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+
+.sources-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sources-header a {
+  color: var(--v-theme-primary);
+  text-decoration: none;
+  word-break: break-all;
+}
 .markdown-content {
   overflow-wrap: break-word;
   word-break: break-word;
