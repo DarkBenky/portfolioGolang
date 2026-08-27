@@ -566,7 +566,12 @@ def api_web_search():
             time.sleep(6 * (attempt + 1))
 
         futures = [executor.submit(_fetch_article_text, r.get('url', '')) for r in results]
-        texts = [f.result(timeout=20) for f in futures]
+        texts = []
+        for f in futures:
+            try:
+                texts.append(f.result(timeout=20))
+            except Exception:
+                texts.append('')
         for r, t in zip(results, texts):
             r['text'] = t
         return flask.jsonify(results)
