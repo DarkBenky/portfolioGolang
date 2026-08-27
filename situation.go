@@ -423,9 +423,9 @@ func buildSituationComposePrompt(task *SituationTask, results []SearchResult) st
 			sb.WriteString("- " + st + "\n")
 		}
 	}
-	sb.WriteString("\nWeb search results gathered today:\n")
-	sb.WriteString(formatSearchResults(results))
-	sb.WriteString("\n\nWrite the situation report. Rules: include a section (## header) ONLY for sub-topics with specific, dated findings in the results above; skip sub-topics with no concrete information and do not invent or generalize. Use concrete facts with dates, locations and numbers. If NO web results were gathered, write a short report stating that no specific developments were found. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown. Do not include any text outside the JSON.")
+	sb.WriteString("\nWeb search results and article content gathered today:\n")
+	sb.WriteString(formatSearchResultsDetailed(results, 12000))
+	sb.WriteString("\n\nWrite the situation report. Rules: include a section (## header) ONLY for sub-topics with specific, dated findings in the results above; skip sub-topics with no concrete information and do not invent or generalize. Use concrete facts with dates, locations and numbers; prefer details from the article content. If NO web results were gathered, write a short report stating that no specific developments were found. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown. Do not include any text outside the JSON.")
 	return sb.String()
 }
 
@@ -513,9 +513,9 @@ func generateSituationReport(task *SituationTask) {
 						break
 					}
 					searches++
-					result, results := executeWebSearchWithCache(q, userID)
+					_, results := executeWebSearchWithCache(q, userID)
 					gathered = append(gathered, results...)
-					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + result})
+					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + formatSearchResultsDetailed(results, 6000)})
 				}
 				continue
 			}
@@ -535,13 +535,13 @@ func generateSituationReport(task *SituationTask) {
 				Query string `json:"query"`
 			}
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-			result, results := executeWebSearchWithCache(args.Query, userID)
+			_, results := executeWebSearchWithCache(args.Query, userID)
 			gathered = append(gathered, results...)
 			messages = append(messages, LLMMessage{
 				Role:       "tool",
 				ToolCallID: tc.Id,
 				Name:       tc.Function.Name,
-				Content:    result,
+				Content:    formatSearchResultsDetailed(results, 6000),
 			})
 		}
 	}

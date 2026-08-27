@@ -8167,6 +8167,7 @@ type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
+	Text    string `json:"text"`
 }
 
 func webSearchResults(query string) ([]SearchResult, bool) {
@@ -8215,6 +8216,27 @@ func formatSearchResults(results []SearchResult) string {
 		sb.WriteString("\n")
 	}
 	return truncateStr(sb.String(), 4000)
+}
+
+func formatSearchResultsDetailed(results []SearchResult, maxChars int) string {
+	if len(results) == 0 {
+		return "No results found for the query. Do not search again; answer using the provided context and note that live web results were unavailable."
+	}
+	var sb strings.Builder
+	for _, r := range results {
+		sb.WriteString("- " + truncateStr(r.Title, 120))
+		if r.Snippet != "" {
+			sb.WriteString(": " + truncateStr(r.Snippet, 300))
+		}
+		if r.Text != "" {
+			sb.WriteString("\n  Content: " + truncateStr(r.Text, 600))
+		}
+		if r.URL != "" {
+			sb.WriteString("\n  URL: " + r.URL)
+		}
+		sb.WriteString("\n")
+	}
+	return truncateStr(sb.String(), maxChars)
 }
 
 const webSearchCacheMaxAge int64 = 7 * 24 * 3600
@@ -8499,7 +8521,7 @@ func buildRagItems() ([]ragItem, error) {
 			if err := wsRows.Scan(&userID, &query, &resultsJSON, &createdAt); err == nil && strings.TrimSpace(resultsJSON) != "" {
 				var results []SearchResult
 				if json.Unmarshal([]byte(resultsJSON), &results) == nil && len(results) > 0 {
-					content := fmt.Sprintf("Web search for %q:\n%s", query, formatSearchResults(results))
+					content := fmt.Sprintf("Web search for %q:\n%s", query, formatSearchResultsDetailed(results, 6000))
 					items = append(items, ragItem{source: "web_search", userID: userID, date: time.Unix(createdAt, 0).Format("2006-01-02"), content: content})
 				}
 			}

@@ -505,6 +505,40 @@ def api_stock_history(ticker):
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
     
+def _fetch_article_text(url, max_chars=3000):
+    if not url or not url.startswith(('http://', 'https://')):
+        return ''
+    html = None
+    try:
+        import requests
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        with requests.get(url, headers=headers, timeout=(3, 8)) as response:
+            if response.status_code == 200:
+                html = response.text
+    except Exception:
+        return ''
+    if not html:
+        return ''
+    try:
+        from newspaper import Article
+        article = Article(url)
+        article.set_html(html)
+        article.parse()
+        text = (article.text or '').strip()
+        if text:
+            return text[:max_chars]
+    except Exception:
+        pass
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+            tag.decompose()
+        text = soup.get_text(separator=' ', strip=True)
+        return text[:max_chars]
+    except Exception:
+        return ''
+
 @app.route('/api/web_search', methods=['GET'])
 def api_web_search():
     query = flask.request.args.get('q', '').strip()
@@ -523,12 +557,18 @@ def api_web_search():
                     results.append({
                         'title': r.get('title', ''),
                         'url': r.get('href', ''),
-                        'snippet': r.get('body', '')
+                        'snippet': r.get('body', ''),
+                        'text': ''
                     })
             if results:
                 break
             import time
             time.sleep(6 * (attempt + 1))
+
+        futures = [executor.submit(_fetch_article_text, r.get('url', '')) for r in results]
+        texts = [f.result(timeout=20) for f in futures]
+        for r, t in zip(results, texts):
+            r['text'] = t
         return flask.jsonify(results)
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
