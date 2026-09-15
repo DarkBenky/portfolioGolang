@@ -1,5 +1,7 @@
 # TODO
 
+- [ ] statistic tab is still failing
+
 - [x] **Important** check why python and go is eating so much ram on server
       Python: the JustETF page cache was keyed on the full HTML string (getAssets.py) and the gunicorn worker never recycled or returned memory. Go: unlimited SQLite connections with a 64 MB page cache and 256 MB mmap each, unbounded periodic fan-outs and a RAG reindex that reloaded every news/sentiment/search row every 30 minutes. See CONFIG.md "Memory" for the settings and /api/debug/mem on both servers for measurement.
 - [x] use duck db for price data for faster operations ( maybe migrate all )
