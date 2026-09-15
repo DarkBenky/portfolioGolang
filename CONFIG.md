@@ -95,6 +95,7 @@ Both processes used to grow until a restart. The fixes and the settings that mat
 ### First start after the price store change
 - On startup, if the DuckDB table is empty and the SQLite `prices` table has rows, every bar is copied over (about a second per 100k rows) and logged as `prices: migrating N rows` / `Price store ready`.
 - Back up `portfolio.db` **and** `prices.duckdb` before the first start: once the migration has run, new bars only go to DuckDB, so the SQLite copy is a point in time snapshot and must not be treated as the source of truth afterwards. Re-running the migration is only possible from that snapshot, so deleting `prices.duckdb` loses everything collected after the switch.
+- Symbols that have no stored bars (benchmarks such as SPY, or a holding added a moment ago) are fetched on demand from the Python data source, stored and then reused; the log shows `prices: backfilled N bars for <ticker>`. Only the first backtest for such a symbol waits for that fetch.
 
 ### Measuring
 - Go: `curl -H "Authorization: Bearer <jwt>" http://127.0.0.1:8085/api/debug/mem` and the `mem:` log line every 5 minutes.

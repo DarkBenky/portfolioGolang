@@ -6913,7 +6913,13 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		return nil, fmt.Errorf("failed to fetch benchmark prices: %v", err)
 	}
 	if len(benchmarkPrices) == 0 {
-		return nil, fmt.Errorf("no benchmark price data for %s in the selected range", benchmark)
+		benchmarkPrices, err = fetchAndStorePriceSeries(benchmark, startTime.Unix(), endTime.Unix())
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch benchmark prices for %s: %v", benchmark, err)
+		}
+	}
+	if len(benchmarkPrices) == 0 {
+		return nil, fmt.Errorf("no price data for benchmark %s", benchmark)
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
@@ -6943,7 +6949,10 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 	for _, holding := range holdings {
 		prices, err := backtestPriceSeries(holding.Ticker, startTime.Unix(), endTime.Unix())
 		if err != nil || len(prices) == 0 {
-			log.Printf("Warning: no stored prices for %s: %v", holding.Ticker, err)
+			prices, err = fetchAndStorePriceSeries(holding.Ticker, startTime.Unix(), endTime.Unix())
+		}
+		if err != nil || len(prices) == 0 {
+			log.Printf("Warning: no prices available for %s: %v", holding.Ticker, err)
 			continue
 		}
 		holdingPrices[holding.Ticker] = prices

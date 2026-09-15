@@ -498,6 +498,24 @@ func backtestPriceSeries(ticker string, start, end int64) ([]Price, error) {
 	return series, nil
 }
 
+// fetchAndStorePriceSeries pulls the full history from the Python data source for a ticker that has
+// no stored bars yet, persists it and returns the daily series for the requested range.
+func fetchAndStorePriceSeries(ticker string, start, end int64) ([]Price, error) {
+	prices, err := getOldHistoricPriceData(ticker)
+	if err != nil {
+		return nil, err
+	}
+	if len(prices) == 0 {
+		return nil, nil
+	}
+	if err := priceStore.upsertPrices(prices); err != nil {
+		log.Printf("prices: could not store backfilled history for %s: %v", ticker, err)
+	} else {
+		log.Printf("prices: backfilled %d bars for %s from the data source", len(prices), ticker)
+	}
+	return backtestPriceSeries(ticker, start, end)
+}
+
 func dailyCloses(tickers []string, start, end int64) (map[string][]PriceCandle, error) {
 	bucket := priceBucket{seconds: 86400, expr: epochBucketExpr(86400)}
 	return priceStore.candlesMulti(tickers, start, end, bucket)
