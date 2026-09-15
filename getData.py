@@ -41,10 +41,12 @@ def require_api_key():
 
 model = creteSentimentAnalyzer()
 
-executor = ThreadPoolExecutor(max_workers=4)
+interactive_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix='interactive')
+bulk_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix='bulk')
 
 def cleanup_executor():
-    executor.shutdown(wait=True, cancel_futures=False)
+    interactive_executor.shutdown(wait=True, cancel_futures=False)
+    bulk_executor.shutdown(wait=True, cancel_futures=False)
 
 atexit.register(cleanup_executor)
 
@@ -201,41 +203,70 @@ def get_etf_ter_and_policy(ticker, isin):
 def search_ticker_info(identifier, search_type="ticker"):
     try:
         if search_type == "ticker":
-            exchanges = ["", ".L", ".TO", ".SW", ".PA", ".DE", ".HK", ".AX", ".T"]
+            query = identifier.upper()
             results = []
-            
-            for exchange_suffix in exchanges:
-                ticker_symbol = identifier.upper() + exchange_suffix
+            seen = set()
+
+            try:
+                search = yf.Search(identifier, max_results=10, enable_fuzzy_query=True)
+                quotes = search.quotes or []
+            except Exception as e:
+                print(f"Ticker search error for '{identifier}': {e}")
+                quotes = []
+
+            for q in quotes:
+                symbol = q.get('symbol', '')
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                results.append({
+                    'ticker': symbol,
+                    'name': q.get('shortName', q.get('longName', 'Unknown')),
+                    'exchange': q.get('exchange', 'Unknown'),
+                    'isin': q.get('isin', 'N/A'),
+                    'currency': q.get('currency', 'USD'),
+                    'type': q.get('quoteType', 'Unknown'),
+                    'price': q.get('regularMarketPrice', 'N/A'),
+                    'ter': None,
+                    'distribution_policy': None
+                })
+
+            if not results:
                 try:
-                    ticker_obj = yf.Ticker(ticker_symbol)
-                    info = ticker_obj.info
-                    
-                    if info and info.get('symbol') and info.get('regularMarketPrice') is not None:
-                        quote_type = info.get('quoteType', 'Unknown')
-                        is_etf = quote_type == 'ETF'
-                        isin = info.get('isin', 'N/A')
-                        
-                        ter = None
-                        dist_policy = None
-                        
-                        if is_etf:
-                            ter, dist_policy = get_etf_ter_and_policy(ticker_symbol, isin)
-                        
+                    info = yf.Ticker(query).info
+                    if info and info.get('symbol'):
                         results.append({
-                            'ticker': ticker_symbol,
+                            'ticker': info.get('symbol', query),
                             'name': info.get('shortName', info.get('longName', 'Unknown')),
                             'exchange': info.get('exchange', 'Unknown'),
-                            'isin': isin,
+                            'isin': info.get('isin', 'N/A'),
                             'currency': info.get('currency', 'USD'),
-                            'type': quote_type,
+                            'type': info.get('quoteType', 'Unknown'),
                             'price': info.get('regularMarketPrice', 'N/A'),
-                            'ter': ter,
-                            'distribution_policy': dist_policy
+                            'ter': None,
+                            'distribution_policy': None
                         })
                 except Exception as e:
-                    print(f"Search error for {ticker_symbol}: {e}")
-                    continue
-            
+                    print(f"Ticker lookup error for '{identifier}': {e}")
+
+            listed = [r for r in results if r['type'] in ('EQUITY', 'ETF', 'MUTUALFUND', 'CRYPTOCURRENCY')]
+            if listed:
+                results = listed
+
+            results.sort(key=lambda r: (r['ticker'].upper() != query, r['ticker']))
+            results = results[:8]
+
+            enriched = 0
+            for r in results:
+                if r['type'] == 'ETF' and enriched < 2:
+                    try:
+                        ter, policy = get_etf_ter_and_policy(r['ticker'], r['isin'])
+                        r['ter'] = ter
+                        r['distribution_policy'] = policy
+                        enriched += 1
+                    except Exception:
+                        pass
+
             return results
         elif search_type == "isin":
             try:
@@ -278,6 +309,8 @@ def search_ticker_info(identifier, search_type="ticker"):
                     if not ticker_sym:
                         continue
                     quote_type = q.get('quoteType', 'Unknown')
+                    if quote_type not in ('EQUITY', 'ETF', 'MUTUALFUND', 'CRYPTOCURRENCY'):
+                        continue
                     results.append({
                         'ticker': ticker_sym,
                         'name': q.get('shortName', q.get('longName', 'Unknown')),
@@ -343,7 +376,7 @@ def api_etf_data():
     isin = flask.request.args.get('isin', '')
     etf_name = flask.request.args.get('etf_name', '')
     
-    future = executor.submit(get_etf_data, ticker, isin, etf_name)
+    future = bulk_executor.submit(get_etf_data, ticker, isin, etf_name)
     data = future.result()
     return flask.jsonify(data.to_dict())
 
@@ -353,7 +386,7 @@ def fetch_news():
     ticker = flask.request.args.get('ticker', '')
     num_articles = int(flask.request.args.get('num_articles', '3'))
     
-    future = executor.submit(getNews, ticker, num_articles, model)
+    future = bulk_executor.submit(getNews, ticker, num_articles, model)
     data = future.result()
     return flask.jsonify(data)
 
@@ -363,7 +396,7 @@ def api_get_price():
     ticker = flask.request.args.get('ticker', '')
     last_updates_unix_timestamp = int(flask.request.args.get('last_updates_unix_timestamp', '0'))
     interval = flask.request.args.get('interval', '1m')
-    future = executor.submit(getPrice, ticker, last_updates_unix_timestamp, interval)
+    future = interactive_executor.submit(getPrice, ticker, last_updates_unix_timestamp, interval)
     data = future.result()
     return flask.jsonify(data)
 
@@ -381,7 +414,7 @@ def api_summarize_ticker():
     if not ticker or not news_list:
         return flask.jsonify({'error': 'ticker and news_list are required'}), 400
     
-    future = executor.submit(
+    future = bulk_executor.submit(
         summarize_daily_news, 
         news_list, 
         sentiment_list, 
@@ -405,7 +438,7 @@ def api_summarize_portfolio():
     if not holding_summaries:
         return flask.jsonify({'error': 'holding_summaries is required'}), 400
 
-    future = executor.submit(
+    future = bulk_executor.submit(
         summarize_portfolio_from_holdings,
         holding_summaries,
         max_tokens,
@@ -428,7 +461,7 @@ def api_running_summary():
     if not holding_summaries:
         return flask.jsonify({'error': 'holding_summaries is required'}), 400
 
-    future = executor.submit(
+    future = bulk_executor.submit(
         generate_running_summary,
         holding_summaries,
         sector_data,
@@ -498,7 +531,7 @@ def api_ticker_to_isin():
 @app.route('/api/stock/<isin>', methods=['GET'])
 def api_stock_data(isin):
     try:
-        future = executor.submit(get_stock_data, isin)
+        future = interactive_executor.submit(get_stock_data, isin)
         result = future.result()
         if result:
             return flask.jsonify({
@@ -513,7 +546,7 @@ def api_stock_data(isin):
 @app.route('/api/stock/history/<ticker>', methods=['GET'])
 def api_stock_history(ticker):
     try:
-        future = executor.submit(getPriceDataOld, ticker)
+        future = bulk_executor.submit(getPriceDataOld, ticker)
         result = future.result()
         if result:
             return flask.jsonify({
@@ -641,7 +674,7 @@ def api_web_search():
 
     results, status = _search_web(query, 5)
 
-    futures = [executor.submit(_fetch_article_text, r.get('href', '') or r.get('url', '')) for r in results]
+    futures = [interactive_executor.submit(_fetch_article_text, r.get('href', '') or r.get('url', '')) for r in results]
     texts = []
     for f in futures:
         try:
@@ -668,7 +701,7 @@ def api_convert_currency():
     from_currency = flask.request.args.get('from_currency', 'USD')
     to_currency = flask.request.args.get('to_currency', 'USD')
     
-    future = executor.submit(
+    future = interactive_executor.submit(
         convertCurrency, 
         amount, 
         from_currency, 

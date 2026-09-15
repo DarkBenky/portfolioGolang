@@ -498,6 +498,56 @@ func backtestPriceSeries(ticker string, start, end int64) ([]Price, error) {
 	return series, nil
 }
 
+// priceIntervalSupported reports whether an API interval maps to a stored bar size.
+func priceIntervalSupported(interval string) bool {
+	switch interval {
+	case "5m", "15m", "1h", "4h", "1d", "1w", "1M":
+		return true
+	default:
+		return false
+	}
+}
+
+// priceCandlesFromStore returns stored candles for a symbol and interval, or nil when the store has
+// nothing for it (the caller then falls back to the live data source).
+func priceCandlesFromStore(identifier string, interval string) ([]PriceCandle, error) {
+	if priceStore == nil || !priceIntervalSupported(interval) {
+		return nil, nil
+	}
+
+	ticker := identifier
+	if resolved, err := resolveTickerOrISIN(identifier); err == nil && resolved != "" {
+		ticker = resolved
+	}
+
+	bucket, _ := priceIntervalSpec(interval)
+	now := time.Now().UTC()
+	lookback := tradingViewLookback(interval)
+	var start int64
+	if lookback == 0 {
+		start = time.Time{}.Unix()
+	} else {
+		start = now.Add(-time.Duration(lookback) * time.Second).Unix()
+	}
+
+	return priceStore.candles(ticker, start, now.Unix(), bucket)
+}
+
+// The live data source serves these windows per interval, so stored data mirrors them to keep the
+// trading view charts the same length.
+func tradingViewLookback(interval string) int64 {
+	switch interval {
+	case "5m", "15m":
+		return 60 * 24 * 3600
+	case "1h":
+		return 730 * 24 * 3600
+	case "1d":
+		return 3650 * 24 * 3600
+	default:
+		return 0
+	}
+}
+
 // fetchAndStorePriceSeries pulls the full history from the Python data source for a ticker that has
 // no stored bars yet, persists it and returns the daily series for the requested range.
 func fetchAndStorePriceSeries(ticker string, start, end int64) ([]Price, error) {

@@ -88,6 +88,9 @@ var (
 
 var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: pythonHTTPTimeout}
 
+// The historic backfill downloads period=max history, which legitimately takes minutes.
+var pythonHistoricClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 5 * time.Minute}
+
 var pythonWebSearchClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 45 * time.Second}
 
 func hashPasswordWithSalt(password string) string {
@@ -6544,7 +6547,7 @@ func getLatestAssetDetailsEndpoint(c echo.Context) error {
 
 func getOldHistoricPriceData(ticker string) ([]Price, error) {
 	url := fmt.Sprintf("%s/stock/history/%s", BASE_URL, ticker)
-	resp, err := pythonHTTPClient.Get(url)
+	resp, err := pythonHistoricClient.Get(url)
 	if err != nil {
 		log.Printf("Error fetching historic price data for %s: %v", ticker, err)
 		return nil, err
@@ -6681,6 +6684,34 @@ func pythonProxyHandler(pythonPath string) echo.HandlerFunc {
 		c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get("Content-Type"))
 		return c.Blob(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
+}
+
+// Chart data comes from the price store when we already track the symbol, which keeps the trading
+// view responsive when the Python data source is busy. Unknown symbols fall back to the live source.
+func getPriceProxyHandler(c echo.Context) error {
+	ticker := strings.TrimSpace(c.QueryParam("ticker"))
+	interval := strings.TrimSpace(c.QueryParam("interval"))
+
+	if ticker != "" && priceIntervalSupported(interval) {
+		candles, err := priceCandlesFromStore(ticker, interval)
+		if err == nil && len(candles) > 0 {
+			return c.JSON(http.StatusOK, candles)
+		}
+	}
+
+	target := BASE_URL + "/get_price"
+	if c.Request().URL.RawQuery != "" {
+		target += "?" + c.Request().URL.RawQuery
+	}
+	resp, err := pythonHTTPClient.Get(target)
+	if err != nil {
+		log.Printf("Python proxy error for /get_price: %v", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Python API unreachable"})
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	c.Response().Header().Set(echo.HeaderContentType, resp.Header.Get("Content-Type"))
+	return c.Blob(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 }
 
 func fetchOldPriceDataPeriodic(interval time.Duration) {
@@ -9701,7 +9732,7 @@ func main() {
 	// Python API proxies (Python binds to 127.0.0.1 only)
 	protected.GET("/convert_currency", pythonProxyHandler("/convert_currency"))
 	protected.GET("/search", pythonProxyHandler("/search"))
-	protected.GET("/get_price", pythonProxyHandler("/get_price"))
+	protected.GET("/get_price", getPriceProxyHandler)
 
 	// Chat endpoints
 	protected.POST("/chat", chatHandler)
