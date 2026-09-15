@@ -1,5 +1,6 @@
 # TODO
 
+- [ ] **Important** check why python and go is eating so much ram on server
 - [ ] use duck db for price data for faster operations ( maybe migrate all )
 - [ ] fix charts when changing candle interval to w or m it makes spaces between candles
 - [ ] enhance expenses so bolt uber ... => transport bold food, wolt => dining and enhance it even more 
