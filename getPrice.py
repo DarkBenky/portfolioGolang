@@ -77,7 +77,7 @@ def getPriceDataOld(Ticker: str):
             'high': row['High'],
             'low': row['Low'],
             'close': row['Close'],
-            'volume': row['Volume'] / 60  # convert to per minute volume
+            'volume': row['Volume']
         })
     return candles
 

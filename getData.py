@@ -1,4 +1,6 @@
 import resource
+import os
+import time
 import secrets
 import yfinance as yf
 import flask
@@ -7,7 +9,7 @@ from getAssets import get_etf_data
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import re
-from getNews import creteSentimentAnalyzer, getSentiment, getNews
+from getNews import creteSentimentAnalyzer, getSentiment, getNews, ARTICLE_BYTES_LIMIT
 from getPrice import convertCurrency, getPrice, getPriceDataOld
 from getSummary import summarize_daily_news, summarize_daily_portfolio_news, summarize_portfolio_from_holdings, generate_running_summary
 from getStock import get_stock_data
@@ -39,7 +41,7 @@ def require_api_key():
 
 model = creteSentimentAnalyzer()
 
-executor = ThreadPoolExecutor(max_workers=10)
+executor = ThreadPoolExecutor(max_workers=4)
 
 def cleanup_executor():
     executor.shutdown(wait=True, cancel_futures=False)
@@ -77,12 +79,29 @@ def health_check():
         'service': 'portfolio-python-api'
     })
 
+@app.route('/api/debug/mem', methods=['GET'])
+def debug_mem():
+    import threading
+    rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return flask.jsonify({
+        'pid': os.getpid(),
+        'rss_mb': round(rss_kb / 1024, 1),
+        'peak_rss_mb': round(rss_kb / 1024, 1),
+        'threads': threading.active_count(),
+        'request_logs': len(request_logs),
+        'caches': {
+            'etf_ter_and_policy': get_etf_ter_and_policy.cache_info()._asdict(),
+            'ticker_info': search_ticker_info.cache_info()._asdict(),
+            'isin_ticker': convert_isin_to_ticker.cache_info()._asdict(),
+        },
+    })
+
 
 @app.route('/')
 def index():
     return f"OK - Backend Python running at {BACKEND_PYTHON}:{BACKEND_PYTHON_PORT}" 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=128)
 def get_etf_ter_and_policy(ticker, isin):
     """
     Get TER and distribution policy from multiple sources.
@@ -178,7 +197,7 @@ def get_etf_ter_and_policy(ticker, isin):
     
     return ter, dist_policy
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=128)
 def search_ticker_info(identifier, search_type="ticker"):
     try:
         if search_type == "ticker":
@@ -420,7 +439,7 @@ def api_running_summary():
     result = future.result()
     return flask.jsonify(result)
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=512)
 def convert_isin_to_ticker(isin):
     """Convert ISIN to ticker using OpenFIGI API with caching"""
     if not isin or isin == 'N/A':
@@ -505,39 +524,114 @@ def api_stock_history(ticker):
     except Exception as e:
         return flask.jsonify({'error': str(e)}), 500
     
-def _fetch_article_text(url, max_chars=3000):
-    if not url or not url.startswith(('http://', 'https://')):
-        return ''
-    html = None
+ARTICLE_TEXT_LIMIT = 3000
+
+SEARCH_CACHE = {}
+SEARCH_CACHE_TTL = 3600
+
+def _search_ddgs(query, max_results):
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return [], 'ddgs not installed'
+
+    last_error = ''
+    for backend in ('auto', 'duckduckgo', 'brave', 'google', 'mojeek', 'yahoo'):
+        try:
+            with DDGS() as ddgs:
+                try:
+                    found = list(ddgs.text(query, max_results=max_results, backend=backend))
+                except TypeError:
+                    found = list(ddgs.text(query, max_results=max_results))
+            if found:
+                return found, ''
+        except Exception as e:
+            last_error = backend + ':' + str(e)[:120]
+            time.sleep(1.0)
+    return [], last_error or 'ddgs returned no results'
+
+
+def _search_searxng(query, max_results):
+    base = os.environ.get('SEARXNG_URL', '').strip().rstrip('/')
+    if not base:
+        return [], 'searxng not configured'
     try:
         import requests
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        with requests.get(url, headers=headers, timeout=(3, 8)) as response:
-            if response.status_code == 200:
-                html = response.text
-    except Exception:
-        return ''
-    if not html:
-        return ''
+        with requests.get(base + '/search', params={'q': query, 'format': 'json'}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12) as response:
+            if response.status_code != 200:
+                return [], 'searxng status ' + str(response.status_code)
+            payload = response.json()
+    except Exception as e:
+        return [], 'searxng:' + str(e)[:120]
+
+    results = []
+    for item in payload.get('results', [])[:max_results]:
+        results.append({
+            'title': item.get('title', ''),
+            'href': item.get('url', ''),
+            'body': item.get('content', ''),
+        })
+    return results, '' if results else 'searxng returned no results'
+
+
+def _search_wikipedia(query, max_results):
     try:
-        from newspaper import Article
-        article = Article(url)
-        article.set_html(html)
-        article.parse()
-        text = (article.text or '').strip()
-        if text:
-            return text[:max_chars]
-    except Exception:
-        pass
-    try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, 'html.parser')
-        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
-            tag.decompose()
-        text = soup.get_text(separator=' ', strip=True)
-        return text[:max_chars]
-    except Exception:
-        return ''
+        import requests
+        with requests.get('https://en.wikipedia.org/w/api.php', params={
+            'action': 'query',
+            'list': 'search',
+            'srsearch': query,
+            'srlimit': max_results,
+            'format': 'json',
+        }, headers={'User-Agent': 'portfolio-app/1.0'}, timeout=10) as response:
+            if response.status_code != 200:
+                return [], 'wikipedia status ' + str(response.status_code)
+            payload = response.json()
+    except Exception as e:
+        return [], 'wikipedia:' + str(e)[:120]
+
+    results = []
+    for item in payload.get('query', {}).get('search', []):
+        title = item.get('title', '')
+        snippet = item.get('snippet', '')
+        snippet = re.sub('<[^>]+>', '', snippet)
+        results.append({
+            'title': title,
+            'href': 'https://en.wikipedia.org/wiki/' + title.replace(' ', '_'),
+            'body': snippet,
+        })
+    return results, '' if results else 'wikipedia returned no results'
+
+
+def _search_web(query, max_results=5):
+    cache_key = query.strip().lower()
+    cached = SEARCH_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached[1] < SEARCH_CACHE_TTL:
+        return cached[0], cached[2]
+
+    statuses = []
+    providers = (
+        ('ddgs', _search_ddgs),
+        ('searxng', _search_searxng),
+        ('wikipedia', _search_wikipedia),
+    )
+    for name, provider in providers:
+        found, error = provider(query, max_results)
+        if found:
+            statuses.append(name + ':ok(' + str(len(found)) + ')')
+            SEARCH_CACHE[cache_key] = (found, now, ';'.join(statuses))
+            return found, ';'.join(statuses)
+        statuses.append(name + ':' + (error or 'empty'))
+        if len(SEARCH_CACHE) > 256:
+            SEARCH_CACHE.clear()
+
+    SEARCH_CACHE[cache_key] = ([], now, ';'.join(statuses))
+    return [], ';'.join(statuses)
+
 
 @app.route('/api/web_search', methods=['GET'])
 def api_web_search():
@@ -545,38 +639,28 @@ def api_web_search():
     if not query:
         return flask.jsonify({'error': 'q parameter is required'}), 400
 
-    try:
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
-        results = []
-        for attempt in range(2):
-            with DDGS() as ddgs:
-                for r in ddgs.text(query, max_results=5):
-                    results.append({
-                        'title': r.get('title', ''),
-                        'url': r.get('href', ''),
-                        'snippet': r.get('body', ''),
-                        'text': ''
-                    })
-            if results:
-                break
-            import time
-            time.sleep(6 * (attempt + 1))
+    results, status = _search_web(query, 5)
 
-        futures = [executor.submit(_fetch_article_text, r.get('url', '')) for r in results]
-        texts = []
-        for f in futures:
-            try:
-                texts.append(f.result(timeout=20))
-            except Exception:
-                texts.append('')
-        for r, t in zip(results, texts):
-            r['text'] = t
-        return flask.jsonify(results)
-    except Exception as e:
-        return flask.jsonify({'error': str(e)}), 500
+    futures = [executor.submit(_fetch_article_text, r.get('href', '') or r.get('url', '')) for r in results]
+    texts = []
+    for f in futures:
+        try:
+            texts.append(f.result(timeout=20))
+        except Exception:
+            texts.append('')
+    for r, t in zip(results, texts):
+        r['text'] = t
+
+    payload = [{
+        'title': r.get('title', ''),
+        'url': r.get('href', '') or r.get('url', ''),
+        'snippet': r.get('body', ''),
+        'text': r.get('text', ''),
+    } for r in results]
+
+    response = flask.jsonify(payload)
+    response.headers['X-Search-Status'] = status[:900]
+    return response
 
 @app.route('/api/convert_currency', methods=['GET'])
 def api_convert_currency():

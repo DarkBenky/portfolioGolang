@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,7 @@ var (
 const (
 	situationMaxSearches = 8
 	situationRunTimeout  = 8 * time.Minute
+	situationMaxAttempts = 3
 )
 
 func createSituationTables(sqlDB *sql.DB) error {
@@ -81,6 +83,7 @@ func createSituationTables(sqlDB *sql.DB) error {
 			content TEXT,
 			status TEXT NOT NULL DEFAULT 'pending',
 			iterations INTEGER NOT NULL DEFAULT 0,
+			attempts INTEGER NOT NULL DEFAULT 0,
 			search_results TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -109,7 +112,21 @@ func createSituationTables(sqlDB *sql.DB) error {
 			return err
 		}
 	}
+	_, _ = sqlDB.Exec(`ALTER TABLE situation_reports ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`)
 	return nil
+}
+
+func (database *DB) bumpSituationAttempts(taskID string, date string) int {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	if _, err := database.Exec(`UPDATE situation_reports SET attempts = attempts + 1 WHERE task_id = ? AND date = ?`, taskID, date); err != nil {
+		return 0
+	}
+	var attempts int
+	if err := database.QueryRow(`SELECT attempts FROM situation_reports WHERE task_id = ? AND date = ?`, taskID, date).Scan(&attempts); err != nil {
+		return 0
+	}
+	return attempts
 }
 
 func (database *DB) createSituationTask(t *SituationTask) error {
@@ -414,7 +431,7 @@ func buildSituationGatherPrompt(task *SituationTask) string {
 	return sb.String()
 }
 
-func buildSituationComposePrompt(task *SituationTask, results []SearchResult) string {
+func buildSituationComposePrompt(task *SituationTask, results []SearchResult, sourceStatus string, previous string) string {
 	var sb strings.Builder
 	sb.WriteString("SUBJECT: " + task.Subject + "\n")
 	if len(task.SubTopics) > 0 {
@@ -423,10 +440,28 @@ func buildSituationComposePrompt(task *SituationTask, results []SearchResult) st
 			sb.WriteString("- " + st + "\n")
 		}
 	}
+	if previous != "" {
+		sb.WriteString("\n" + previous + "\n")
+	}
 	sb.WriteString("\nWeb search results and article content gathered today:\n")
 	sb.WriteString(formatSearchResultsDetailed(results, 12000))
-	sb.WriteString("\n\nWrite the situation report. Rules: include a section (## header) ONLY for sub-topics with specific, dated findings in the results above; skip sub-topics with no concrete information and do not invent or generalize. Use concrete facts with dates, locations and numbers; prefer details from the article content. If NO web results were gathered, write a short report stating that no specific developments were found. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown. Do not include any text outside the JSON.")
+	if len(results) == 0 {
+		sb.WriteString("\n\nSearch source status: " + sourceStatus)
+	}
+	sb.WriteString("\n\nWrite the situation report. Rules: include a section (## header) ONLY for sub-topics with specific, dated findings in the results above; skip sub-topics with no concrete information and do not invent or generalize. Use concrete facts with dates, locations and numbers; prefer details from the article content. If fewer than two web results were gathered, state plainly and briefly which sources were unavailable and keep the report short; do not pad it. Respond with a single JSON object: {\"summary\": \"...\", \"report\": \"...\"} where report is markdown. Do not include any text outside the JSON.")
 	return sb.String()
+}
+
+func lastSituationContext(taskID string, date string) string {
+	dbMutex.RLock()
+	defer dbMutex.RUnlock()
+	var summary string
+	var reportDate string
+	err := db.QueryRow(`SELECT date, COALESCE(summary,'') FROM situation_reports WHERE task_id = ? AND date < ? AND status = 'completed' ORDER BY date DESC LIMIT 1`, taskID, date).Scan(&reportDate, &summary)
+	if err != nil || strings.TrimSpace(summary) == "" {
+		return ""
+	}
+	return "Previous report (" + reportDate + "): " + truncateStr(summary, 600)
 }
 
 func parseSituationReportJSON(text string) (string, string) {
@@ -494,6 +529,7 @@ func generateSituationReport(task *SituationTask) {
 	tools := []LLMTool{webSearchTool()}
 	var gathered []SearchResult
 	var finalAnswer string
+	var lastSearchStatus string
 	failed := false
 	searches := 0
 	maxRounds := 6
@@ -513,7 +549,8 @@ func generateSituationReport(task *SituationTask) {
 						break
 					}
 					searches++
-					_, results := executeWebSearchWithCache(q, userID)
+					_, results, status := executeWebSearchWithCache(q, userID)
+					lastSearchStatus = status
 					gathered = append(gathered, results...)
 					messages = append(messages, LLMMessage{Role: "user", Content: "Web search results for \"" + q + "\":\n" + formatSearchResultsDetailed(results, 6000)})
 				}
@@ -535,7 +572,8 @@ func generateSituationReport(task *SituationTask) {
 				Query string `json:"query"`
 			}
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-			_, results := executeWebSearchWithCache(args.Query, userID)
+			_, results, status := executeWebSearchWithCache(args.Query, userID)
+			lastSearchStatus = status
 			gathered = append(gathered, results...)
 			messages = append(messages, LLMMessage{
 				Role:       "tool",
@@ -550,7 +588,7 @@ func generateSituationReport(task *SituationTask) {
 	summary := ""
 	composeMessages := []LLMMessage{
 		{Role: "system", Content: "You are an analyst producing a situation report for " + time.Now().UTC().Format("2006-01-02") + ". Output ONLY a JSON object with keys \"summary\" and \"report\". No extra text."},
-		{Role: "user", Content: buildSituationComposePrompt(task, gathered)},
+		{Role: "user", Content: buildSituationComposePrompt(task, gathered, lastSearchStatus, lastSituationContext(task.Id, today))},
 	}
 	compMsg, err := llmChat(ctx, composeMessages, nil, "")
 	if err != nil {
@@ -572,6 +610,19 @@ func generateSituationReport(task *SituationTask) {
 		summary = truncateStr(content, 200)
 	}
 
+	if len(gathered) == 0 && !failed {
+		attempts := db.bumpSituationAttempts(task.Id, today)
+		log.Printf("situation: no web results for %s (attempt %d, status %s)", task.Subject, attempts, lastSearchStatus)
+		if attempts < situationMaxAttempts {
+			content = "Web search returned no results for this run (attempt " + strconv.Itoa(attempts) + " of " + strconv.Itoa(situationMaxAttempts) + "). The report will be retried automatically. Source status: " + lastSearchStatus
+			summary = "No web results yet, retrying later today."
+			failed = true
+		} else {
+			content = "No live web results could be gathered for this report today after " + strconv.Itoa(attempts) + " attempts. Source status: " + lastSearchStatus + ".\n\nNo specific developments could be verified from live sources."
+			summary = "Live web sources were unavailable today."
+		}
+	}
+
 	searchJSON, _ := json.Marshal(gathered)
 	status := "completed"
 	if failed {
@@ -581,8 +632,8 @@ func generateSituationReport(task *SituationTask) {
 		log.Printf("situation: failed to save report: %v", err)
 	}
 	_ = db.saveSituationNews(task.Id, userID, today, gathered)
-	_ = db.updateSituationTaskLastRun(task.Id, today)
 	if !failed {
+		_ = db.updateSituationTaskLastRun(task.Id, today)
 		triggerRagReindex()
 	}
 }

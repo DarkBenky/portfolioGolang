@@ -8,7 +8,7 @@ const HOST = process.env.SERVE_HOST || '0.0.0.0'
 const PORT = Number(process.env.SERVE_PORT || 5173)
 
 const DENY_SEGMENTS = new Set(['.env', '.git', '.aws', '.ssh', '.hg', '.svn', 'proc', 'etc', 'dev', 'sys', 'var'])
-const DENY_EXTENSIONS = new Set(['.env', '.pem', '.key', '.crt', '.sqlite', '.sqlite3', '.db', '.gob', '.pt', '.h5', '.py', '.go'])
+const DENY_EXTENSIONS = new Set(['.env', '.pem', '.key', '.crt', '.sqlite', '.sqlite3', '.db', '.duckdb', '.wal', '.gob', '.pt', '.h5', '.py', '.go'])
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

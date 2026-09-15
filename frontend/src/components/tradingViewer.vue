@@ -45,6 +45,71 @@
           </v-card-text>
         </v-card>
 
+        <!-- Watchlist: holdings and pinned symbols -->
+        <v-card class="mb-2" variant="outlined">
+          <v-card-text class="pa-2">
+            <div class="ind-header d-flex align-center justify-space-between">
+              <span>Watchlist</span>
+              <v-icon size="x-small" class="mr-1" @click="loadWatchlist" title="Reload">mdi-refresh</v-icon>
+            </div>
+            <div v-if="activeTicker" class="d-flex align-center justify-space-between px-2 pb-1">
+              <span class="text-caption text-grey">Active: {{ activeTicker }}</span>
+              <v-btn
+                v-if="!isPinned(activeTicker)"
+                size="x-small"
+                variant="text"
+                density="compact"
+                prepend-icon="mdi-pin-outline"
+                @click="pinActive"
+              >Pin</v-btn>
+              <v-btn
+                v-else
+                size="x-small"
+                variant="text"
+                density="compact"
+                color="primary"
+                prepend-icon="mdi-pin"
+                @click="unpinSymbol(activeTicker)"
+              >Unpin</v-btn>
+            </div>
+            <div v-if="pinnedSymbols.length > 0" class="ind-header">Pinned</div>
+            <v-list density="compact" class="pa-0">
+              <v-list-item
+                v-for="item in pinnedSymbols"
+                :key="'p-' + item.symbol"
+                class="px-2 py-0 watchlist-row"
+                :class="{ 'watchlist-active': item.symbol === activeTicker }"
+                @click="selectSymbol(item.symbol, item.name)"
+              >
+                <v-list-item-title class="text-caption font-weight-bold">{{ item.symbol }}</v-list-item-title>
+                <v-list-item-subtitle class="text-caption text-truncate">{{ item.name }}</v-list-item-subtitle>
+                <template #append>
+                  <v-icon size="x-small" @click.stop="unpinSymbol(item.symbol)">mdi-pin</v-icon>
+                </template>
+              </v-list-item>
+            </v-list>
+            <div v-if="holdings.length > 0" class="ind-header">Holdings</div>
+            <v-list density="compact" class="pa-0">
+              <v-list-item
+                v-for="holding in holdings"
+                :key="'h-' + holding.ticker"
+                class="px-2 py-0 watchlist-row"
+                :class="{ 'watchlist-active': holding.ticker === activeTicker }"
+                @click="selectSymbol(holding.ticker, holding.name)"
+              >
+                <v-list-item-title class="text-caption font-weight-bold">{{ holding.ticker }}</v-list-item-title>
+                <v-list-item-subtitle class="text-caption text-truncate">{{ holding.name }}</v-list-item-subtitle>
+                <template #append>
+                  <v-icon size="x-small" @click.stop="pinSymbol(holding.ticker, holding.name)">mdi-pin-outline</v-icon>
+                </template>
+              </v-list-item>
+            </v-list>
+            <div v-if="holdings.length === 0 && pinnedSymbols.length === 0" class="text-caption text-grey px-2">
+              No holdings or pinned symbols yet.
+            </div>
+          </v-card-text>
+        </v-card>
+
         <!-- Interval selector -->
         <v-card class="mb-2" variant="outlined">
           <v-card-text class="pa-2">
@@ -171,6 +236,9 @@ export default {
     const chartReady = ref(false)
     const tradeChart = ref(null)
 
+    const holdings = ref([])
+    const pinnedSymbols = ref([])
+
     const indicatorDefs = list()
 
     const enabledIndicators = reactive(
@@ -226,6 +294,74 @@ export default {
       activeTickerName.value = result.name
       searchResults.value = []
       searchQuery.value = ''
+      await loadChart()
+    }
+
+    async function loadWatchlist() {
+      const token = getAuthToken()
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/portfolio/holdings`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        holdings.value = res.ok ? await res.json() : []
+      } catch {
+        holdings.value = []
+      }
+      await loadPins()
+    }
+
+    async function loadPins() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/pins`, {
+          headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        })
+        pinnedSymbols.value = res.ok ? await res.json() : []
+      } catch {
+        pinnedSymbols.value = []
+      }
+    }
+
+    function isPinned(symbol) {
+      return pinnedSymbols.value.some(p => p.symbol === symbol)
+    }
+
+    async function pinSymbol(symbol, name) {
+      if (!symbol) return
+      try {
+        await fetch(`${API_BASE_URL}/api/pins`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${getAuthToken()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ symbol, name: name || '' })
+        })
+        await loadPins()
+      } catch {
+        // ignore, the list stays unchanged
+      }
+    }
+
+    async function unpinSymbol(symbol) {
+      if (!symbol) return
+      try {
+        await fetch(`${API_BASE_URL}/api/pins?symbol=${encodeURIComponent(symbol)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        })
+        await loadPins()
+      } catch {
+        // ignore, the list stays unchanged
+      }
+    }
+
+    function pinActive() {
+      pinSymbol(activeTicker.value, activeTickerName.value)
+    }
+
+    async function selectSymbol(symbol, name) {
+      activeTicker.value = symbol
+      activeTickerName.value = name || ''
       await loadChart()
     }
 
@@ -336,6 +472,7 @@ export default {
     onMounted(() => {
       updateChartHeight()
       window.addEventListener('resize', updateChartHeight)
+      loadWatchlist()
     })
 
     onUnmounted(() => {
@@ -362,7 +499,15 @@ export default {
       onIntervalChange,
       onChartReady,
       onIndicatorToggle,
-      onParamChange
+      onParamChange,
+      holdings,
+      pinnedSymbols,
+      loadWatchlist,
+      isPinned,
+      pinSymbol,
+      unpinSymbol,
+      pinActive,
+      selectSymbol
     }
   }
 }
@@ -407,6 +552,19 @@ export default {
 
 .search-results .v-list-item:hover {
   background-color: rgba(var(--v-theme-primary), 0.08);
+}
+
+.watchlist-row {
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.watchlist-row:hover {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+}
+
+.watchlist-active {
+  background-color: rgba(var(--v-theme-primary), 0.16);
 }
 
 .ind-header {

@@ -62,6 +62,11 @@ export default {
     crosshairMode: {
       type: Number,
       default: CrosshairMode.Normal // 0: Normal, 1: Magnet
+    },
+    // Reset the visible range when the dataset identity changes (e.g. interval switch)
+    fitOnDataChange: {
+      type: Boolean,
+      default: true
     }
   },
   emits: ['chart-ready', 'crosshair-move', 'time-range-change'],
@@ -73,6 +78,7 @@ export default {
     let chart = null
     let candleSeries = null
     let volumeSeries = null
+    let lastDataKey = ''
     const additionalSeries = ref([])
 
     // Computed
@@ -279,6 +285,12 @@ export default {
       
       if (volumeSeries && volumes.length > 0) {
         volumeSeries.setData(volumes)
+      }
+
+      const dataKey = candles.length > 0 ? candles[0].time + ':' + candles.length : 'empty'
+      if (props.fitOnDataChange && dataKey !== lastDataKey) {
+        lastDataKey = dataKey
+        chart.timeScale().fitContent()
       }
 
       // Show last candle in legend

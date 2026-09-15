@@ -1231,6 +1231,98 @@
                           </v-card-text>
                         </v-card>
                       </v-col>
+
+                      <v-col cols="12" md="6">
+                        <v-card variant="outlined">
+                          <v-card-title class="text-h6">Risk and Skill</v-card-title>
+                          <v-card-text>
+                            <v-list density="compact">
+                              <v-list-item>
+                                <v-list-item-title>Alpha (annualized)</v-list-item-title>
+                                <template v-slot:append>
+                                  <span :class="backtestData.alpha >= 0 ? 'text-success' : 'text-error'" class="font-weight-bold">
+                                    {{ backtestData.alpha >= 0 ? '+' : '' }}{{ backtestData.alpha }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Beta vs {{ backtestBenchmark }}</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.beta }}</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Win Rate (up days)</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.win_rate }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Best Month</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-success font-weight-bold">
+                                    {{ backtestData.best_month_label }} {{ backtestData.best_month >= 0 ? '+' : '' }}{{ backtestData.best_month }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Worst Month</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-error font-weight-bold">
+                                    {{ backtestData.worst_month_label }} {{ backtestData.worst_month }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                            </v-list>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+
+                      <v-col cols="12" md="6">
+                        <v-card variant="outlined">
+                          <v-card-title class="text-h6">Risk and Skill</v-card-title>
+                          <v-card-text>
+                            <v-list density="compact">
+                              <v-list-item>
+                                <v-list-item-title>Alpha (annualized)</v-list-item-title>
+                                <template v-slot:append>
+                                  <span :class="backtestData.alpha >= 0 ? 'text-success' : 'text-error'" class="font-weight-bold">
+                                    {{ backtestData.alpha >= 0 ? '+' : '' }}{{ backtestData.alpha }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Beta vs {{ backtestBenchmark }}</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.beta }}</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Win Rate (up days)</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="font-weight-bold">{{ backtestData.win_rate }}%</span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Best Month</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-success font-weight-bold">
+                                    {{ backtestData.best_month_label }} {{ backtestData.best_month >= 0 ? '+' : '' }}{{ backtestData.best_month }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                              <v-list-item>
+                                <v-list-item-title>Worst Month</v-list-item-title>
+                                <template v-slot:append>
+                                  <span class="text-error font-weight-bold">
+                                    {{ backtestData.worst_month_label }} {{ backtestData.worst_month }}%
+                                  </span>
+                                </template>
+                              </v-list-item>
+                            </v-list>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
                     </v-row>
 
                     <v-row v-if="holdingReturns.length > 0" class="mt-2">
@@ -2524,6 +2616,11 @@ export default {
       return slices
     },
 
+    scheduleBacktestFetch() {
+      clearTimeout(this._backtestTimer)
+      this._backtestTimer = setTimeout(() => this.fetchBacktest(), 400)
+    },
+
     toggleCustomTicker(ticker) {
       if (!this.customPortfolioTickers) {
         this.customPortfolioTickers = this.portfolioHoldings
@@ -2542,7 +2639,7 @@ export default {
           }
         }
       }
-      this.fetchBacktest()
+      this.scheduleBacktestFetch()
     },
 
     formatCurrency(value) {

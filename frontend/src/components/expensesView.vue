@@ -526,7 +526,7 @@ const latestReport = ref(null)
 const reportDialog = ref(false)
 const viewingReport = ref(null)
 
-const allCategories = ['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Transfer', 'Food', 'Transportation', 'Education', 'Other']
+const allCategories = ref(['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Transfer', 'Other'])
 
 const categoryColors = {
   Food: '#FF6384', Transportation: '#36A2EB', Entertainment: '#FFCE56',
@@ -967,12 +967,26 @@ async function deleteUnifiedRow(item) {
   }
 }
 
+async function fetchCategories() {
+  try {
+    const res = await authFetch('/api/expenses/categories')
+    if (!res.ok) return
+    const cats = await res.json()
+    if (Array.isArray(cats) && cats.length > 0) {
+      allCategories.value = cats
+    }
+  } catch (e) {
+    showSnackbar('Failed to load categories', 'error')
+  }
+}
+
 onMounted(async () => {
   await Promise.all([
     fetchExpenses(),
     fetchBankTransactions(),
     fetchSavingsTransactions(),
-    fetchReports()
+    fetchReports(),
+    fetchCategories()
   ])
 })
 </script>

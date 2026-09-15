@@ -4,6 +4,11 @@ cd "$(dirname "$0")"
 
 ulimit -n 65536
 
+export MALLOC_TRIM_THRESHOLD_=131072
+export MALLOC_MMAP_THRESHOLD_=131072
+export MALLOC_TOP_PAD_=131072
+export MALLOC_ARENA_MAX=4
+
 CONDA_SH="/home/user/anaconda3/etc/profile.d/conda.sh"
 if [ -f "$CONDA_SH" ]; then
     source "$CONDA_SH"
@@ -38,7 +43,7 @@ while true; do
         sleep 2
     fi
     echo "[$(date)] Starting gunicorn on port $PORT"
-    gunicorn -w 1 --threads 10 --timeout 120 --keep-alive 5 -b 127.0.0.1:"$PORT" getData:app &
+    gunicorn -w 1 --threads 10 --timeout 120 --keep-alive 5 --max-requests 800 --max-requests-jitter 200 --worker-tmp-dir /dev/shm -b 127.0.0.1:"$PORT" getData:app &
     GUNICORN_PID=$!
 
     HEALTHY=0

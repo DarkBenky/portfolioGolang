@@ -16,6 +16,16 @@ SALT="your-salt-here"
 JWT_SECRET="your-jwt-secret-here"
 
 PYTHON_API_KEY="shared-secret-between-go-and-python"
+
+# Optional: SearXNG instance used as a web search fallback (leave empty to skip)
+SEARXNG_URL=""
+
+# Optional: soft heap limit for the Go server, for example 1200MiB
+GOMEMLIMIT=1200MiB
+
+# Optional: DuckDB price store memory limits (defaults shown below)
+PRICE_MIGRATION_MEMORY=2GB
+PRICE_MEMORY_LIMIT=512MB
 ```
 
 ### Frontend (.env in frontend directory)
@@ -73,6 +83,23 @@ or manually:
 ```bash
 python getData.py
 ```
+
+## Memory
+
+Both processes used to grow until a restart. The fixes and the settings that matter:
+
+- Go: the SQLite pool is capped (`SetMaxOpenConns(4)`, 30 min connection lifetime), the page cache is 16 MB and the mmap window is 64 MB per connection. Periodic jobs run through a semaphore of 3 concurrent external fetches. RAG reindexing is skipped when no source changed and report triggered reindexes are debounced to once per 5 minutes. Set `GOMEMLIMIT=1200MiB` in the service environment to make the Go garbage collector keep the heap bounded.
+- Python: `ttl_cache` keys are hashed instead of retaining page markup, the big asset caches are capped at 64 to 512 entries, article downloads are capped at 2 MB, the thread pool runs 4 workers and gunicorn recycles its worker (`--max-requests 800 --max-requests-jitter 200`) with glibc trim settings so freed memory returns to the OS.
+- Where the data lives: price bars are in `prices.duckdb` (DuckDB, single writer = the Go server, memory limit raised to `PRICE_MIGRATION_MEMORY` during the one time migration and lowered to `PRICE_MEMORY_LIMIT` afterwards, 2 GB and 512 MB by default). Everything else stays in `portfolio.db`. The old `prices` table in SQLite is kept read only as a backup and is only read once, by the migration.
+
+### First start after the price store change
+- On startup, if the DuckDB table is empty and the SQLite `prices` table has rows, every bar is copied over (about a second per 100k rows) and logged as `prices: migrating N rows` / `Price store ready`.
+- Back up `portfolio.db` **and** `prices.duckdb` before the first start: once the migration has run, new bars only go to DuckDB, so the SQLite copy is a point in time snapshot and must not be treated as the source of truth afterwards. Re-running the migration is only possible from that snapshot, so deleting `prices.duckdb` loses everything collected after the switch.
+
+### Measuring
+- Go: `curl -H "Authorization: Bearer <jwt>" http://127.0.0.1:8085/api/debug/mem` and the `mem:` log line every 5 minutes.
+- Python: `curl -H "X-API-Key: $PYTHON_API_KEY" http://127.0.0.1:5123/api/debug/mem`.
+- Both: `ps -eo pid,user,%mem,rss,comm --sort=-rss | head -5` sampled over a day.
 
 ### Frontend
 ```bash

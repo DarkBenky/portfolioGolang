@@ -13,6 +13,27 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
 ]
 
+ARTICLE_BYTES_LIMIT = 2000000
+ARTICLE_TEXT_LIMIT = 8000
+
+def _download_html(url: str, max_bytes: int = ARTICLE_BYTES_LIMIT) -> str:
+    for user_agent in USER_AGENTS:
+        try:
+            with requests.get(url, headers={'User-Agent': user_agent}, timeout=(3, 10), stream=True) as response:
+                if response.status_code != 200:
+                    continue
+                chunks = []
+                size = 0
+                for chunk in response.iter_content(65536):
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size >= max_bytes:
+                        break
+                return b''.join(chunks).decode(response.encoding or 'utf-8', 'ignore')
+        except Exception:
+            continue
+    return ''
+
 def creteSentimentAnalyzer():
     finbert_model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone',num_labels=3)
     finbert_tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
@@ -116,48 +137,18 @@ def getNews(Ticker: str, num_articles:int, model: pipeline):
             else:
                 url = ''
             
-            # Fetch article text first
             text = ''
             if url != '':
-                try:
-                    article = Article(url)
-                    article.download()
-                    article.parse()
-                    text = article.text
-                except requests.exceptions.HTTPError as e:
-                    if hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
-                        for user_agent in USER_AGENTS:
-                            try:
-                                headers = {'User-Agent': user_agent}
-                                with requests.get(url, headers=headers, timeout=10) as response:
-                                    response.raise_for_status()
-                                    article = Article(url)
-                                    article.html = response.text
-                                    article.parse()
-                                    text = article.text
-                                break
-                            except Exception:
-                                continue
-                    else:
-                        print(f"Error fetching article from {url}: {e}")
-                except Exception as e:
-                    if '403' in str(e) or 'Forbidden' in str(e):
-                        for user_agent in USER_AGENTS:
-                            try:
-                                headers = {'User-Agent': user_agent}
-                                with requests.get(url, headers=headers, timeout=10) as response:
-                                    response.raise_for_status()
-                                    article = Article(url)
-                                    article.html = response.text
-                                    article.parse()
-                                    text = article.text
-                                break
-                            except Exception:
-                                continue
-                        else:
-                            print(f"Error fetching article from {url}: {e}")
-                    else:
-                        print(f"Error fetching article from {url}: {e}")
+                html = _download_html(url)
+                if html:
+                    try:
+                        article = Article(url)
+                        article.set_html(html)
+                        article.parse()
+                        text = (article.text or '')[:ARTICLE_TEXT_LIMIT]
+                    except Exception as e:
+                        print(f"Error parsing article from {url}: {e}")
+                html = None
 
             # Check if news already exists in DB (now including text)
             try:

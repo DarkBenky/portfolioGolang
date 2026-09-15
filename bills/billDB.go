@@ -3,7 +3,9 @@ package bills
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -327,7 +329,84 @@ var seedCategories = map[string]string{
 	"dallmayr": "Snacks",
 }
 
+var extraSeedCategories = map[string]string{
+	"wolt": "Dining", "bolt food": "Dining", "uber eats": "Dining", "foodora": "Dining",
+	"damejidlo": "Dining", "just eat": "Dining", "subway": "Dining", "pizza hut": "Dining",
+	"dominos": "Dining", "papa johns": "Dining", "sushi time": "Dining", "running sushi": "Dining",
+	"gymbeam": "Healthcare", "pilulka": "Healthcare", "agel": "Healthcare",
+	"penny": "Groceries", "kaufland": "Groceries", "globus": "Groceries",
+	"rohlik": "Groceries", "kosik": "Groceries", "hruska": "Groceries", "delmart": "Groceries",
+	"billa stop": "Groceries", "rossmann": "Groceries", "teta drogerie": "Groceries",
+	"bolt": "Transport", "liftago": "Transport", "dpp": "Transport", "regiojet": "Transport",
+	"leo express": "Transport", "flixbus": "Transport", "smartwings": "Transport",
+	"wizz": "Transport", "benzina": "Transport", "mol": "Transport", "eurooil": "Transport",
+	"lukoil": "Transport", "circlek": "Transport", "mytaxi": "Transport", "car2go": "Transport",
+	"cez": "Utilities", "innogy": "Utilities", "prazska energetika": "Utilities",
+	"t mobile": "Utilities", "vodafone": "Utilities", "cetin": "Utilities",
+	"datart": "Shopping", "planeo": "Shopping", "mobelix": "Shopping", "hornbach": "Shopping",
+	"obi": "Shopping", "bauhaus": "Shopping", "leroy merlin": "Shopping", "action": "Shopping",
+	"cinestar": "Entertainment", "multikino": "Entertainment", "multisport": "Entertainment",
+	"apple com bill": "Subscriptions", "chatgpt": "Subscriptions", "openai": "Subscriptions",
+	"anthropic": "Subscriptions", "claude ai": "Subscriptions", "adobe": "Subscriptions",
+	"cloudflare": "Subscriptions", "namecheap": "Subscriptions", "notion": "Subscriptions",
+	"xtb": "Investments", "trading 212": "Investments", "degiro": "Investments",
+	"revolut": "Investments", "interactive brokers": "Investments", "coinbase": "Investments",
+	"binance": "Investments", "portu": "Investments", "investown": "Investments",
+	"ceska pojistovna": "Insurance", "cpp": "Insurance", "direct pojisteni": "Insurance",
+	"svj": "Housing", "bytove druzstvo": "Housing", "energie": "Utilities",
+}
+
+type seedEntry struct {
+	keyword  string
+	category string
+}
+
+var seedEntriesByLength []seedEntry
+
+var seedInitOnce sync.Once
+
+func loadSeedEntries() {
+	seedInitOnce.Do(func() {
+		for keyword, category := range extraSeedCategories {
+			if _, exists := seedCategories[keyword]; !exists {
+				seedCategories[keyword] = category
+			}
+		}
+		entries := make([]seedEntry, 0, len(seedCategories))
+		for keyword, category := range seedCategories {
+			normalized := normalizeMerchantText(keyword)
+			if normalized == "" {
+				continue
+			}
+			entries = append(entries, seedEntry{keyword: normalized, category: category})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return len(entries[i].keyword) > len(entries[j].keyword)
+		})
+		seedEntriesByLength = entries
+	})
+}
+
+func normalizeMerchantText(value string) string {
+	lower := strings.ToLower(value)
+	var sb strings.Builder
+	for _, r := range lower {
+		switch {
+		case r >= 'a' && r <= 'z':
+			sb.WriteRune(r)
+		case r >= '0' && r <= '9':
+			sb.WriteRune(r)
+		case r >= '\u00e0' && r <= '\u00ff':
+			sb.WriteRune(r)
+		default:
+			sb.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(sb.String()), " ")
+}
+
 func seedMerchantCategories() error {
+	loadSeedEntries()
 	for keyword, category := range seedCategories {
 		_, err := db.Exec(
 			`INSERT OR IGNORE INTO merchant_categories (merchant_key, category, user_id, source) VALUES (?, ?, '', 'seed')`,
@@ -385,6 +464,48 @@ func ValidCategory(category string) bool {
 	return validCategories[category]
 }
 
+func CategoryNames() []string {
+	names := make([]string, 0, len(validCategories))
+	for name := range validCategories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+type MerchantRule struct {
+	MerchantKey string `json:"merchant_key"`
+	Category    string `json:"category"`
+	Source      string `json:"source"`
+}
+
+func ListMerchantRules(userID string) ([]MerchantRule, error) {
+	rows, err := db.Query(`
+		SELECT merchant_key, category, source FROM merchant_categories
+		WHERE user_id = ? OR user_id = ''
+		ORDER BY source DESC, merchant_key ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rules := make([]MerchantRule, 0)
+	for rows.Next() {
+		var rule MerchantRule
+		if err := rows.Scan(&rule.MerchantKey, &rule.Category, &rule.Source); err != nil {
+			continue
+		}
+		rules = append(rules, rule)
+	}
+	return rules, rows.Err()
+}
+
+func DeleteMerchantRule(userID string, merchantKey string) error {
+	_, err := db.Exec(`DELETE FROM merchant_categories WHERE user_id = ? AND merchant_key = ?`, userID, merchantKey)
+	return err
+}
+
 func GetKnownSavingsIBANs(userID string) (map[string]bool, error) {
 	rows, err := db.Query(`SELECT iban FROM user_savings_ibans WHERE user_id = ?`, userID)
 	if err != nil {
@@ -413,9 +534,15 @@ func SaveSavingsIBAN(userID string, iban string) {
 }
 
 func matchSeedKeyword(desc string) (string, bool) {
-	for keyword, category := range seedCategories {
-		if strings.Contains(desc, keyword) {
-			return category, true
+	loadSeedEntries()
+	normalized := normalizeMerchantText(desc)
+	if normalized == "" {
+		return "", false
+	}
+	padded := " " + normalized + " "
+	for _, entry := range seedEntriesByLength {
+		if strings.Contains(padded, " "+entry.keyword+" ") {
+			return entry.category, true
 		}
 	}
 	return "", false
@@ -440,37 +567,26 @@ func CategorizeBankTransaction(tx BankTransaction) string {
 		return cat
 	}
 
+	if cat, found := matchSeedKeyword(desc); found {
+		return cat
+	}
+
 	if strings.Contains(desc, "platba kartou") {
 		parts := strings.SplitN(tx.Description, "|", 2)
 		if len(parts) == 2 {
-			merchantDesc := strings.ToLower(strings.TrimSpace(parts[1]))
-			if cat, found := matchSeedKeyword(merchantDesc); found {
+			if cat, found := matchSeedKeyword(parts[1]); found {
 				return cat
 			}
 		}
-		return categorizeCardPayment(tx)
+		parts = strings.SplitN(tx.Description, ",", 2)
+		if len(parts) == 2 {
+			if cat, found := matchSeedKeyword(parts[0]); found {
+				return cat
+			}
+		}
 	}
 
 	return "Other"
-}
-
-func categorizeCardPayment(tx BankTransaction) string {
-	amount := tx.Amount
-	if amount < 0 {
-		amount = -amount
-	}
-	switch {
-	case amount < 3:
-		return "Snacks"
-	case amount < 8:
-		return "Dining"
-	case amount < 25:
-		return "Shopping"
-	case amount < 100:
-		return "Services"
-	default:
-		return "Shopping"
-	}
 }
 
 func ImportBankTransaction(tx BankTransaction) (bool, error) {

@@ -72,9 +72,21 @@ var (
 	chatCooldown  = 15 * time.Second
 
 	ragReindexMu sync.Mutex
+
+	ragSourceSigMu   sync.Mutex
+	lastRagSourceSig string
+	lastRagTriggerMu sync.Mutex
+	lastRagTrigger   time.Time
+	ragTriggerMinGap = 5 * time.Minute
+
+	chatRequestTimeout   = 5 * time.Minute
+	maxChatSearchResults = 12
+
+	externalFetchSem  = make(chan struct{}, 3)
+	pythonHTTPTimeout = 60 * time.Second
 )
 
-var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}}
+var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: pythonHTTPTimeout}
 
 var pythonWebSearchClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 45 * time.Second}
 
@@ -92,6 +104,11 @@ func (t pythonKeyTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		req.Header.Set("X-API-Key", PYTHON_API_KEY)
 	}
 	return t.base.RoundTrip(req)
+}
+
+func acquireExternalFetch() func() {
+	externalFetchSem <- struct{}{}
+	return func() { <-externalFetchSem }
 }
 
 type User struct {
@@ -405,26 +422,10 @@ func (database *DB) topGainersLosers(userId string, topN int, interval time.Dura
 			continue
 		}
 
-		priceRows, err := database.Query(`
-			SELECT close
-			FROM prices
-			WHERE ticker = ?
-			AND date >= ?
-			AND date <= ?
-			ORDER BY date ASC
-		`, holding.Ticker, startTimestamp, endTimestamp)
+		prices, err := closeSeries(holding.Ticker, startTimestamp, endTimestamp)
 		if err != nil {
 			continue
 		}
-
-		var prices []float64
-		for priceRows.Next() {
-			var price float64
-			if err := priceRows.Scan(&price); err == nil {
-				prices = append(prices, price)
-			}
-		}
-		priceRows.Close()
 
 		if len(prices) < 2 {
 			continue
@@ -464,7 +465,6 @@ func (database *DB) topGainersLosers(userId string, topN int, interval time.Dura
 
 		var newsList []News
 		if err == nil {
-			defer newsRows.Close()
 			for newsRows.Next() {
 				var n News
 				var idAsset, idHolding sql.NullString
@@ -479,6 +479,7 @@ func (database *DB) topGainersLosers(userId string, topN int, interval time.Dura
 					newsList = append(newsList, n)
 				}
 			}
+			newsRows.Close()
 		}
 
 		var asset *Asset
@@ -495,21 +496,13 @@ func (database *DB) topGainersLosers(userId string, topN int, interval time.Dura
 	}
 
 	if isGainer {
-		for i := 0; i < len(results); i++ {
-			for j := i + 1; j < len(results); j++ {
-				if results[i].PriceChangePct < results[j].PriceChangePct {
-					results[i], results[j] = results[j], results[i]
-				}
-			}
-		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].PriceChangePct > results[j].PriceChangePct
+		})
 	} else {
-		for i := 0; i < len(results); i++ {
-			for j := i + 1; j < len(results); j++ {
-				if results[i].PriceChangePct > results[j].PriceChangePct {
-					results[i], results[j] = results[j], results[i]
-				}
-			}
-		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].PriceChangePct < results[j].PriceChangePct
+		})
 	}
 
 	if len(results) > topN {
@@ -560,6 +553,8 @@ func fetchPricesPeriodic(interval time.Duration) {
 
 			go func(ticker string) {
 				defer wg.Done()
+				release := acquireExternalFetch()
+				defer release()
 
 				log.Printf("Fetching prices for %s...", ticker)
 				err := fetchPrices(ticker)
@@ -736,6 +731,8 @@ func fetchNewsPeriodic(interval time.Duration) {
 
 			go func(ticker string) {
 				defer wg.Done()
+				release := acquireExternalFetch()
+				defer release()
 				log.Printf("Fetching news for %s...", ticker)
 				err := fetchNews(ticker, 10)
 				if err != nil {
@@ -1040,10 +1037,15 @@ func fetchAndStoreETFData(holdingID, ticker, isin, name string) error {
 }
 
 func initDB(fakeData bool) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&cache=shared&_cache_size=-64000&_mmap_size=268435456&_temp_store=MEMORY")
+	db, err := sql.Open("sqlite3", "./portfolio.db?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&cache=shared&_cache_size=-16000&_mmap_size=67108864&_temp_store=MEMORY")
 	if err != nil {
 		return nil, err
 	}
+
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	_, err = db.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
@@ -1060,7 +1062,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
-	_, err = db.Exec("PRAGMA cache_size=-64000;")
+	_, err = db.Exec("PRAGMA cache_size=-16000;")
 	if err != nil {
 		return nil, err
 	}
@@ -1070,7 +1072,7 @@ func initDB(fakeData bool) (*sql.DB, error) {
 		return nil, err
 	}
 
-	_, err = db.Exec("PRAGMA mmap_size=268435456;")
+	_, err = db.Exec("PRAGMA mmap_size=67108864;")
 	if err != nil {
 		return nil, err
 	}
@@ -1550,105 +1552,22 @@ func migratePricesTable(database *sql.DB) (bool, error) {
 }
 
 func compactTicker(ticker string, cutoff int64, bucketSecs int64) error {
-	rows, err := db.Query(`
-		SELECT date, open, close, high, low, volume
-		FROM prices
-		WHERE ticker = ? AND date < ?
-		ORDER BY date ASC
-	`, ticker, cutoff)
-	if err != nil {
-		return err
+	if priceStore == nil {
+		return fmt.Errorf("price store not initialized")
 	}
-
-	type aggRow struct {
-		open   float64
-		high   float64
-		low    float64
-		close  float64
-		volume int64
-	}
-
-	buckets := make(map[int64]*aggRow)
-	var bucketList []int64
-
-	for rows.Next() {
-		var date int64
-		var open, closeP, high, low float64
-		var volume int64
-		if err := rows.Scan(&date, &open, &closeP, &high, &low, &volume); err != nil {
-			rows.Close()
-			return err
-		}
-		b := date - (date % bucketSecs)
-		if a, ok := buckets[b]; ok {
-			if high > a.high {
-				a.high = high
-			}
-			if low < a.low {
-				a.low = low
-			}
-			a.close = closeP
-			a.volume += volume
-		} else {
-			buckets[b] = &aggRow{open: open, high: high, low: low, close: closeP, volume: volume}
-			bucketList = append(bucketList, b)
-		}
-	}
-	rows.Close()
-
-	if len(bucketList) == 0 {
-		return nil
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO prices (ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-
-	for _, b := range bucketList {
-		a := buckets[b]
-		if _, err := stmt.Exec(ticker, b, a.open, a.close, a.high, a.low, a.volume); err != nil {
-			stmt.Close()
-			return err
-		}
-	}
-	stmt.Close()
-
-	if _, err := tx.Exec(`DELETE FROM prices WHERE ticker = ? AND date < ? AND date % ? != 0`, ticker, cutoff, bucketSecs); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	bucket := priceBucket{seconds: bucketSecs, expr: epochBucketExpr(bucketSecs)}
+	return priceStore.compactTicker(ticker, cutoff, bucket)
 }
 
 func compactPrices() error {
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
-
 	now := time.Now().UTC().Unix()
 	cutoffHourly := (now - priceRetention5mSec) / 3600 * 3600
 	cutoffDaily := (now - priceRetention1hSec) / 86400 * 86400
 
-	rows, err := db.Query(`SELECT DISTINCT ticker FROM prices`)
+	tickers, err := priceStore.tickers()
 	if err != nil {
 		return err
 	}
-	var tickers []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			rows.Close()
-			return err
-		}
-		tickers = append(tickers, t)
-	}
-	rows.Close()
 
 	for _, ticker := range tickers {
 		if err := compactTicker(ticker, cutoffHourly, 3600); err != nil {
@@ -1659,8 +1578,7 @@ func compactPrices() error {
 		}
 	}
 
-	_, err = db.Exec(`PRAGMA incremental_vacuum`)
-	return err
+	return nil
 }
 
 func compactPricesPeriodic(interval time.Duration) {
@@ -1678,10 +1596,8 @@ func compactPricesPeriodic(interval time.Duration) {
 }
 
 func hasOldPriceData(ticker string, cutoff int64) (bool, error) {
-	dbMutex.RLock()
-	defer dbMutex.RUnlock()
-	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM prices WHERE ticker = ? AND date < ?`, ticker, cutoff).Scan(&n)
+	var n int64
+	err := priceStore.db.QueryRow(`SELECT COUNT(*) FROM prices WHERE ticker = ? AND date < ?`, ticker, cutoff).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -3323,64 +3239,17 @@ func (database *DB) getHoldingsByTicker(ticker string) ([]Holding, error) {
 }
 
 func (database *DB) addPrices(prices []Price) error {
-	if len(prices) == 0 {
-		return nil
+	if priceStore == nil {
+		return fmt.Errorf("price store not initialized")
 	}
-
-	dbMutex.Lock()
-	defer dbMutex.Unlock()
-
-	tx, err := database.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO prices (ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, price := range prices {
-		_, err = stmt.Exec(price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
-		if err != nil {
-			log.Printf("Error adding price for %s on %d: %v", price.Ticker, price.Date, err)
-		}
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return priceStore.upsertPrices(prices)
 }
 
 func (database *DB) getLastPriceTimestamp(ticker string) (int64, error) {
-	dbMutex.RLock()
-	defer dbMutex.RUnlock()
-
-	var lastTimestamp sql.NullInt64
-	now := time.Now().UTC().Unix()
-
-	err := database.QueryRow(`
-		SELECT MAX(date)
-		FROM prices
-		WHERE ticker = ?
-		AND date > 0
-		AND date <= ?
-	`, ticker, now).Scan(&lastTimestamp)
-
-	if err != nil && err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	if !lastTimestamp.Valid || lastTimestamp.Int64 <= 0 || lastTimestamp.Int64 > now {
+	if priceStore == nil {
 		return 0, nil
 	}
-
-	return lastTimestamp.Int64, nil
+	return priceStore.lastTimestamp(ticker)
 }
 
 func generateID() string {
@@ -3636,6 +3505,8 @@ func updateSentimentsPeriodic(interval time.Duration) {
 
 		for _, tickerSymbol := range tickers {
 			go func(tickerSym string) {
+				release := acquireExternalFetch()
+				defer release()
 				err := updateTickerDailySentiment(tickerSym, todayDate)
 				if err != nil {
 					if !strings.Contains(err.Error(), "no news available") {
@@ -3659,6 +3530,8 @@ func updateSentimentsPeriodic(interval time.Duration) {
 
 		for _, user := range users {
 			go func(u User) {
+				release := acquireExternalFetch()
+				defer release()
 				err := updatePortfolioDailySentiment(u.Id, todayDate)
 				if err != nil {
 					log.Printf("Error updating portfolio sentiment for user %s: %v", u.Id, err)
@@ -3706,6 +3579,8 @@ func updateETFDataPeriodic(interval time.Duration) {
 
 		for _, holding := range etfHoldings {
 			go func(h Holding) {
+				release := acquireExternalFetch()
+				defer release()
 				log.Printf("Updating ETF data for %s (ID: %s)", h.Ticker, h.IdHolding)
 
 				err := db.deleteETFDataForHolding(h.IdHolding)
@@ -3923,6 +3798,8 @@ func triggerNewsSummary(c echo.Context) error {
 			wg.Add(1)
 			go func(tickerSym string) {
 				defer wg.Done()
+				release := acquireExternalFetch()
+				defer release()
 				if err := updateTickerDailySentiment(tickerSym, todayDate); err != nil {
 					if !strings.Contains(err.Error(), "no news available") {
 						log.Printf("Error updating ticker sentiment for %s: %v", tickerSym, err)
@@ -4776,7 +4653,6 @@ func GetHoldings(c echo.Context) error {
 	dbMutex.Lock()
 	sectorRows, err := db.Query(`SELECT id_holding, name, percentage FROM sectors WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
 	if err == nil {
-		defer sectorRows.Close()
 		for sectorRows.Next() {
 			var idHolding, name string
 			var percentage float64
@@ -4784,13 +4660,13 @@ func GetHoldings(c echo.Context) error {
 				sectorsMap[idHolding] = append(sectorsMap[idHolding], SectorData{Name: name, Percentage: percentage})
 			}
 		}
+		sectorRows.Close()
 	}
 	dbMutex.Unlock()
 
 	dbMutex.Lock()
 	regionRows, err := db.Query(`SELECT id_holding, name, percentage FROM regions WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)`, toInterfaceSlice(holdingIDs)...)
 	if err == nil {
-		defer regionRows.Close()
 		for regionRows.Next() {
 			var idHolding, name string
 			var percentage float64
@@ -4798,6 +4674,7 @@ func GetHoldings(c echo.Context) error {
 				regionsMap[idHolding] = append(regionsMap[idHolding], RegionData{Name: name, Percentage: percentage})
 			}
 		}
+		regionRows.Close()
 	}
 	dbMutex.Unlock()
 
@@ -4808,7 +4685,6 @@ func GetHoldings(c echo.Context) error {
 		WHERE id_holding IN (`+buildPlaceholders(len(holdingIDs))+`)
 	`, toInterfaceSlice(holdingIDs)...)
 	if err == nil {
-		defer assetRows.Close()
 		for assetRows.Next() {
 			var idHolding string
 			var a AssetData
@@ -4816,6 +4692,7 @@ func GetHoldings(c echo.Context) error {
 				assetsMap[idHolding] = append(assetsMap[idHolding], a)
 			}
 		}
+		assetRows.Close()
 	}
 	dbMutex.Unlock()
 
@@ -4865,33 +4742,10 @@ func GetPortfolioValue(c echo.Context) error {
 		tickerPurchasePrice[holding.Ticker] = holding.PurchasePrice
 	}
 
-	query := `
-		SELECT ticker, close 
-		FROM prices 
-		WHERE ticker IN (` + buildPlaceholders(len(tickers)) + `) 
-		AND date = (
-			SELECT MAX(date) 
-			FROM prices p2 
-			WHERE p2.ticker = prices.ticker
-		)
-	`
-
-	dbMutex.Lock()
-	rows, err := db.Query(query, toInterfaceSlice(tickers)...)
-	dbMutex.Unlock()
+	latestPrices, err := priceStore.latestCloses(tickers)
 	if err != nil {
 		log.Printf("Error fetching latest prices: %v", err)
 		return c.String(http.StatusInternalServerError, "Error fetching prices")
-	}
-	defer rows.Close()
-
-	latestPrices := make(map[string]float64)
-	for rows.Next() {
-		var ticker string
-		var price float64
-		if err := rows.Scan(&ticker, &price); err == nil {
-			latestPrices[ticker] = price
-		}
 	}
 
 	totalValue := 0.0
@@ -4915,36 +4769,7 @@ func GetPortfolioValueHistory(c echo.Context) error {
 	userID := claims.UserID
 
 	now := time.Now().UTC()
-
-	var intervalSeconds int64
-	var startTime time.Time
-
-	switch interval {
-	case "5m":
-		intervalSeconds = 300
-		startTime = now.Add(-24 * time.Hour)
-	case "15m":
-		intervalSeconds = 900
-		startTime = now.Add(-7 * 24 * time.Hour)
-	case "1h":
-		intervalSeconds = 3600
-		startTime = now.Add(-30 * 24 * time.Hour)
-	case "4h":
-		intervalSeconds = 14400
-		startTime = now.Add(-90 * 24 * time.Hour)
-	case "1d":
-		intervalSeconds = 86400
-		startTime = now.Add(-365 * 24 * time.Hour)
-	case "1w":
-		intervalSeconds = 604800
-		startTime = now.Add(-730 * 24 * time.Hour)
-	case "1M":
-		intervalSeconds = 2592000
-		startTime = time.Time{}
-	default:
-		intervalSeconds = 3600
-		startTime = now.Add(-30 * 24 * time.Hour)
-	}
+	bucket, lookback := priceIntervalSpec(interval)
 
 	holdings, err := db.getHoldingsByUser(userID)
 	if err != nil {
@@ -4955,53 +4780,30 @@ func GetPortfolioValueHistory(c echo.Context) error {
 		return c.JSON(http.StatusOK, []map[string]interface{}{})
 	}
 
-	// Build a map of ticker -> quantity
 	tickerQuantities := make(map[string]float64)
 	for _, holding := range holdings {
 		tickerQuantities[holding.Ticker] += holding.Quantity
 	}
 
-	// Get all unique tickers
 	tickers := make([]string, 0, len(tickerQuantities))
 	for ticker := range tickerQuantities {
 		tickers = append(tickers, ticker)
 	}
 
-	// Fetch all prices for user's tickers within the time range
-	startTimestamp := startTime.Unix()
+	var startTimestamp int64
+	if lookback == 0 {
+		startTimestamp = time.Time{}.Unix()
+	} else {
+		startTimestamp = now.Add(-time.Duration(lookback) * time.Second).Unix()
+	}
 	endTimestamp := now.Unix()
 
-	// Build query with placeholders for all tickers
-	placeholders := ""
-	args := make([]interface{}, 0, len(tickers)+2)
-	for i, ticker := range tickers {
-		if i > 0 {
-			placeholders += ","
-		}
-		placeholders += "?"
-		args = append(args, ticker)
-	}
-	args = append(args, startTimestamp, endTimestamp)
-
-	query := fmt.Sprintf(`
-		SELECT ticker, date, open, high, low, close, volume
-		FROM prices
-		WHERE ticker IN (%s)
-		AND date >= ?
-		AND date <= ?
-		ORDER BY date ASC
-	`, placeholders)
-
-	dbMutex.Lock()
-	rows, err := db.Query(query, args...)
-	dbMutex.Unlock()
+	series, err := priceStore.candlesMulti(tickers, startTimestamp, endTimestamp, bucket)
 	if err != nil {
 		log.Printf("Error querying prices: %v", err)
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
 	}
-	defer rows.Close()
 
-	// Group prices by timestamp bucket and ticker
 	type PriceData struct {
 		Open   float64
 		High   float64
@@ -5010,63 +4812,27 @@ func GetPortfolioValueHistory(c echo.Context) error {
 		Volume int64
 	}
 
-	// Map: bucket timestamp -> ticker -> price data
 	bucketData := make(map[int64]map[string]*PriceData)
-
-	for rows.Next() {
-		var ticker string
-		var date int64
-		var open, high, low, closePrice float64
-		var volume int64
-
-		err := rows.Scan(&ticker, &date, &open, &high, &low, &closePrice, &volume)
-		if err != nil {
-			log.Printf("Error scanning price row: %v", err)
-			continue
-		}
-
-		bucket := (date / intervalSeconds) * intervalSeconds
-
-		if bucketData[bucket] == nil {
-			bucketData[bucket] = make(map[string]*PriceData)
-		}
-
-		if bucketData[bucket][ticker] == nil {
-			bucketData[bucket][ticker] = &PriceData{
-				Open:   open,
-				High:   high,
-				Low:    low,
-				Close:  closePrice,
-				Volume: volume,
+	for ticker, candles := range series {
+		for _, candle := range candles {
+			if bucketData[candle.Timestamp] == nil {
+				bucketData[candle.Timestamp] = make(map[string]*PriceData)
 			}
-		} else {
-			// Aggregate within the bucket
-			pd := bucketData[bucket][ticker]
-			if high > pd.High {
-				pd.High = high
+			bucketData[candle.Timestamp][ticker] = &PriceData{
+				Open:   candle.Open,
+				High:   candle.High,
+				Low:    candle.Low,
+				Close:  candle.Close,
+				Volume: candle.Volume,
 			}
-			if low < pd.Low {
-				pd.Low = low
-			}
-			pd.Close = closePrice // Last close in the bucket
-			pd.Volume += volume
 		}
 	}
 
-	// Sort buckets by timestamp
 	bucketTimestamps := make([]int64, 0, len(bucketData))
 	for ts := range bucketData {
 		bucketTimestamps = append(bucketTimestamps, ts)
 	}
-
-	// Sort timestamps
-	for i := 0; i < len(bucketTimestamps)-1; i++ {
-		for j := i + 1; j < len(bucketTimestamps); j++ {
-			if bucketTimestamps[i] > bucketTimestamps[j] {
-				bucketTimestamps[i], bucketTimestamps[j] = bucketTimestamps[j], bucketTimestamps[i]
-			}
-		}
-	}
+	sort.Slice(bucketTimestamps, func(i, j int) bool { return bucketTimestamps[i] < bucketTimestamps[j] })
 
 	// Calculate portfolio value for each bucket
 	type PortfolioCandle struct {
@@ -5131,25 +4897,13 @@ func GetPortfolioSentimentHistory(c echo.Context) error {
 	interval := c.QueryParam("interval")
 
 	now := time.Now().UTC()
-	var startTime time.Time
+	bucket, lookback := priceIntervalSpec(interval)
 
-	switch interval {
-	case "5m":
-		startTime = now.Add(-24 * time.Hour)
-	case "15m":
-		startTime = now.Add(-7 * 24 * time.Hour)
-	case "1h":
-		startTime = now.Add(-30 * 24 * time.Hour)
-	case "4h":
-		startTime = now.Add(-90 * 24 * time.Hour)
-	case "1d":
-		startTime = now.Add(-365 * 24 * time.Hour)
-	case "1w":
-		startTime = now.Add(-730 * 24 * time.Hour)
-	case "1M":
+	var startTime time.Time
+	if lookback == 0 {
 		startTime = time.Time{}
-	default:
-		startTime = now.Add(-365 * 24 * time.Hour)
+	} else {
+		startTime = now.Add(-time.Duration(lookback) * time.Second)
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
@@ -5256,7 +5010,12 @@ func GetPortfolioSentimentHistory(c echo.Context) error {
 		Sentiment float64 `json:"sentiment"`
 	}
 
-	result := make([]SentimentPoint, 0, len(orderedDates))
+	type BucketEntry struct {
+		weight    float64
+		sentiment float64
+	}
+
+	buckets := make(map[int64]*BucketEntry)
 	for _, date := range orderedDates {
 		entry := dateMap[date]
 		if entry.totalWeight <= 0 {
@@ -5266,9 +5025,30 @@ func GetPortfolioSentimentHistory(c echo.Context) error {
 		if parseErr != nil {
 			continue
 		}
+		ts := t.Unix()
+		key := bucket.startFor(ts)
+		if buckets[key] == nil {
+			buckets[key] = &BucketEntry{}
+		}
+		buckets[key].weight += entry.totalWeight
+		buckets[key].sentiment += entry.totalSentiment
+	}
+
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	result := make([]SentimentPoint, 0, len(keys))
+	for _, k := range keys {
+		entry := buckets[k]
+		if entry.weight <= 0 {
+			continue
+		}
 		result = append(result, SentimentPoint{
-			Timestamp: t.Unix(),
-			Sentiment: entry.totalSentiment / entry.totalWeight,
+			Timestamp: k,
+			Sentiment: entry.sentiment / entry.weight,
 		})
 	}
 
@@ -5276,8 +5056,6 @@ func GetPortfolioSentimentHistory(c echo.Context) error {
 }
 
 func getPortfolioValueChange(c echo.Context) error {
-	// return day change, day change percent, total change, total change percent
-	// Get user ID from JWT token
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
 	userID := claims.UserID
@@ -5305,37 +5083,24 @@ func getPortfolioValueChange(c echo.Context) error {
 	var previousDayValue float64
 	var totalInvested float64
 
+	tickers := make([]string, 0, len(holdings))
+	for _, holding := range holdings {
+		tickers = append(tickers, holding.Ticker)
+	}
+	latestPrices, _ := priceStore.latestCloses(tickers)
+
 	for _, holding := range holdings {
 		totalInvested += holding.PurchasePrice * holding.Quantity
 
-		var latestPrice float64
-		dbMutex.Lock()
-		err := db.QueryRow(`
-			SELECT close FROM prices 
-			WHERE ticker = ? 
-			ORDER BY date DESC 
-			LIMIT 1
-		`, holding.Ticker).Scan(&latestPrice)
-		dbMutex.Unlock()
-
-		if err != nil {
-			latestPrice = holding.PurchasePrice
+		latestPrice := holding.PurchasePrice
+		if price, ok := latestPrices[holding.Ticker]; ok {
+			latestPrice = price
 		}
 		currentValue += latestPrice * holding.Quantity
 
-		var previousPrice float64
-		dbMutex.Lock()
-		err = db.QueryRow(`
-			SELECT close FROM prices 
-			WHERE ticker = ? 
-			AND date <= ?
-			ORDER BY date DESC 
-			LIMIT 1
-		`, holding.Ticker, oneDayAgo).Scan(&previousPrice)
-		dbMutex.Unlock()
-
-		if err != nil {
-			previousPrice = latestPrice
+		previousPrice := latestPrice
+		if price, err := priceStore.lastCloseBefore(holding.Ticker, oneDayAgo); err == nil {
+			previousPrice = price
 		}
 		previousDayValue += previousPrice * holding.Quantity
 	}
@@ -5398,34 +5163,16 @@ func getAssetValueChange(c echo.Context) error {
 		return c.String(http.StatusNotFound, "No holdings found for the specified asset")
 	}
 
-	var latestPrice float64
-	dbMutex.Lock()
-	err = db.QueryRow(`
-		SELECT close FROM prices 
-		WHERE ticker = ? 
-		ORDER BY date DESC 
-		LIMIT 1
-	`, assetTicker).Scan(&latestPrice)
-	dbMutex.Unlock()
+	latestPrice, err := latestClose(assetTicker)
 	if err != nil {
 		log.Printf("Error retrieving latest price for %s: %v", assetTicker, err)
 		return c.String(http.StatusInternalServerError, fmt.Sprintf("Error retrieving latest price for %s", assetTicker))
 	}
 
 	oneDayAgo := time.Now().UTC().Add(-24 * time.Hour).Unix()
-	var previousPrice float64
-	dbMutex.Lock()
-	err = db.QueryRow(`
-		SELECT close FROM prices 
-		WHERE ticker = ?
-		AND date <= ?
-		ORDER BY date DESC 
-		LIMIT 1
-	`, assetTicker, oneDayAgo).Scan(&previousPrice)
-	dbMutex.Unlock()
-	if err != nil {
-		log.Printf("Error retrieving previous price for %s: %v", assetTicker, err)
-		previousPrice = latestPrice
+	previousPrice := latestPrice
+	if price, err := priceStore.lastCloseBefore(assetTicker, oneDayAgo); err == nil {
+		previousPrice = price
 	}
 
 	currentValue := latestPrice * totalQuantity
@@ -5847,18 +5594,16 @@ func getPortfolioAllocation(c echo.Context) error {
 	totalPortfolioValue := 0.0
 	holdingValues := make(map[string]float64)
 
+	tickers := make([]string, 0, len(holdings))
 	for _, h := range holdings {
-		var latestPrice float64
-		dbMutex.Lock()
-		err := db.QueryRow(`
-			SELECT close FROM prices 
-			WHERE ticker = ? 
-			ORDER BY date DESC 
-			LIMIT 1
-		`, h.Ticker).Scan(&latestPrice)
-		dbMutex.Unlock()
-		if err != nil {
-			latestPrice = h.PurchasePrice
+		tickers = append(tickers, h.Ticker)
+	}
+	latestPrices, _ := priceStore.latestCloses(tickers)
+
+	for _, h := range holdings {
+		latestPrice := h.PurchasePrice
+		if price, ok := latestPrices[h.Ticker]; ok {
+			latestPrice = price
 		}
 		holdingValue := latestPrice * h.Quantity
 		holdingValues[h.IdHolding] = holdingValue
@@ -6000,15 +5745,7 @@ func GetTickerValue(c echo.Context) error {
 		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
 	}
 
-	var latestPrice float64
-	dbMutex.Lock()
-	err = db.QueryRow(`
-		SELECT close FROM prices
-		WHERE ticker = ?
-		ORDER BY date DESC
-		LIMIT 1
-	`, ticker).Scan(&latestPrice)
-	dbMutex.Unlock()
+	latestPrice, err := latestClose(ticker)
 	if err != nil {
 		log.Printf("Error fetching latest price for %s: %v", ticker, err)
 		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
@@ -6032,144 +5769,22 @@ func GetAssetPriceHistory(c echo.Context) error {
 
 	interval := c.QueryParam("interval")
 	now := time.Now().UTC()
+	bucket, lookback := priceIntervalSpec(interval)
 
-	var intervalSeconds int64
-	var startTime time.Time
-
-	switch interval {
-	case "5m":
-		intervalSeconds = 300
-		startTime = now.Add(-24 * time.Hour)
-	case "15m":
-		intervalSeconds = 900
-		startTime = now.Add(-7 * 24 * time.Hour)
-	case "1h":
-		intervalSeconds = 3600
-		startTime = now.Add(-30 * 24 * time.Hour)
-	case "4h":
-		intervalSeconds = 14400
-		startTime = now.Add(-90 * 24 * time.Hour)
-	case "1d":
-		intervalSeconds = 86400
-		startTime = now.Add(-365 * 24 * time.Hour)
-	case "1w":
-		intervalSeconds = 604800
-		startTime = now.Add(-730 * 24 * time.Hour)
-	case "1M":
-		intervalSeconds = 2592000
-		startTime = time.Time{}
-	default:
-		intervalSeconds = 3600
-		startTime = now.Add(-30 * 24 * time.Hour)
+	var startTimestamp int64
+	if lookback == 0 {
+		startTimestamp = time.Time{}.Unix()
+	} else {
+		startTimestamp = now.Add(-time.Duration(lookback) * time.Second).Unix()
 	}
 
-	startTimestamp := startTime.Unix()
-	endTimestamp := now.Unix()
-
-	query := `
-		SELECT date, open, high, low, close, volume
-		FROM prices
-		WHERE ticker = ?
-		AND date >= ?
-		AND date <= ?
-		ORDER BY date ASC
-	`
-
-	dbMutex.Lock()
-	rows, err := db.Query(query, ticker, startTimestamp, endTimestamp)
-	dbMutex.Unlock()
+	candles, err := priceStore.candles(ticker, startTimestamp, now.Unix(), bucket)
 	if err != nil {
 		log.Printf("Error querying prices for %s: %v", ticker, err)
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
 	}
-	defer rows.Close()
 
-	// Group prices by timestamp bucket
-	type PriceData struct {
-		Open   float64
-		High   float64
-		Low    float64
-		Close  float64
-		Volume int64
-	}
-
-	bucketData := make(map[int64]*PriceData)
-
-	for rows.Next() {
-		var date int64
-		var open, high, low, closePrice float64
-		var volume int64
-
-		err := rows.Scan(&date, &open, &high, &low, &closePrice, &volume)
-		if err != nil {
-			log.Printf("Error scanning price row: %v", err)
-			continue
-		}
-
-		bucket := (date / intervalSeconds) * intervalSeconds
-
-		if bucketData[bucket] == nil {
-			bucketData[bucket] = &PriceData{
-				Open:   open,
-				High:   high,
-				Low:    low,
-				Close:  closePrice,
-				Volume: volume,
-			}
-		} else {
-			// Aggregate within the bucket
-			pd := bucketData[bucket]
-			if high > pd.High {
-				pd.High = high
-			}
-			if low < pd.Low {
-				pd.Low = low
-			}
-			pd.Close = closePrice // Last close in the bucket
-			pd.Volume += volume
-		}
-	}
-
-	// Sort buckets by timestamp
-	bucketTimestamps := make([]int64, 0, len(bucketData))
-	for ts := range bucketData {
-		bucketTimestamps = append(bucketTimestamps, ts)
-	}
-
-	// Sort timestamps
-	for i := 0; i < len(bucketTimestamps)-1; i++ {
-		for j := i + 1; j < len(bucketTimestamps); j++ {
-			if bucketTimestamps[i] > bucketTimestamps[j] {
-				bucketTimestamps[i], bucketTimestamps[j] = bucketTimestamps[j], bucketTimestamps[i]
-			}
-		}
-	}
-
-	// Build result
-	type Candle struct {
-		Timestamp int64   `json:"timestamp"`
-		Open      float64 `json:"open"`
-		High      float64 `json:"high"`
-		Low       float64 `json:"low"`
-		Close     float64 `json:"close"`
-		Volume    int64   `json:"volume"`
-	}
-
-	result := make([]Candle, 0, len(bucketTimestamps))
-
-	for _, bucket := range bucketTimestamps {
-		pd := bucketData[bucket]
-		result = append(result, Candle{
-			Timestamp: bucket,
-			Open:      pd.Open,
-			High:      pd.High,
-			Low:       pd.Low,
-			Close:     pd.Close,
-			Volume:    pd.Volume,
-		})
-	}
-
-	return c.JSON(http.StatusOK, result)
+	return c.JSON(http.StatusOK, candles)
 }
 
 // PortfolioStats represents statistical metrics for a portfolio
@@ -6349,7 +5964,6 @@ func getPortfolioStats(c echo.Context) error {
 		return c.JSON(http.StatusOK, PortfolioStats{})
 	}
 
-	// Build ticker -> quantity and ticker -> holding map
 	tickerQuantities := make(map[string]float64)
 	tickerHoldings := make(map[string]Holding)
 	for _, holding := range holdings {
@@ -6362,69 +5976,29 @@ func getPortfolioStats(c echo.Context) error {
 		tickers = append(tickers, ticker)
 	}
 
-	// Get 1 year of historical data
 	now := time.Now().UTC()
 	startTime := now.Add(-365 * 24 * time.Hour)
 
-	// Query prices for all tickers
-	placeholders := ""
-	args := make([]interface{}, 0, len(tickers)+2)
-	for i, ticker := range tickers {
-		if i > 0 {
-			placeholders += ","
-		}
-		placeholders += "?"
-		args = append(args, ticker)
-	}
-	args = append(args, startTime.Unix(), now.Unix())
-
-	query := fmt.Sprintf(`
-		SELECT ticker, date, close
-		FROM prices
-		WHERE ticker IN (%s)
-		AND date >= ?
-		AND date <= ?
-		ORDER BY date ASC
-	`, placeholders)
-
-	dbMutex.Lock()
-	rows, err := db.Query(query, args...)
-	dbMutex.Unlock()
+	series, err := dailyCloses(tickers, startTime.Unix(), now.Unix())
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
 	}
-	defer rows.Close()
 
-	// Group prices by day and calculate portfolio value for each day
 	type DayPrice struct {
 		Ticker string
 		Close  float64
 	}
 	dayPrices := make(map[int64][]DayPrice)
-
-	for rows.Next() {
-		var ticker string
-		var date int64
-		var closePrice float64
-		if err := rows.Scan(&ticker, &date, &closePrice); err != nil {
-			continue
+	days := make([]int64, 0, len(series))
+	for ticker, candles := range series {
+		for _, candle := range candles {
+			dayPrices[candle.Timestamp] = append(dayPrices[candle.Timestamp], DayPrice{ticker, candle.Close})
 		}
-		dayBucket := (date / 86400) * 86400
-		dayPrices[dayBucket] = append(dayPrices[dayBucket], DayPrice{ticker, closePrice})
 	}
-
-	// Sort days
-	days := make([]int64, 0, len(dayPrices))
 	for day := range dayPrices {
 		days = append(days, day)
 	}
-	for i := 0; i < len(days)-1; i++ {
-		for j := i + 1; j < len(days); j++ {
-			if days[i] > days[j] {
-				days[i], days[j] = days[j], days[i]
-			}
-		}
-	}
+	sort.Slice(days, func(i, j int) bool { return days[i] < days[j] })
 
 	// Calculate daily portfolio values
 	var portfolioValues []float64
@@ -6524,37 +6098,20 @@ func getAssetStats(c echo.Context) error {
 		identifier = isin
 	}
 
+	resolved, err := resolveTickerOrISIN(identifier)
+	if err != nil {
+		log.Printf("Error resolving ticker/ISIN %s: %v", identifier, err)
+	}
+	if resolved != "" {
+		identifier = resolved
+	}
+
 	now := time.Now().UTC()
 	startTime := now.Add(-365 * 24 * time.Hour)
 
-	query := `
-		SELECT date, close
-		FROM prices
-		WHERE ticker = ?
-		AND date >= ?
-		AND date <= ?
-		ORDER BY date ASC
-	`
-
-	dbMutex.Lock()
-	rows, err := db.Query(query, identifier, startTime.Unix(), now.Unix())
-	dbMutex.Unlock()
+	prices, timestamps, err := closeSeriesWithDates(identifier, startTime.Unix(), now.Unix())
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving price history")
-	}
-	defer rows.Close()
-
-	var prices []float64
-	var timestamps []int64
-
-	for rows.Next() {
-		var date int64
-		var closePrice float64
-		if err := rows.Scan(&date, &closePrice); err != nil {
-			continue
-		}
-		prices = append(prices, closePrice)
-		timestamps = append(timestamps, date)
 	}
 
 	if len(prices) == 0 {
@@ -7330,6 +6887,13 @@ type BackTestResult struct {
 	VolatilityBenchmark float64                  `json:"volatility_benchmark"`
 	CalmarPortfolio     float64                  `json:"calmar_ratio_portfolio"`
 	CalmarBenchmark     float64                  `json:"calmar_ratio_benchmark"`
+	Alpha               float64                  `json:"alpha"`
+	Beta                float64                  `json:"beta"`
+	WinRate             float64                  `json:"win_rate"`
+	BestMonth           float64                  `json:"best_month"`
+	WorstMonth          float64                  `json:"worst_month"`
+	BestMonthLabel      string                   `json:"best_month_label"`
+	WorstMonthLabel     string                   `json:"worst_month_label"`
 	HoldingReturns      map[string]HoldingReturn `json:"holding_returns"`
 }
 
@@ -7344,9 +6908,12 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		return nil, fmt.Errorf("invalid end date: %v", err)
 	}
 
-	benchmarkPrices, err := getOldHistoricPriceData(benchmark)
+	benchmarkPrices, err := backtestPriceSeries(benchmark, startTime.Unix(), endTime.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch benchmark prices: %v", err)
+	}
+	if len(benchmarkPrices) == 0 {
+		return nil, fmt.Errorf("no benchmark price data for %s in the selected range", benchmark)
 	}
 
 	holdings, err := db.getHoldingsByUser(userID)
@@ -7374,9 +6941,9 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 
 	holdingPrices := make(map[string][]Price)
 	for _, holding := range holdings {
-		prices, err := getOldHistoricPriceData(holding.Ticker)
-		if err != nil {
-			log.Printf("Warning: Could not fetch prices for %s: %v", holding.Ticker, err)
+		prices, err := backtestPriceSeries(holding.Ticker, startTime.Unix(), endTime.Unix())
+		if err != nil || len(prices) == 0 {
+			log.Printf("Warning: no stored prices for %s: %v", holding.Ticker, err)
 			continue
 		}
 		holdingPrices[holding.Ticker] = prices
@@ -7630,6 +7197,10 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		}
 	}
 
+	alpha, beta := calculateAlphaBeta(portfolioReturns, benchmarkReturns)
+	winRate := calculateWinRate(portfolioReturns)
+	bestMonth, bestLabel, worstMonth, worstLabel := monthlyReturnExtremes(timestamps, portfolioValuesSlice)
+
 	return &BackTestResult{
 		PortfolioValues:     portfolioValuesSlice,
 		BenchmarkValues:     benchmarkValuesSlice,
@@ -7646,8 +7217,110 @@ func creteBackTestForPortfolio(userID string, startDate string, endDate string, 
 		VolatilityBenchmark: math.Round(volatilityBenchmark*100) / 100,
 		CalmarPortfolio:     math.Round(calmarPortfolio*100) / 100,
 		CalmarBenchmark:     math.Round(calmarBenchmark*100) / 100,
+		Alpha:               math.Round(alpha*100) / 100,
+		Beta:                math.Round(beta*100) / 100,
+		WinRate:             math.Round(winRate*100) / 100,
+		BestMonth:           math.Round(bestMonth*100) / 100,
+		WorstMonth:          math.Round(worstMonth*100) / 100,
+		BestMonthLabel:      bestLabel,
+		WorstMonthLabel:     worstLabel,
 		HoldingReturns:      holdingReturnMap,
 	}, nil
+}
+
+func calculateAlphaBeta(portfolioReturns, benchmarkReturns []float64) (float64, float64) {
+	n := len(portfolioReturns)
+	if n == 0 || n != len(benchmarkReturns) {
+		return 0, 0
+	}
+	meanP := 0.0
+	meanB := 0.0
+	for i := 0; i < n; i++ {
+		meanP += portfolioReturns[i]
+		meanB += benchmarkReturns[i]
+	}
+	meanP /= float64(n)
+	meanB /= float64(n)
+
+	covariance := 0.0
+	varianceB := 0.0
+	for i := 0; i < n; i++ {
+		covariance += (portfolioReturns[i] - meanP) * (benchmarkReturns[i] - meanB)
+		varianceB += (benchmarkReturns[i] - meanB) * (benchmarkReturns[i] - meanB)
+	}
+	covariance /= float64(n)
+	varianceB /= float64(n)
+
+	beta := 0.0
+	if varianceB > 0 {
+		beta = covariance / varianceB
+	}
+	alpha := (meanP - beta*meanB) * 252 * 100
+	return alpha, beta
+}
+
+func calculateWinRate(returns []float64) float64 {
+	if len(returns) == 0 {
+		return 0
+	}
+	wins := 0
+	counted := 0
+	for _, r := range returns {
+		if r == 0 {
+			continue
+		}
+		counted++
+		if r > 0 {
+			wins++
+		}
+	}
+	if counted == 0 {
+		return 0
+	}
+	return float64(wins) / float64(counted) * 100
+}
+
+func monthlyReturnExtremes(timestamps []int64, series []float64) (float64, string, float64, string) {
+	if len(timestamps) == 0 || len(series) != len(timestamps) {
+		return 0, "", 0, ""
+	}
+	type monthPoint struct {
+		label string
+		first float64
+		last  float64
+	}
+	ordered := make([]monthPoint, 0)
+	index := make(map[string]int)
+	for i, ts := range timestamps {
+		label := time.Unix(ts, 0).UTC().Format("2006-01")
+		pos, ok := index[label]
+		if !ok {
+			index[label] = len(ordered)
+			ordered = append(ordered, monthPoint{label: label, first: series[i], last: series[i]})
+			continue
+		}
+		ordered[pos].last = series[i]
+	}
+
+	best := 0.0
+	worst := 0.0
+	bestLabel := ""
+	worstLabel := ""
+	for i, m := range ordered {
+		if m.first <= 0 {
+			continue
+		}
+		change := (m.last - m.first) / m.first * 100
+		if i == 0 || change > best {
+			best = change
+			bestLabel = m.label
+		}
+		if i == 0 || change < worst {
+			worst = change
+			worstLabel = m.label
+		}
+	}
+	return best, bestLabel, worst, worstLabel
 }
 
 func calculateSharpeRatio(dailyReturns []float64, riskFreeRate float64) float64 {
@@ -8170,25 +7843,28 @@ type SearchResult struct {
 	Text    string `json:"text"`
 }
 
-func webSearchResults(query string) ([]SearchResult, bool) {
+func webSearchResults(query string) ([]SearchResult, string, bool) {
 	target := BASE_URL + "/web_search?q=" + url.QueryEscape(query)
 	resp, err := pythonWebSearchClient.Get(target)
 	if err != nil {
 		log.Printf("web_search error: %v", err)
-		return nil, false
+		return nil, "request failed", false
 	}
 	defer resp.Body.Close()
+
+	status := sanitizeSearchStatus(resp.Header.Get("X-Search-Status"))
+
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("web_search status %d", resp.StatusCode)
-		return nil, false
+		log.Printf("web_search status %d (%s)", resp.StatusCode, status)
+		return nil, fmt.Sprintf("http %d %s", resp.StatusCode, status), false
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, false
+		return nil, "unreadable response", false
 	}
 	var results []SearchResult
 	if err := json.Unmarshal(body, &results); err != nil {
-		return nil, false
+		return nil, "invalid response", false
 	}
 	var cleaned []SearchResult
 	for _, r := range results {
@@ -8197,7 +7873,24 @@ func webSearchResults(query string) ([]SearchResult, bool) {
 		}
 		cleaned = append(cleaned, r)
 	}
-	return cleaned, true
+	if status == "" && len(cleaned) == 0 {
+		status = "no results"
+	}
+	return cleaned, status, true
+}
+
+func sanitizeSearchStatus(status string) string {
+	status = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, status)
+	status = strings.Join(strings.Fields(status), " ")
+	if len(status) > 200 {
+		status = status[:200]
+	}
+	return status
 }
 
 func formatSearchResults(results []SearchResult) string {
@@ -8241,22 +7934,22 @@ func formatSearchResultsDetailed(results []SearchResult, maxChars int) string {
 
 const webSearchCacheMaxAge int64 = 7 * 24 * 3600
 
-func executeWebSearchWithCache(query string, userID string) (string, []SearchResult) {
+func executeWebSearchWithCache(query string, userID string) (string, []SearchResult, string) {
 	normQuery := strings.ToLower(strings.TrimSpace(query))
 	if normQuery == "" {
-		return "Web search failed, no results available.", nil
+		return "Web search failed, no results available.", nil, "empty query"
 	}
 	if cached, ok := db.getCachedWebSearch(normQuery, webSearchCacheMaxAge); ok {
-		return formatSearchResults(cached), cached
+		return formatSearchResults(cached), cached, "cached"
 	}
-	results, ok := webSearchResults(query)
+	results, status, ok := webSearchResults(query)
 	if !ok {
-		return "Web search failed, no results available.", nil
+		return "Web search failed, no results available.", nil, status
 	}
 	if len(results) > 0 {
 		_ = db.saveWebSearch(normQuery, userID, results)
 	}
-	return formatSearchResults(results), results
+	return formatSearchResults(results), results, status
 }
 
 func extractWebSearchQueries(content string) []string {
@@ -8563,6 +8256,20 @@ func reindexRag() error {
 		return fmt.Errorf("OPENROUTER_API_KEY not configured, skipping RAG reindex")
 	}
 
+	sig := ragSourceSignature()
+	ragSourceSigMu.Lock()
+	unchanged := sig == lastRagSourceSig
+	ragSourceSigMu.Unlock()
+	if unchanged {
+		return nil
+	}
+
+	markDone := func() {
+		ragSourceSigMu.Lock()
+		lastRagSourceSig = sig
+		ragSourceSigMu.Unlock()
+	}
+
 	items, err := buildRagItems()
 	if err != nil {
 		return err
@@ -8608,6 +8315,7 @@ func reindexRag() error {
 	}
 
 	if len(toEmbed) == 0 && len(stale) == 0 {
+		markDone()
 		return nil
 	}
 
@@ -8648,7 +8356,31 @@ func reindexRag() error {
 		return err
 	}
 
+	markDone()
 	return nil
+}
+
+func ragSourceSignature() string {
+	parts := make([]string, 0, 8)
+	appendSig := func(query string, args ...interface{}) {
+		var count int64
+		var latest string
+		if err := db.QueryRow(query, args...).Scan(&count, &latest); err != nil {
+			parts = append(parts, "error")
+			return
+		}
+		parts = append(parts, strconv.FormatInt(count, 10)+":"+latest)
+	}
+	newsCutoff := strconv.FormatInt(time.Now().UTC().AddDate(0, 0, -90).Unix(), 10)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(published_at),'') FROM news WHERE published_at >= ?`, newsCutoff)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(date),'') FROM daily_sentiment`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(date),'') FROM portfolio_daily_sentiment`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(date),'') FROM running_summary`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(ticker),'') FROM asset_details`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(created_at),0) FROM web_searches`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(updated_at),0) FROM situation_reports WHERE status = 'completed'`)
+	appendSig(`SELECT COUNT(*), COALESCE(MAX(date),'') FROM situation_news`)
+	return sha256Hex(strings.Join(parts, "|"))
 }
 
 func reindexRagPeriodic(interval time.Duration) {
@@ -8800,12 +8532,9 @@ func buildChatContext(userID string, question string) string {
 		}
 
 		sb.WriteString("\nLATEST PRICES\n")
+		latestPrices, _ := priceStore.latestCloses(tickers)
 		for _, t := range tickers {
-			var close float64
-			dbMutex.RLock()
-			err := db.QueryRow(`SELECT close FROM prices WHERE ticker = ? ORDER BY date DESC LIMIT 1`, t).Scan(&close)
-			dbMutex.RUnlock()
-			if err == nil {
+			if close, ok := latestPrices[t]; ok {
 				sb.WriteString(fmt.Sprintf("- %s: %.4f\n", t, close))
 			}
 		}
@@ -9120,7 +8849,8 @@ func chatHandler(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	c.Response().Flush()
 
-	ctx := context.Background()
+	ctx, cancelChat := context.WithTimeout(context.Background(), chatRequestTimeout)
+	defer cancelChat()
 	assistantMsgID, _ := db.createPendingAssistantMessage(conversation.Id)
 	streamed := ""
 	lastSaved := 0
@@ -9141,6 +8871,13 @@ func chatHandler(c echo.Context) error {
 	var finalAnswer string
 	var turnSearchResults []SearchResult
 
+	addSearchResults := func(results []SearchResult) {
+		turnSearchResults = append(turnSearchResults, results...)
+		if len(turnSearchResults) > maxChatSearchResults {
+			turnSearchResults = turnSearchResults[len(turnSearchResults)-maxChatSearchResults:]
+		}
+	}
+
 	const maxToolRounds = 5
 	for round := 0; round < maxToolRounds; round++ {
 		msg, err := streamLLMChat(ctx, messages, tools, "auto", writeDelta)
@@ -9154,9 +8891,9 @@ func chatHandler(c echo.Context) error {
 				for _, q := range dsmlQueries {
 					statusJSON, _ := json.Marshal(map[string]string{"status": "Searching the web..."})
 					writeSSE(c, string(statusJSON))
-					result, searchResults := executeWebSearchWithCache(q, userID)
+					result, searchResults, _ := executeWebSearchWithCache(q, userID)
 					if len(searchResults) > 0 {
-						turnSearchResults = append(turnSearchResults, searchResults...)
+						addSearchResults(searchResults)
 						resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
 						writeSSE(c, string(resJSON))
 					}
@@ -9180,9 +8917,9 @@ func chatHandler(c echo.Context) error {
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 			statusJSON, _ := json.Marshal(map[string]string{"status": "Searching the web..."})
 			writeSSE(c, string(statusJSON))
-			result, searchResults := executeWebSearchWithCache(args.Query, userID)
+			result, searchResults, _ := executeWebSearchWithCache(args.Query, userID)
 			if len(searchResults) > 0 {
-				turnSearchResults = append(turnSearchResults, searchResults...)
+				addSearchResults(searchResults)
 				resJSON, _ := json.Marshal(map[string]interface{}{"search_results": searchResults})
 				writeSSE(c, string(resJSON))
 			}
@@ -9276,6 +9013,14 @@ func reindexRagHandler(c echo.Context) error {
 }
 
 func triggerRagReindex() {
+	lastRagTriggerMu.Lock()
+	if time.Since(lastRagTrigger) < ragTriggerMinGap {
+		lastRagTriggerMu.Unlock()
+		return
+	}
+	lastRagTrigger = time.Now()
+	lastRagTriggerMu.Unlock()
+
 	go func() {
 		if err := reindexRag(); err != nil {
 			log.Printf("RAG reindex error: %v", err)
@@ -9519,6 +9264,37 @@ func startAutoReportScheduler() {
 	}()
 }
 
+func getExpenseCategories(c echo.Context) error {
+	return c.JSON(http.StatusOK, bills.CategoryNames())
+}
+
+func getMerchantRules(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	rules, err := bills.ListMerchantRules(claims.UserID)
+	if err != nil {
+		log.Printf("Error listing merchant rules: %v", err)
+		return c.String(http.StatusInternalServerError, "Error loading rules")
+	}
+	return c.JSON(http.StatusOK, rules)
+}
+
+func deleteMerchantRule(c echo.Context) error {
+	user := c.Get("user").(*jwt.Token)
+	claims := user.Claims.(*JWTClaims)
+
+	key := strings.TrimSpace(c.QueryParam("key"))
+	if key == "" {
+		return c.String(http.StatusBadRequest, "key is required")
+	}
+	if err := bills.DeleteMerchantRule(claims.UserID, key); err != nil {
+		log.Printf("Error deleting merchant rule: %v", err)
+		return c.String(http.StatusInternalServerError, "Error deleting rule")
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Rule deleted"})
+}
+
 func getExpenseReports(c echo.Context) error {
 	user := c.Get("user").(*jwt.Token)
 	claims := user.Claims.(*JWTClaims)
@@ -9684,6 +9460,7 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
+	applyEnvMemoryLimit()
 	SALT = os.Getenv("SALT")
 	JWT_SECRET = os.Getenv("JWT_SECRET")
 	jwtExpiryHoursStr := os.Getenv("JWT_EXPIRY_HOURS")
@@ -9725,6 +9502,10 @@ func main() {
 
 	db = &DB{DB: sqlDB}
 
+	if err := initPriceStore(); err != nil {
+		log.Fatal("Failed to initialize price store:", err)
+	}
+
 	err = bills.InitBillDB(sqlDB)
 	if err != nil {
 		log.Fatal("Failed to initialize bills database:", err)
@@ -9732,6 +9513,10 @@ func main() {
 
 	if err := createSituationTables(sqlDB); err != nil {
 		log.Fatal("Failed to initialize situation tables:", err)
+	}
+
+	if err := createPinsTable(sqlDB); err != nil {
+		log.Fatal("Failed to initialize pinned symbols table:", err)
 	}
 
 	recoverStaleSituationReports()
@@ -9806,6 +9591,7 @@ func main() {
 
 	go reindexRagPeriodic(30 * time.Minute)
 	go situationSchedulerPeriodic(30 * time.Minute)
+	go logMemoryPeriodic(5 * time.Minute)
 
 	e := echo.New()
 
@@ -9895,6 +9681,10 @@ func main() {
 	protected.PUT("/bank/transactions", updateBankTransaction)
 	protected.DELETE("/bank/transactions", deleteBankTransaction)
 
+	protected.GET("/expenses/categories", getExpenseCategories)
+	protected.GET("/expenses/rules", getMerchantRules)
+	protected.DELETE("/expenses/rules", deleteMerchantRule)
+
 	protected.GET("/expenses/reports", getExpenseReports)
 	protected.GET("/expenses/report/:id", getExpenseReport)
 	protected.POST("/expenses/report/generate", generateExpenseReport)
@@ -9910,6 +9700,11 @@ func main() {
 	protected.GET("/chat/conversations/:id", getConversationHandler)
 	protected.DELETE("/chat/conversations/:id", deleteConversationHandler)
 	protected.POST("/chat/reindex", reindexRagHandler)
+	protected.GET("/debug/mem", debugMemHandler)
+
+	protected.GET("/pins", getPinnedSymbolsHandler)
+	protected.POST("/pins", addPinnedSymbolHandler)
+	protected.DELETE("/pins", removePinnedSymbolHandler)
 
 	// Situation report endpoints
 	protected.GET("/situation/tasks", listSituationTasksHandler)

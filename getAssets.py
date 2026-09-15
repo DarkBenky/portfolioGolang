@@ -3,10 +3,16 @@ import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 import re
+import hashlib
 from functools import wraps
 import time
 from datetime import datetime, timedelta
 import os
+
+# Cache keys must never retain the raw arguments (a BeautifulSoup object stringifies to a full page).
+def cache_key(args: tuple, kwargs: dict) -> str:
+    raw = str(args) + str(kwargs)
+    return hashlib.sha1(raw.encode('utf-8', 'ignore')).hexdigest()
 
 
 def ttl_cache(maxsize: int = 128, ttl_hours: int = 4):
@@ -15,7 +21,7 @@ def ttl_cache(maxsize: int = 128, ttl_hours: int = 4):
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            key = str(args) + str(kwargs)
+            key = cache_key(args, kwargs)
             now = datetime.now()
             
             if key in cache:
@@ -67,7 +73,7 @@ class ETFData:
             'ticker': self.ticker
         }
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=512, ttl_hours=4)
 def fetch_isin_from_multiple_sources(ticker: str) -> Optional[str]:
     """Try multiple methods to get ISIN"""
     try:
@@ -106,7 +112,7 @@ def fetch_isin_from_multiple_sources(ticker: str) -> Optional[str]:
     
     return None
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=512, ttl_hours=4)
 def get_ticker_details(ticker: str) -> Dict[str, str]:
     try:
         stock = yf.Ticker(ticker)
@@ -131,7 +137,7 @@ def get_ticker_details(ticker: str) -> Dict[str, str]:
             'region': 'Unknown'
         }
 
-@ttl_cache(maxsize=2048, ttl_hours=24)
+@ttl_cache(maxsize=512, ttl_hours=24)
 def get_ticker_from_isin(isin: str) -> Optional[str]:
     """Fetch ticker from ISIN using OpenFIGI API"""
     if not isin or isin == 'N/A':
@@ -193,7 +199,7 @@ def enrich_holdings_with_details(holdings: List[Tuple[str, str, float]]) -> List
     
     return enriched
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=64, ttl_hours=4)
 def get_holdings_from_justetf(isin: str, html_file: Optional[str] = None) -> Optional[List[Tuple[str, str, float]]]:
     holdings = []
     
@@ -279,7 +285,7 @@ def get_holdings_from_justetf(isin: str, html_file: Optional[str] = None) -> Opt
         traceback.print_exc()
         return None
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=64, ttl_hours=4)
 def get_sectors_and_regions_from_justetf(isin: str, html_file: Optional[str] = None) -> Tuple[Dict[str, float], Dict[str, float]]:
     sectors = {}
     regions = {}
@@ -393,7 +399,7 @@ def get_sectors_and_regions_from_justetf(isin: str, html_file: Optional[str] = N
     
     return sectors, regions
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=256, ttl_hours=4)
 def extract_isin_and_ticker_from_justetf(soup: BeautifulSoup) -> Tuple[str, str]:
     etf_isin = 'N/A'
     etf_ticker = 'N/A'
@@ -413,7 +419,7 @@ def extract_isin_and_ticker_from_justetf(soup: BeautifulSoup) -> Tuple[str, str]
     
     return etf_isin, etf_ticker
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=64, ttl_hours=4)
 def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[str, str, float]]], Dict[str, float], Dict[str, float], str, str]:
     holdings = []
     sectors = {}
@@ -544,7 +550,7 @@ def fetch_complete_etf_data_playwright(isin: str) -> Tuple[Optional[List[Tuple[s
     
     return (holdings if holdings else None, sectors, regions, etf_isin, etf_ticker)
 
-@ttl_cache(maxsize=2048, ttl_hours=4)
+@ttl_cache(maxsize=64, ttl_hours=4)
 def get_etf_data(ticker: str, isin: str = None, etf_name: str = None, html_file: Optional[str] = None) -> ETFData:
     result = ETFData()
     

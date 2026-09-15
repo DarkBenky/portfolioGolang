@@ -1,3 +1,12 @@
+# Superseded
+
+This document describes the `inMem` package, an in-memory columnar price store. It was never wired into
+`main.go` and is no longer the plan: prices now live in DuckDB (`prices.duckdb`), managed by `priceDB.go`
+with SQL side aggregation (`time_bucket`, `date_trunc`) and a one time migration from the SQLite `prices`
+table at startup.
+
+Kept for reference only. The `inMem` package is dead code and can be deleted.
+
 # Integration Guide for PriceDB
 
 This document provides the wrapper functions to use in `main.go` to integrate the new in-memory PriceDB.
