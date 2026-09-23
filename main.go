@@ -19,10 +19,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -9764,6 +9766,26 @@ func main() {
 	protected.GET("/situation/reports/history", getSituationReportHistoryHandler)
 
 	startAutoReportScheduler()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-stop
+		log.Println("Shutdown signal received, checkpointing the price store")
+		if priceStore != nil {
+			if _, err := priceStore.db.Exec(`CHECKPOINT`); err != nil {
+				log.Printf("Price store checkpoint failed: %v", err)
+			}
+			if err := priceStore.db.Close(); err != nil {
+				log.Printf("Could not close the price store cleanly: %v", err)
+			}
+		}
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("Could not close the database cleanly: %v", err)
+		}
+		log.Println("Shutdown complete")
+		os.Exit(0)
+	}()
 
 	goPort := os.Getenv("BACKEND_GO_PORT")
 	fmt.Printf("Starting server on port %s...\n", goPort)
