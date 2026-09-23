@@ -88,7 +88,7 @@ var (
 
 var pythonHTTPClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: pythonHTTPTimeout}
 
-// The historic backfill downloads period=max history, which legitimately takes minutes.
+// Historic backfills pull years of hourly bars, which legitimately takes minutes.
 var pythonHistoricClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 5 * time.Minute}
 
 var pythonWebSearchClient = &http.Client{Transport: pythonKeyTransport{base: http.DefaultTransport}, Timeout: 45 * time.Second}
@@ -6545,6 +6545,12 @@ func getLatestAssetDetailsEndpoint(c echo.Context) error {
 	return c.JSON(http.StatusOK, detail)
 }
 
+// responseSnippet reads a short prefix of a response body for error messages.
+func responseSnippet(body io.Reader) string {
+	raw, _ := io.ReadAll(io.LimitReader(body, 200))
+	return strings.TrimSpace(string(raw))
+}
+
 func getOldHistoricPriceData(ticker string) ([]Price, error) {
 	url := fmt.Sprintf("%s/stock/history/%s", BASE_URL, ticker)
 	resp, err := pythonHistoricClient.Get(url)
@@ -6555,13 +6561,13 @@ func getOldHistoricPriceData(ticker string) ([]Price, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		log.Printf("Historic data not found for %s (404), skipping", ticker)
+		log.Printf("Historic data not found for %s (404): %s", ticker, responseSnippet(resp.Body))
 		return []Price{}, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("failed to fetch historic data: %s", resp.Status)
-		log.Printf("Historic data API error for %s: %s", ticker, resp.Status)
+		err := fmt.Errorf("failed to fetch historic data: %s %s", resp.Status, responseSnippet(resp.Body))
+		log.Printf("Historic data API error for %s: %v", ticker, err)
 		return nil, err
 	}
 

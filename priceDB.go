@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -551,11 +554,23 @@ func tradingViewLookback(interval string) int64 {
 // fetchAndStorePriceSeries pulls the full history from the Python data source for a ticker that has
 // no stored bars yet, persists it and returns the daily series for the requested range.
 func fetchAndStorePriceSeries(ticker string, start, end int64) ([]Price, error) {
-	prices, err := getOldHistoricPriceData(ticker)
-	if err != nil {
-		return nil, err
+	prices, historicErr := getOldHistoricPriceData(ticker)
+	if historicErr != nil {
+		log.Printf("prices: historic backfill for %s failed: %v", ticker, historicErr)
 	}
 	if len(prices) == 0 {
+		livePrices, liveErr := getLivePriceSeries(ticker)
+		if liveErr != nil {
+			log.Printf("prices: live backfill for %s failed: %v", ticker, liveErr)
+		} else {
+			prices = livePrices
+		}
+	}
+	if len(prices) == 0 {
+		if historicErr != nil {
+			return nil, historicErr
+		}
+		log.Printf("prices: data source returned no bars for %s", ticker)
 		return nil, nil
 	}
 	if err := priceStore.upsertPrices(prices); err != nil {
@@ -564,6 +579,47 @@ func fetchAndStorePriceSeries(ticker string, start, end int64) ([]Price, error) 
 		log.Printf("prices: backfilled %d bars for %s from the data source", len(prices), ticker)
 	}
 	return backtestPriceSeries(ticker, start, end)
+}
+
+// getLivePriceSeries reads the hourly bars of the last 730 days from the live price endpoint that the
+// periodic price job already uses, so backfilling does not depend on the historic route alone.
+func getLivePriceSeries(ticker string) ([]Price, error) {
+	target := fmt.Sprintf("%s/get_price?ticker=%s&last_updates_unix_timestamp=0&interval=1h", BASE_URL, url.QueryEscape(ticker))
+	resp, err := pythonHistoricClient.Get(target)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("live price source returned %s", resp.Status)
+	}
+
+	var payload []struct {
+		Timestamp int64   `json:"timestamp"`
+		Open      float64 `json:"open"`
+		High      float64 `json:"high"`
+		Low       float64 `json:"low"`
+		Close     float64 `json:"close"`
+		Volume    float64 `json:"volume"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	prices := make([]Price, 0, len(payload))
+	for _, candle := range payload {
+		prices = append(prices, Price{
+			Ticker: ticker,
+			Date:   candle.Timestamp,
+			Open:   candle.Open,
+			High:   candle.High,
+			Low:    candle.Low,
+			Close:  candle.Close,
+			Volume: int64(candle.Volume),
+		})
+	}
+	return prices, nil
 }
 
 func dailyCloses(tickers []string, start, end int64) (map[string][]PriceCandle, error) {

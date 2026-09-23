@@ -66,9 +66,15 @@ def getPrice(Ticker: str, lastUpdatesUnixTimeStamp: int, interval: str = "1m"):
 
 def getPriceDataOld(Ticker: str):
     Ticker  = Ticker.strip('$')
-    # load as much data as possible with interval 1h
-    ticker = yf.Ticker(Ticker)
-    data = ticker.history(period="max", interval="1h")
+    # Ask for the explicit 730 day window getPrice uses; yfinance only serves 1h bars that far back
+    # and period="max" comes back empty on some installs.
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=729)
+    try:
+        data = yf.Ticker(Ticker).history(start=start, end=end, interval="1h")
+    except Exception as e:
+        print(f"Error fetching historic data for {Ticker}: {e}")
+        return []
     candles = []
     for timestamp, row in data.iterrows():
         candles.append({
