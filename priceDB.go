@@ -225,6 +225,9 @@ func (s *PriceStore) migrateFromSQLite() error {
 	return nil
 }
 
+const priceUpsertChunkRows = 5000
+const priceUpsertBatchRows = 500
+
 func (s *PriceStore) upsertPrices(prices []Price) error {
 	if len(prices) == 0 {
 		return nil
@@ -233,21 +236,45 @@ func (s *PriceStore) upsertPrices(prices []Price) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	for start := 0; start < len(prices); start += priceUpsertChunkRows {
+		end := start + priceUpsertChunkRows
+		if end > len(prices) {
+			end = len(prices)
+		}
+		if err := s.upsertPriceChunk(prices[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// upsertPriceChunk writes bounded chunks with multi row statements: thousands of single row
+// statements in one transaction exhaust the DuckDB memory limit and abort the transaction.
+func (s *PriceStore) upsertPriceChunk(prices []Price) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO prices (ticker, date, open, close, high, low, volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ticker, date) DO NOTHING`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	for _, price := range prices {
-		if _, err := stmt.Exec(price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume); err != nil {
-			log.Printf("Error adding price for %s on %d: %v", price.Ticker, price.Date, err)
+
+	for start := 0; start < len(prices); start += priceUpsertBatchRows {
+		end := start + priceUpsertBatchRows
+		if end > len(prices) {
+			end = len(prices)
+		}
+
+		placeholders := strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?),", end-start), ",")
+		args := make([]interface{}, 0, (end-start)*7)
+		for _, price := range prices[start:end] {
+			args = append(args, price.Ticker, price.Date, price.Open, price.Close, price.High, price.Low, price.Volume)
+		}
+
+		query := `INSERT INTO prices (ticker, date, open, close, high, low, volume) VALUES ` + placeholders + ` ON CONFLICT (ticker, date) DO NOTHING`
+		if _, err := tx.Exec(query, args...); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("upsert rows %d-%d of %d: %w", start, end, len(prices), err)
 		}
 	}
-	stmt.Close()
+
 	return tx.Commit()
 }
 
