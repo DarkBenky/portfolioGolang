@@ -9503,6 +9503,10 @@ func getExpensesBiweekly(c echo.Context) error {
 }
 
 func main() {
+	if os.Getenv(priceWALProbeEnv) == "1" {
+		os.Exit(runPriceStoreWALProbe())
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")

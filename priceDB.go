@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -101,7 +102,102 @@ func duckdbSetting(name string, fallback string) string {
 	return value
 }
 
+// priceWALProbeEnv makes the same binary run only the replay probe and exit.
+const priceWALProbeEnv = "PRICE_WAL_PROBE"
+
+// DuckDB replays prices.duckdb.wal while sql.Open runs. A log left behind by a hard
+// crash can replay without error and still leave the database holding a null pointer,
+// so the next statement faults inside the C library and takes the whole process with
+// it. That fault cannot be caught in process, so the replay is attempted in a child
+// process that is safe to lose. If it dies the log is moved aside and the server
+// starts from the last checkpoint instead.
+func priceWALReplaySafe() {
+	walPath := priceDBPath + ".wal"
+	if _, err := os.Stat(walPath); err != nil {
+		return
+	}
+	if os.Getenv(priceWALProbeEnv) == "1" {
+		return
+	}
+
+	log.Printf("prices: replaying %s in a probe process", walPath)
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), priceWALProbeEnv+"=1")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		quarantinePriceWAL(walPath, fmt.Sprintf("probe exited with %v", err))
+	}
+}
+
+func quarantinePriceWAL(walPath string, reason string) {
+	dest := fmt.Sprintf("%s.corrupt-%s", walPath, time.Now().UTC().Format("20060102T150405Z"))
+	if err := os.Rename(walPath, dest); err != nil {
+		log.Printf("prices: could not move %s aside: %v", walPath, err)
+		return
+	}
+	log.Printf("prices: write ahead log could not be replayed (%s), moved to %s and continuing from the last checkpoint", reason, dest)
+}
+
+// runPriceStoreWALProbe replays the log, proves a write commits and checkpoints it.
+// It runs as the whole program, so a fault in DuckDB only ends the probe.
+func runPriceStoreWALProbe() int {
+	conn, err := sql.Open("duckdb", priceDBPath)
+	if err != nil {
+		log.Printf("prices: probe could not open the database: %v", err)
+		return 2
+	}
+	conn.SetMaxOpenConns(1)
+	if _, err := conn.Exec(`SET threads = 1`); err != nil {
+		log.Printf("prices: probe could not set thread count: %v", err)
+	}
+	if _, err := conn.Exec(`SET memory_limit = '512MB'`); err != nil {
+		log.Printf("prices: probe could not set memory limit: %v", err)
+	}
+
+	var rows int64
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM prices`).Scan(&rows); err != nil {
+		log.Printf("prices: probe could not read the price table: %v", err)
+		conn.Close()
+		return 3
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		log.Printf("prices: probe could not begin a transaction: %v", err)
+		conn.Close()
+		return 4
+	}
+	probe := `INSERT INTO prices (ticker, date, open, close, high, low, volume) VALUES ('WAL_PROBE', 1, 0, 0, 0, 0, 0) ON CONFLICT (ticker, date) DO NOTHING`
+	if _, err := tx.Exec(probe); err != nil {
+		tx.Rollback()
+		log.Printf("prices: probe insert failed: %v", err)
+		conn.Close()
+		return 5
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("prices: probe commit failed: %v", err)
+		conn.Close()
+		return 6
+	}
+	if _, err := conn.Exec(`DELETE FROM prices WHERE ticker = 'WAL_PROBE'`); err != nil {
+		log.Printf("prices: probe cleanup failed: %v", err)
+	}
+	if _, err := conn.Exec(`CHECKPOINT`); err != nil {
+		log.Printf("prices: probe checkpoint failed: %v", err)
+		conn.Close()
+		return 7
+	}
+	if err := conn.Close(); err != nil {
+		log.Printf("prices: probe close failed: %v", err)
+	}
+	log.Printf("prices: probe replayed the log cleanly (%d bars)", rows)
+	return 0
+}
+
 func initPriceStore() error {
+	priceWALReplaySafe()
+
 	conn, err := sql.Open("duckdb", priceDBPath)
 	if err != nil {
 		return err
