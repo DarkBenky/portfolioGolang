@@ -56,6 +56,12 @@ func (c *Client) Configured() bool {
 	return c.apiKey != ""
 }
 
+// SessionModel is the model used for interactive chat, which is not the same as the
+// cheaper model used for summary jobs.
+func (c *Client) SessionModel() string {
+	return c.Model(KindChat)
+}
+
 func (c *Client) Model(kind Kind) string {
 	if kind.useCheapModel() {
 		return c.cheapModel

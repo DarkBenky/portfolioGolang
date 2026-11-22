@@ -158,7 +158,7 @@ func (s *Server) usageSummary(c echo.Context) error {
 		"system_usd":  systemTotal,
 		"daily_limit": s.Cfg.LLMDailyBudgetUSD,
 		"by_kind":     append(rows, systemRows...),
-		"chat_model":  s.Cfg.ChatModel,
+		"chat_model":  s.Cfg.SessionModel,
 		"cheap_model": s.Cfg.CheapModel,
 	})
 }

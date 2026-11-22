@@ -69,7 +69,7 @@ type TraceTool struct {
 }
 
 const (
-	maxToolRounds  = 4
+	maxToolRounds  = 3
 	maxWebSearches = 3
 	historyKeep    = 10
 	contextBudget  = 9000
@@ -111,7 +111,13 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 	for round := 0; round < maxToolRounds; round++ {
 		step := TraceStep{Round: round + 1}
 		stepStart := time.Now()
-		completion, err := s.llm.Chat(ctx, llm.KindChat, userID, messages, tools, llm.Handlers{
+		// The last round runs without tools: a model that keeps exploring otherwise
+		// ends the loop with tool calls and an empty answer.
+		roundTools := tools
+		if round == maxToolRounds-1 {
+			roundTools = nil
+		}
+		completion, err := s.llm.Chat(ctx, llm.KindChat, userID, messages, roundTools, llm.Handlers{
 			OnDelta: func(delta string) { emit(map[string]any{"delta": delta}) },
 			OnReasoning: func(delta string) {
 				step.Reasoning += delta
@@ -480,8 +486,9 @@ const systemPrompt = `You are a careful finance assistant for a personal portfol
 
 Rules:
 - Answer from the supplied portfolio context and the tools. Never invent prices, holdings or expenses.
-- Prefer local tools (get_portfolio, get_price_history, get_news, get_spending, search_documents) over web_search. Only search the web when the stored context cannot answer.
-- Be concise: short paragraphs, no filler, no repetition of the context.
+- The context already lists every holding with prices and cost basis, so simple portfolio questions need no tool call.
+- Prefer local tools (get_portfolio, get_price_history, get_news, get_spending, search_documents) over web_search. Use at most two tool calls before answering.
+- Be concise: short paragraphs, no filler, no repetition of the context, no restating the question.
 - Plain text or light markdown. Never emit tool call markup or XML tags.
 - State uncertainty plainly and do not give absolute financial advice.`
 
