@@ -223,6 +223,25 @@
       </v-col>
     </v-row>
 
+    <div v-if="storage" class="panel pa-3 mb-2">
+      <div class="d-flex align-center justify-space-between mb-2 flex-wrap ga-2">
+        <span class="metric-label">Machine storage</span>
+        <span class="text-caption" :class="storageTextColor">
+          {{ bytes(storage.disk.free_bytes) }} free of {{ bytes(storage.disk.total_bytes) }}
+        </span>
+      </div>
+      <v-progress-linear :model-value="storage.disk.used_percent" :color="storageBarColor" height="8" rounded />
+      <div class="d-flex flex-wrap ga-4 mt-2 text-caption text-medium-emphasis">
+        <span>{{ storage.directory }}</span>
+        <span>used {{ (storage.disk.used_percent || 0).toFixed(1) }}%</span>
+        <span>databases {{ bytes(storage.database_bytes) }}</span>
+        <span v-for="file in storageFiles" :key="file.name">
+          {{ file.name }} {{ bytes(file.bytes) }}
+        </span>
+        <span v-if="storage.disk.error" class="text-error">{{ storage.disk.error }}</span>
+      </div>
+    </div>
+
     <div class="panel pa-4">
       <div class="d-flex align-center justify-space-between mb-2">
         <span class="metric-label">Running summary</span>
@@ -267,6 +286,7 @@ export default {
       risk: {},
       stats: {},
       bank: {},
+      storage: null,
       summary: null,
       loading: false,
       summaryGenerating: false,
@@ -366,6 +386,22 @@ export default {
       if (income <= 0) return 0
       return Math.max(-100, Math.min(100, (income - out) / income * 100))
     },
+    storageFiles() {
+      // The WAL and shared-memory files are noise in the card when empty.
+      return (this.storage?.files || []).filter((file) => file.bytes > 0)
+    },
+    storageBarColor() {
+      const used = this.storage?.disk?.used_percent || 0
+      if (used >= 92) return 'error'
+      if (used >= 80) return 'warning'
+      return 'primary'
+    },
+    storageTextColor() {
+      const used = this.storage?.disk?.used_percent || 0
+      if (used >= 92) return 'text-error'
+      if (used >= 80) return 'text-warning'
+      return 'text-medium-emphasis'
+    },
   },
   watch: {
     currency() {
@@ -383,6 +419,18 @@ export default {
     },
     percent(value) {
       return formatPercent(value)
+    },
+    bytes(value) {
+      const size = Number(value) || 0
+      if (size < 1024) return `${size} B`
+      const units = ['KB', 'MB', 'GB', 'TB']
+      let scaled = size / 1024
+      let unit = 0
+      while (scaled >= 1024 && unit < units.length - 1) {
+        scaled /= 1024
+        unit++
+      }
+      return `${scaled.toFixed(scaled >= 100 ? 0 : 1)} ${units[unit]}`
     },
     ago(timestamp) {
       const seconds = parseInt(timestamp, 10)
@@ -425,7 +473,7 @@ export default {
       const query = `?currency=${this.currency}`
       try {
         const [value, holdings, sentiment, gainers, losers, allocation, risk, stats, news, bank,
-          overview] = await Promise.all([
+          overview, storage] = await Promise.all([
           apiGet(`/api/portfolio/change${query}`),
           apiGet(`/api/portfolio/holdings${query}`),
           apiGet('/api/portfolio/sentiment'),
@@ -438,6 +486,7 @@ export default {
           apiGet('/api/bank/stats').catch(() => ({})),
           apiGet('/api/portfolio/daily_sentiment?date=' + new Date().toISOString().slice(0, 10))
             .catch(() => null),
+          apiGet('/api/system/storage').catch(() => null),
         ])
         this.value = value || {}
         this.holdings = holdings || []
@@ -450,6 +499,7 @@ export default {
         this.stats = stats || {}
         this.news = news || []
         this.bank = bank || {}
+        this.storage = storage || null
         this.summary = { ...(overview || {}), running: (await this.runningSummary()) }
         await this.loadChart()
       } catch (err) {

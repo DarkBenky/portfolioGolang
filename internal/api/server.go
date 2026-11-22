@@ -172,6 +172,7 @@ func (s *Server) Router() *echo.Echo {
 	protected.DELETE("/chat/conversations/:id", s.deleteConversation)
 	protected.POST("/chat/reindex", s.reindexRAG)
 	protected.GET("/debug/mem", s.debugMem)
+	protected.GET("/system/storage", s.getStorage)
 
 	protected.GET("/pins", s.getPins)
 	protected.POST("/pins", s.addPin)
