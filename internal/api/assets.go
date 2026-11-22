@@ -106,6 +106,15 @@ func (s *Server) getPrice(c echo.Context) error {
 	return c.JSON(http.StatusOK, candles)
 }
 
+// resolveTicker accepts a ticker or an ISIN. Holdings and assets already carry the
+// mapping, so it is answered locally; only unknown ISINs reach the remote lookup.
+func (s *Server) resolveTicker(identifier string) string {
+	if ticker := s.DB.TickerForISIN(strings.TrimSpace(identifier)); ticker != "" {
+		return ticker
+	}
+	return s.Market.ResolveTicker(identifier)
+}
+
 func (s *Server) getAssetHistory(c echo.Context) error {
 	identifier := c.QueryParam("ticker")
 	if identifier == "" {
@@ -126,7 +135,7 @@ func (s *Server) getAssetHistory(c echo.Context) error {
 // assetCandles reads stored bars for the interval and falls back to a live fetch when
 // the ticker has no history yet. Fetched bars are stored so the next call is local.
 func (s *Server) assetCandles(identifier string, interval string) ([]prices.Candle, error) {
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	now := time.Now().UTC()
 	lookback := prices.IntervalLookback(interval, s.Cfg.PriceLookback5mDays)
 	start := int64(0)
@@ -165,8 +174,8 @@ func (s *Server) getAssetValue(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
 	}
-	latest, err := s.Prices.LatestCloses([]string{s.Market.ResolveTicker(identifier)})
-	ticker := s.Market.ResolveTicker(identifier)
+	latest, err := s.Prices.LatestCloses([]string{s.resolveTicker(identifier)})
+	ticker := s.resolveTicker(identifier)
 	if err != nil || latest[ticker] == 0 {
 		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
 	}
@@ -178,7 +187,7 @@ func (s *Server) getAssetChange(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker parameter is required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	holdings, err := s.DB.GetHoldingsByUser(s.userID(c))
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
@@ -213,7 +222,7 @@ func (s *Server) getAssetNews(c echo.Context) error {
 	limit := queryInt(c, "limit", 10)
 	offset := queryOffset(c)
 	identifier := c.QueryParam("ticker")
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	tickers := []string{ticker}
 	holdings, _ := s.DB.GetHoldingsByTicker(ticker)
 	for _, holding := range holdings {
@@ -234,7 +243,7 @@ func (s *Server) getAssetSentiment(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	tickers := []string{ticker}
 	holdings, _ := s.DB.GetHoldingsByTicker(ticker)
 	for _, holding := range holdings {
@@ -255,7 +264,7 @@ func (s *Server) getAssetSentiments(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	tickers := []string{ticker}
 	holdings, _ := s.DB.GetHoldingsByTicker(ticker)
 	for _, holding := range holdings {
@@ -285,7 +294,7 @@ func (s *Server) getAssetDailySentiment(c echo.Context) error {
 	if identifier == "" || date == "" {
 		return c.String(http.StatusBadRequest, "ticker and date parameters are required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	sentiment, err := s.DB.GetDailySentiment(ticker, date)
 	if err != nil {
 		sentiment = nil
@@ -357,7 +366,7 @@ func (s *Server) getAssetStats(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "ticker or isin parameter is required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	now := time.Now().UTC()
 	closes, dates, err := s.Prices.SeriesWithDates(ticker, now.AddDate(-1, 0, 0).Unix(), now.Unix())
 	if err != nil {

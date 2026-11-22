@@ -323,6 +323,25 @@ func (d *DB) UniqueISINs() ([]string, error) {
 	return isins, rows.Err()
 }
 
+// TickerForISIN maps an ISIN to the ticker the rest of the app uses for prices. The
+// mapping is stored with the holdings and assets the user already imported, so it
+// avoids the remote lookup for every request.
+func (d *DB) TickerForISIN(isin string) string {
+	if isin == "" {
+		return ""
+	}
+	for _, query := range []string{
+		`SELECT ticker FROM holdings WHERE isin = ? AND ticker <> '' LIMIT 1`,
+		`SELECT ticker FROM assets WHERE isin = ? AND ticker <> '' LIMIT 1`,
+	} {
+		var ticker string
+		if err := d.QueryRow(query, isin).Scan(&ticker); err == nil && ticker != "" && ticker != isin {
+			return ticker
+		}
+	}
+	return ""
+}
+
 func (d *DB) HoldingsMissingISIN() ([]Holding, error) {
 	rows, err := d.Query(`SELECT ` + holdingColumns + ` FROM holdings
 		WHERE (isin IS NULL OR isin = '' OR isin = 'N/A') AND ticker <> ''`)

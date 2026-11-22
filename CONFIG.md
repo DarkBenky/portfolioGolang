@@ -15,6 +15,7 @@ OPENROUTER_API_KEY=...      # LLM access; leave empty to disable generation
 ```
 DEV_MODE=false              # true allows the Vite dev server origin and skips chat cooldown
 BACKEND_GO_PORT=8085        # HTTP port; serves both the API and the UI
+EXTRA_HTTP_PORTS=5173       # comma separated extra listeners serving the same router
 SERVER_HOST=...             # host used to build allowed origins in production
 JWT_EXPIRY_HOURS=168
 GOMEMLIMIT=1200MiB          # optional soft heap limit
@@ -62,3 +63,26 @@ Run the binary under a supervisor that restarts on failure, for example a system
 with `Restart=always`, `RequiresMountsFor` for the directory holding the databases and
 `EnvironmentFile=/path/to/.env`. The process checkpoints DuckDB on SIGTERM; a hard
 crash is covered by the write ahead log probe described in `README.md`.
+
+```ini
+[Unit]
+Description=Portfolio server (Go, UI + API)
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/root/portfolioGolang
+
+[Service]
+Type=simple
+WorkingDirectory=/root/portfolioGolang
+EnvironmentFile=/root/portfolioGolang/.env
+ExecStart=/root/portfolioGolang/portfolio-v2
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+```
+
+With `EXTRA_HTTP_PORTS=5173` the old frontend URL keeps working while the legacy Node
+and Python services are gone; every listener serves the same embedded UI and API.

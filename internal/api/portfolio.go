@@ -932,7 +932,7 @@ func (s *Server) generateHoldingSummary(c echo.Context) error {
 	if identifier == "" {
 		return c.String(http.StatusBadRequest, "Ticker is required")
 	}
-	ticker := s.Market.ResolveTicker(identifier)
+	ticker := s.resolveTicker(identifier)
 	if ok, retry := s.allow("ticker-summary:"+ticker, 15*time.Minute); !ok {
 		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "Please wait before generating another summary", "retry_after_min": retry/60 + 1})
 	}
