@@ -59,7 +59,9 @@ func (d *DB) DeleteConversation(id string, userID string) error {
 	return err
 }
 
-const messageColumns = `id, conversation_id, role, content, COALESCE(search_results,''), COALESCE(status,''), created_at`
+// The inner select needs aliases: the outer query resolves names against the subquery
+// result, not the table, so COALESCE(...) without an alias cannot be found again.
+const messageColumns = `id, conversation_id, role, content, COALESCE(search_results,'') AS search_results, COALESCE(status,'') AS status, created_at`
 
 func (d *DB) ConversationMessages(conversationID string, limit int) ([]ChatMessage, error) {
 	rows, err := d.Query(`SELECT `+messageColumns+` FROM (
