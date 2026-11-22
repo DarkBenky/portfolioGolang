@@ -5,15 +5,26 @@
         <div class="text-h6">News</div>
         <div class="text-caption text-medium-emphasis">Portfolio headlines and the daily summary</div>
       </div>
-      <v-btn
-        size="small"
-        variant="outlined"
-        prepend-icon="mdi-text-box-plus-outline"
-        :loading="generating"
-        @click="generateSummary"
-      >
-        Generate summary
-      </v-btn>
+      <div class="d-flex align-center ga-2">
+        <v-btn
+          size="small"
+          variant="outlined"
+          prepend-icon="mdi-refresh"
+          :loading="fetching"
+          @click="fetchNews"
+        >
+          Fetch news
+        </v-btn>
+        <v-btn
+          size="small"
+          variant="outlined"
+          prepend-icon="mdi-text-box-plus-outline"
+          :loading="generating"
+          @click="generateSummary"
+        >
+          Generate summary
+        </v-btn>
+      </div>
     </div>
 
     <v-row dense>
@@ -75,6 +86,7 @@ export default {
       loading: false,
       loadingMore: false,
       generating: false,
+      fetching: false,
       error: '',
       limit: 20,
     }
@@ -140,6 +152,20 @@ export default {
         this.error = err.message
       } finally {
         this.loadingMore = false
+      }
+    },
+    async fetchNews() {
+      this.fetching = true
+      this.error = ''
+      try {
+        const result = await apiSend('/api/news/fetch', 'POST', {})
+        // The refresh runs in the background; give the feeds a moment and reload.
+        if (result?.started) await new Promise((resolve) => setTimeout(resolve, 9000))
+        await this.load()
+      } catch (err) {
+        this.error = err.message
+      } finally {
+        this.fetching = false
       }
     },
     async generateSummary() {

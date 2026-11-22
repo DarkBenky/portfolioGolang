@@ -951,6 +951,16 @@ func (s *Server) getSentimentHistory(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+func (s *Server) fetchNews(c echo.Context) error {
+	if !s.Background {
+		return c.JSON(http.StatusOK, map[string]any{"started": false})
+	}
+	if ok, retry := s.allow("news-fetch:"+s.userID(c), time.Minute); !ok {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{"started": false, "retry_after": retry})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"started": s.Jobs.FetchAllNewsAsync()})
+}
+
 func (s *Server) generateNewsSummary(c echo.Context) error {
 	userID := s.userID(c)
 	if ok, retry := s.allow("portfolio-summary:"+userID, 30*time.Minute); !ok {

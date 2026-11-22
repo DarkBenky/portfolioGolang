@@ -117,6 +117,7 @@ func (s *Server) Router() *echo.Echo {
 	protected.GET("/portfolio/sentiment_history", s.getSentimentHistory)
 
 	protected.POST("/news/generate-summary", s.generateNewsSummary)
+	protected.POST("/news/fetch", s.fetchNews)
 
 	protected.POST("/running-summary/generate", s.generateRunningSummary)
 	protected.GET("/running-summary", s.getRunningSummary)

@@ -31,6 +31,9 @@ type Manager struct {
 	situationMu  sync.Mutex
 	situationRun map[string]bool
 
+	newsMu      sync.Mutex
+	newsRunning bool
+
 	cooldownMu sync.Mutex
 	cooldowns  map[string]time.Time
 }
@@ -207,6 +210,27 @@ func (m *Manager) compact() {
 	if err := m.Prices.Compact(m.Cfg.Retention5mDays, m.Cfg.Retention1hDays); err != nil {
 		log.Printf("jobs: compaction: %v", err)
 	}
+}
+
+// FetchAllNewsAsync starts a news refresh in the background. It reports false
+// when one is already running so repeated clicks cannot stack up work.
+func (m *Manager) FetchAllNewsAsync() bool {
+	m.newsMu.Lock()
+	if m.newsRunning {
+		m.newsMu.Unlock()
+		return false
+	}
+	m.newsRunning = true
+	m.newsMu.Unlock()
+	go func() {
+		defer func() {
+			m.newsMu.Lock()
+			m.newsRunning = false
+			m.newsMu.Unlock()
+		}()
+		m.FetchAllNews()
+	}()
+	return true
 }
 
 func (m *Manager) FetchAllNews() {
