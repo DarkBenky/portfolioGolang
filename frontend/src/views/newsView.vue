@@ -53,8 +53,36 @@
       </v-col>
       <v-col cols="12" lg="8">
         <div class="panel pa-2">
+          <div class="d-flex flex-wrap align-center ga-2 pa-2">
+            <v-text-field
+              v-model="query"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              placeholder="Search headlines"
+              prepend-inner-icon="mdi-magnify"
+              class="news-search"
+            />
+            <v-select
+              v-model="tickerFilter"
+              :items="tickerOptions"
+              density="compact"
+              variant="outlined"
+              hide-details
+              label="Ticker"
+              class="news-select"
+            />
+            <v-btn-toggle v-model="sentimentFilter" density="compact" variant="outlined" divided mandatory>
+              <v-btn value="all" size="x-small">All</v-btn>
+              <v-btn value="positive" size="x-small">Positive</v-btn>
+              <v-btn value="neutral" size="x-small">Neutral</v-btn>
+              <v-btn value="negative" size="x-small">Negative</v-btn>
+            </v-btn-toggle>
+            <span class="text-caption text-medium-emphasis ml-auto">{{ visibleNews.length }} shown</span>
+          </div>
           <news-feed
-            :news-items="news"
+            :news-items="visibleNews"
             :loading="loading"
             :loading-more="loadingMore"
             :error="error"
@@ -87,6 +115,9 @@ export default {
       loadingMore: false,
       generating: false,
       fetching: false,
+      query: '',
+      tickerFilter: 'all',
+      sentimentFilter: 'all',
       error: '',
       limit: 20,
     }
@@ -108,6 +139,21 @@ export default {
     },
     sentimentPoints() {
       return this.sentimentHistory.map((point) => ({ time: point.timestamp, value: point.sentiment * 100 }))
+    },
+    tickerOptions() {
+      const tickers = [...new Set(this.news.map((item) => item.ticker).filter(Boolean))].sort()
+      return [{ title: 'All tickers', value: 'all' }, ...tickers.map((ticker) => ({ title: ticker, value: ticker }))]
+    },
+    visibleNews() {
+      const query = this.query.trim().toLowerCase()
+      return this.news.filter((item) => {
+        if (this.tickerFilter !== 'all' && item.ticker !== this.tickerFilter) return false
+        if (this.sentimentFilter === 'positive' && item.sentiment <= 0.3) return false
+        if (this.sentimentFilter === 'negative' && item.sentiment >= -0.3) return false
+        if (this.sentimentFilter === 'neutral' && (item.sentiment < -0.3 || item.sentiment > 0.3)) return false
+        if (!query) return true
+        return `${item.title} ${item.summary}`.toLowerCase().includes(query)
+      })
     },
   },
   mounted() {
@@ -189,5 +235,20 @@ export default {
   white-space: pre-wrap;
   max-height: 420px;
   overflow-y: auto;
+}
+
+.news-search {
+  max-width: 240px;
+}
+
+.news-select {
+  max-width: 160px;
+}
+
+@media (max-width: 600px) {
+  .news-search,
+  .news-select {
+    max-width: none;
+  }
 }
 </style>

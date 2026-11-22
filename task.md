@@ -40,7 +40,11 @@ Note - i added to the .env new api key for open router with 2 dollars of credits
 30. ![alt text](image-10.png) it would be nice to see them all same for this ![alt text](image-11.png)
 31. ![alt text](image-12.png) it would be nice when you click for example to this ticker it will open it in holding tab or in trading view ![alt text](image-13.png) ![alt text](image-14.png)
 32. portfolio overview css looks kinda bad ![alt text](image-15.png)
+33. spend this month is always one monthe begind becase i import bank styatment on end of month / start of new one so fix it ![alt text](image-16.png)
+34. ![alt text](image-17.png) this coudl be more detailed show alll of them
+35. ![alt text](image-18.png) scale volume bars so they will not cover the chart main one
+36. ![alt text](image-19.png) wthf is this gray box
 
-32. deploy this new updated version on vm http://91.98.145.193:5173/
-33. try to exploited it and find any other security issues and fix them
-34. evaluate if you solved each of the tasks above
+37. deploy this new updated version on vm http://91.98.145.193:5173/
+38. try to exploited it and find any other security issues and fix them
+39. evaluate if you solved each of the tasks above

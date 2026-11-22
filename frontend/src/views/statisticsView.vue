@@ -176,6 +176,7 @@ export default {
         { label: 'CAGR', value: formatPercent(risk.cagr || 0), color: `text-${changeColor(risk.cagr)}` },
         { label: 'Volatility', value: `${(risk.volatility || 0).toFixed(1)}%`, hint: 'annualized' },
         { label: 'Sharpe', value: (risk.sharpe || 0).toFixed(2), hint: `sortino ${(risk.sortino || 0).toFixed(2)}` },
+        { label: 'Calmar', value: (risk.calmar || 0).toFixed(2), hint: 'return per drawdown' },
         { label: 'Max drawdown', value: `${(risk.max_drawdown || 0).toFixed(1)}%`, color: 'text-error', hint: `now ${(risk.current_drawdown || 0).toFixed(1)}%` },
         { label: 'VaR 95', value: `${(risk.var_95 || 0).toFixed(2)}%`, hint: `worst day ${(risk.worst_day || 0).toFixed(1)}%` },
         { label: 'Win rate', value: `${(risk.win_rate || 0).toFixed(0)}%`, hint: `${risk.observations || 0} days` },
