@@ -1,27 +1,91 @@
-# TODO
+# Portfolio Tracker
 
-- [ ] statistic tab is still failing
+One Go binary serves the JSON API and the Vue single page app. There is no Python
+service and no separate frontend server; `make build` produces `./portfolio`.
 
-- [x] **Important** check why python and go is eating so much ram on server
-      Python: the JustETF page cache was keyed on the full HTML string (getAssets.py) and the gunicorn worker never recycled or returned memory. Go: unlimited SQLite connections with a 64 MB page cache and 256 MB mmap each, unbounded periodic fan-outs and a RAG reindex that reloaded every news/sentiment/search row every 30 minutes. See CONFIG.md "Memory" for the settings and /api/debug/mem on both servers for measurement.
-- [x] use duck db for price data for faster operations ( maybe migrate all )
-      Prices moved to prices.duckdb (prices only, everything else stays in SQLite). Candles and backtests are aggregated in SQL with time_bucket/date_trunc, the O(n^2) Go sorts are gone and the backtest no longer downloads yfinance history for every holding.
-- [x] fix charts when changing candle interval to w or m it makes spaces between candles
-      The sentiment pane was always a daily grid while 1w/1M candles were bucketed to 7/30 days, so lightweight-charts reserved the daily slots and left gaps. Sentiment is now bucketed on the same interval grid, weeks start on Monday, months on the 1st, and the chart fits its content when the interval changes.
-- [x] enhance expenses so bolt uber ... => transport bold food, wolt => dining and enhance it even more
-      Merchant matching is now longest-keyword-first with word boundaries (so "bolt food" wins over "bolt"), the seed list covers food delivery, drugstores, fuel, telecom, streaming and brokers, the amount based guessing is gone and the category list comes from the backend.
-- [x] check why the the daily topic summary is not working sometimes -> often we get no specific news reports were found
-      The web search returned an empty list when DuckDuckGo rate limited the server. Searches now rotate DDGS backends, fall back to SearXNG (set SEARXNG_URL) and Wikipedia, report which provider failed, are cached for reuse, and a report with zero results is retried later the same day (up to 3 attempts) instead of being stored as "no developments found".
-- [x] make statistics tab faster and also maybe other add other interesting indicator
-      The backtest reads daily bars from DuckDB with a 15 minute cache (31 ms for a 578 point backtest) and the tab now shows alpha, beta, win rate and the best/worst month.
-- [x] on trading view add side bar with item existing in portfolio so we can easily check them and when we open something that is not in holding add option to pin it to this side bar
-      Trading view has a watchlist card with holdings and pinned symbols, pins are stored per user through /api/pins.
-- [x] replace the deeps seek with  https://openrouter.ai/qwen/qwen3.7-flash
+## Layout
 
-## Follow ups
+```
+cmd/server            entry point: config, stores, jobs, HTTP server
+internal/config       environment parsing and tunables
+internal/store        SQLite schema and queries (users, holdings, news,
+                      sentiment, chat, RAG, pins, situations, LLM accounting)
+internal/bills        expenses, bank transactions, merchant rules, reports
+internal/prices       DuckDB price store, candle buckets, compaction, WAL guard
+internal/market       Yahoo Finance, JustETF, OpenFIGI, web search, articles,
+                      sentiment scoring
+internal/analytics    pure risk and backtest math
+internal/llm          OpenRouter client, response cache, spend budget, prompts
+internal/rag          BM25 retrieval over stored news and reports
+internal/chat         chat harness: local tools first, web search last
+internal/jobs         periodic pipelines and report generation
+internal/api          Echo router and handlers grouped by domain
+internal/webui        embedded frontend bundle
+frontend              Vue 3 + Vuetify source (builds into internal/webui/assets)
+```
 
-- [ ] Legacy hourly volume was stored divided by 60 (getPrice.py). New rows are correct; older hourly rows are still inconsistent. Re-run the historic backfill for a ticker to fix its history.
-- [ ] gunicorn recycles the worker every ~800 requests, which costs one FinBERT reload. If that gap is too visible, raise --max-requests or run two workers.
-- [ ] The SQLite prices table is left in portfolio.db as a backup. Drop it once the DuckDB store has proven stable for a release.
-- [ ] Optional: systemd units with MemoryMax and Restart=always for ./main and start_python_server.sh.
+Data flow: handlers read SQLite for entities, DuckDB for bars, and never call an LLM
+inline except the chat stream. Background jobs own ingestion and generation.
 
+## Build and run
+
+```
+make web      # build the UI into internal/webui/assets
+make build    # build ./portfolio with the UI embedded
+make test     # unit and integration tests
+make bench    # benchmarks
+make run
+```
+
+`.env` in the working directory is required (`SALT`, `JWT_SECRET`,
+`OPENROUTER_API_KEY`). See `CONFIG.md`.
+
+## Data sources (all Go)
+
+- Prices, quotes, news and fundamentals: Yahoo Finance HTTP endpoints, including the
+  cookie and crumb handshake that `quoteSummary` requires.
+- ETF composition, TER and distribution policy: the public JustETF profile page.
+- Ticker to ISIN mapping: OpenFIGI.
+- Web search: SearXNG when configured, then Bing RSS, Yahoo news and Wikipedia.
+- Article text: paragraph extraction with scripts, navigation and forms removed.
+- News sentiment: a weighted finance lexicon, so ingestion has no model cost.
+
+## LLM cost model
+
+- Daily and portfolio summaries use `OPENROUTER_CHEAP_MODEL`; chat uses
+  `OPENROUTER_MODEL`. `reasoning` is disabled for summaries.
+- Every non chat completion is cached in `llm_cache` under a content hash, so the same
+  news set is never billed twice. Chat is the only streaming path.
+- Retrieval is BM25 over text already stored in SQLite. Embeddings are opt in with
+  `RAG_USE_EMBEDDINGS=1` and are only needed for semantic search.
+- Chat offers local tools (`get_portfolio`, `get_price_history`, `get_news`,
+  `get_spending`, `search_documents`) before `web_search`; searches per turn and per
+  situation run are capped.
+- Every call is recorded in `llm_usage` with tokens and cost. `GET /api/usage` shows
+  today's spend per kind and model. `LLM_DAILY_BUDGET_USD` stops work once a user
+  reaches the limit.
+- Situation reports and summaries are guarded by cooldowns and content signatures, so
+  repeat requests and untouched days are free.
+
+## Storage and chart resolution
+
+- Bars live in `prices.duckdb`. Intraday bars are kept for 14 days, hourly for 120
+  days, older data is folded into daily bars. Tune with `PRICE_RETENTION_5M_DAYS` and
+  `PRICE_RETENTION_1H_DAYS`.
+- Chart windows are short by design (`PRICE_LOOKBACK_5M_DAYS`, default 14 days) and the
+  server downsamples any series to `CHART_MAX_POINTS` (default 500) before sending it,
+  which cuts payload size and disk pressure.
+- Portfolio sentiment is merged into the portfolio candle array as a `sentiment` field
+  on the same timestamps, so the chart never reserves extra time slots for a second
+  series.
+- A corrupt DuckDB write ahead log is replayed in a child process before startup; if
+  the replay dies the log is quarantined and the server starts from the last
+  checkpoint.
+
+## Tests
+
+`internal/*_test.go` covers the pure math, candle downsampling, sentiment scoring,
+JustETF parsing and BM25 ranking, plus an API integration test that runs the real
+router against temporary SQLite and DuckDB files with background fetching disabled.
+Benchmarks cover backtesting (10 years, 8 holdings), candle downsampling, BM25 search
+over 2000 chunks, sentiment scoring and a 20 holding holdings request.

@@ -1,6 +1,7 @@
 venv/
 .env
 main
+/portfolio
 __pycache__/
 *.pyc
 Anaconda*.sh

@@ -1,0 +1,95 @@
+---
+applyTo: '**'
+---
+
+# Project Context and Coding Guidelines
+
+## Working Mode: Learning Project (read first)
+
+This is a personal hobby project. I write the code to learn, so treat me as the author and act as a teacher, not an autopilot.
+
+- **Do only what was asked.** No unsolicited refactors, no "while I am here" fixes, no completing functions I left unfinished.
+- **Do not overwrite my code.** Prefer the smallest possible edit. Never rewrite a whole function or file when one line changes the behavior.
+- **Show before changing.** If something else looks wrong, or the fix needs more than the minimal edit, show the snippet or diff and explain why it matters, then wait for me to apply or approve it. Do not apply it yourself.
+- **Explain the why.** Name the rule, mechanism or format detail behind a fix (for example why a texture plane is 3 bytes per texel) and keep the explanation short.
+- **Keep my structure and names.** Preserve my functions, structs and naming. If a different design would be better, propose it with the reason instead of changing it.
+- **Ask when unsure** rather than guessing at my intent.
+
+## Code Style & Conventions
+- **Naming**: Use `camelCase` for variables and functions, `PascalCase` for types and classes
+- **Comments**: Only when necessary—explain **why**, not **what**. Avoid obvious or boilerplate comments
+- **Formatting**: Consistent indentation, clear separation between logical blocks
+- **Types**: Use my typedefs `uint8`, `uint16`, `uint32`, `uint64`, `int32`, `int64`, `float2`, `float3`, `float4`, `int3`, `int4` instead of raw `unsigned char`, `unsigned int`, `unsigned long long`, `int`, `long`, `float x, y, z` fields; `float3` and `int3` are physically 4 wide, `w` is only alignment padding; keep the raw type only where an external API or a `printf` specifier requires it
+- **Important**: Imagine that each line of code costs lots of money and you have limited budget so use budget responsibly, each line should justify its cost, do not waste lines unnecessarily
+
+## Architecture & Performance
+- **Memory Layout**: Prefer **Structure-of-Arrays (SoA)** over Array-of-Structs for data-oriented design
+- **Allocation Strategy**: Use arena allocators and memory pools. Minimize heap allocations
+- **Data Locality**: Keep related data contiguous in memory for better cache performance
+- **Reuse Over Allocation**: Reuse buffers, preallocate when sizes are known, avoid repeated allocations
+
+## Design Principles
+- **Simplicity First**: Avoid premature abstraction. Start simple, refactor when patterns emerge
+- **Locality**: Keep related data and behavior together. Minimize cross-module dependencies
+- **Explicitness**: Prefer explicit code over clever tricks. Clear > clever
+- **Functions**: Small, focused functions with clear inputs/outputs. Avoid side effects when possible
+
+## Code Structure
+Organize every file top to bottom in this order:
+- **Imports/includes**: all at the top of the file.
+- **Helpers**: small utility functions -> if too many, move to a separate file.
+- **Main logic**: the core logic of the module -> if too many, move to a separate file.
+- **Main / entry point** (if present): just uses the functions; high-level flow only, no low-level details:
+
+```python
+entities = loadEntities()
+
+for entity in entities:
+    for step in MAX_STEPS:
+        systems.update(entity, step)
+        logStep(entity, step)
+```
+
+Main only loads, loops, and calls update/log functions; it contains no low-level details or utility code.
+
+## What to Generate
+- **Minimal Boilerplate**: Skip unnecessary setup code, getters/setters, or wrapper functions
+- **Focused Implementation**: Generate the core logic, not scaffolding
+- **Idiomatic Code**: Follow language-specific best practices and standard library patterns
+- **Error Handling**: Include explicit error handling, avoid silent failures
+- **Documentation**: Do not generate extensive documentation—focus on code clarity instead so no extra docs are needed
+
+## What to Avoid
+- Over-engineering solutions for simple problems
+- Excessive inheritance hierarchies or interface abstractions
+- Magic numbers or undocumented constants
+- Premature optimization without profiling
+- Hidden allocations or performance traps
+- At all costs, avoid using emojis other non-standard characters in code or comments and do not explain them
+- Generating tests unless explicitly requested
+- Generate Readme or other documentation files unless explicitly requested or are useful for your context
+- Avoid creating redundant comments that do not add value
+- Redundant comments: keep only high-level comments that explain the purpose of code blocks, not line-by-line explanations of what the code does
+
+## Context Awareness
+- Consider existing codebase patterns and match that style
+- Suggest performance-critical improvements when relevant
+- Highlight potential memory or performance issues
+- Recommend simpler alternatives when over-complexity is detected
+
+when using OpenCL, prefer pinned memory and direct mapping for better performance. Avoid pageable host memory which incurs extra copying overhead.
+```c
+// SLOW — pageable host memory, extra memcpy internally
+float* buf = malloc(size);
+clEnqueueReadBuffer(..., buf, ...);  // ~2-3x slower
+
+// FAST — pinned memory, DMA direct transfer
+cl_mem pinned = clCreateBuffer(ctx, CL_MEM_ALLOC_HOST_PTR, size, NULL, NULL);
+float* buf = clEnqueueMapBuffer(..., pinned, ...);  // near theoretical bandwidth
+```
+
+main.c should contain the entry point and high-level application logic. Avoid putting low-level details or utility functions here. Instead, organize those into separate modules for better maintainability and readability.
+
+run ```make``` to validate that the code compiles without errors. Do not generate code that fails to compile or has syntax errors.
+
+**Important**: do not change struct fileds or names without explicit instructions or if it is necessary for the implementation. Maintain the existing data structures and naming conventions unless there is a compelling reason to refactor them but always ask for confirmation before making such changes.
