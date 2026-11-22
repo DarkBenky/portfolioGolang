@@ -88,7 +88,7 @@
         <div class="panel pa-3 h-100">
           <div class="d-flex align-center mb-2">
             <v-icon size="16" color="success" class="mr-2">mdi-trending-up</v-icon>
-            <span class="metric-label">Top gainers (24h)</span>
+            <span class="metric-label">Top gainers</span>
           </div>
           <div
             v-for="mover in movers.gainers"
@@ -106,7 +106,7 @@
             <span class="text-body-2 text-success text-no-wrap">{{ percent(mover.change) }}</span>
           </div>
           <div v-if="!movers.gainers.length" class="text-caption text-medium-emphasis py-4 text-center">
-            No gainers in the last 24 hours.
+            No gainers in the last session.
           </div>
         </div>
       </v-col>
@@ -115,7 +115,7 @@
         <div class="panel pa-3 h-100">
           <div class="d-flex align-center mb-2">
             <v-icon size="16" color="error" class="mr-2">mdi-trending-down</v-icon>
-            <span class="metric-label">Top losers (24h)</span>
+            <span class="metric-label">Top losers</span>
           </div>
           <div
             v-for="mover in movers.losers"
@@ -133,7 +133,7 @@
             <span class="text-body-2 text-error text-no-wrap">{{ percent(mover.change) }}</span>
           </div>
           <div v-if="!movers.losers.length" class="text-caption text-medium-emphasis py-4 text-center">
-            No losers in the last 24 hours.
+            No losers in the last session.
           </div>
         </div>
       </v-col>

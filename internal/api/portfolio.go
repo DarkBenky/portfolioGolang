@@ -856,21 +856,29 @@ func (s *Server) topMovers(c echo.Context, gainers bool) error {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
 	now := time.Now().UTC()
-	start := now.Add(-24 * time.Hour).Unix()
+	start := now.AddDate(0, 0, -14).Unix()
 	newsStart := now.Add(-24 * time.Hour).Format("2006-01-02")
+	tickers := make([]string, 0, len(holdings))
+	for _, holding := range holdings {
+		tickers = append(tickers, holding.Ticker)
+	}
+	// Daily candles give one close per session, so the comparison stays correct
+	// when the market is closed and keeps following the live day while it trades.
+	daily, err := s.Prices.CandlesMulti(tickers, start, now.Unix(), "1d")
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "Error retrieving prices")
+	}
 	results := make([]store.GainerLoser, 0, len(holdings))
 	for _, holding := range holdings {
-		// Compare the last close with the close 24h ago. When the market was
-		// closed inside that window the previous session is the honest anchor.
-		last, err := s.Prices.LastCloseBefore(holding.Ticker, now.Unix())
-		if err != nil || last == 0 {
+		series := daily[holding.Ticker]
+		if len(series) < 2 {
 			continue
 		}
-		prev, err := s.Prices.LastCloseBefore(holding.Ticker, start)
-		if err != nil || prev == 0 {
+		prev := series[len(series)-2].Close
+		if prev == 0 {
 			continue
 		}
-		change := (last - prev) / prev * 100
+		change := (series[len(series)-1].Close - prev) / prev * 100
 		assets, _ := s.DB.GetAssetsForHolding(holding.IDHolding)
 		news, _ := s.DB.NewsBetween(holding.Ticker, newsStart, now.Format("2006-01-02"))
 		entry := store.GainerLoser{Holding: &holding, PriceChangePct: change, RelatedNews: news}
