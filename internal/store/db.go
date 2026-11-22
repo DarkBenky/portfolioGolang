@@ -93,6 +93,7 @@ func (d *DB) migrate() error {
 	// Columns added after the original schema; failures mean they already exist.
 	d.Exec(`ALTER TABLE chat_messages ADD COLUMN search_results TEXT`)
 	d.Exec(`ALTER TABLE chat_messages ADD COLUMN status TEXT DEFAULT ''`)
+	d.Exec(`ALTER TABLE chat_messages ADD COLUMN trace TEXT`)
 
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)`,

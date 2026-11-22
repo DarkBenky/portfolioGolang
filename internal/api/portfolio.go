@@ -26,6 +26,9 @@ type holdingDetail struct {
 	Currency      string        `json:"currency"`
 	Quantity      float64       `json:"quantity"`
 	PurchasePrice float64       `json:"purchase_price"`
+	Value         float64       `json:"value"`
+	Weight        float64       `json:"weight"`
+	GainPct       float64       `json:"gain_pct"`
 	TER           float64       `json:"ter"`
 	ETF           bool          `json:"etf"`
 	Sectors       []nameWeight  `json:"sectors"`
@@ -43,6 +46,23 @@ func (s *Server) getHoldings(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
 	}
+	tickers := make([]string, 0, len(holdings))
+	for _, holding := range holdings {
+		tickers = append(tickers, holding.Ticker)
+	}
+	latest, _ := s.Prices.LatestCloses(tickers)
+	target := c.QueryParam("currency")
+	totalValue := 0.0
+	values := make(map[string]float64, len(holdings))
+	for _, holding := range holdings {
+		price := holding.PurchasePrice
+		if closePrice, ok := latest[holding.Ticker]; ok && closePrice > 0 {
+			price = closePrice
+		}
+		value := s.toCurrency(price*holding.Quantity, holding.Currency, target)
+		values[holding.IDHolding] = value
+		totalValue += value
+	}
 	result := make([]holdingDetail, 0, len(holdings))
 	for _, holding := range holdings {
 		detail := holdingDetail{
@@ -51,6 +71,12 @@ func (s *Server) getHoldings(c echo.Context) error {
 			Quantity: holding.Quantity, PurchasePrice: holding.PurchasePrice, TER: holding.TER,
 			ETF: holding.ETF, Sectors: []nameWeight{}, Regions: []nameWeight{},
 		}
+		detail.Value = analytics.Round(values[holding.IDHolding], 2)
+		if totalValue > 0 {
+			detail.Weight = analytics.Round(values[holding.IDHolding]/totalValue*100, 2)
+		}
+		cost := s.toCurrency(holding.PurchasePrice*holding.Quantity, holding.Currency, target)
+		detail.GainPct = analytics.Round(percentOf(values[holding.IDHolding]-cost, cost), 2)
 		sectors, regions, breakdownErr := s.DB.GetBreakdownForHolding(holding.IDHolding)
 		if breakdownErr == nil {
 			for _, sector := range sectors {

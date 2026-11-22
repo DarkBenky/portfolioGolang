@@ -77,7 +77,8 @@ func (s *Server) register(c echo.Context) error {
 }
 
 func (s *Server) login(c echo.Context) error {
-	if !s.allowLogin(c.RealIP()) {
+	ip := c.RealIP()
+	if s.loginBlocked(ip) {
 		return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "Too many login attempts. Try again later."})
 	}
 	var request struct {
@@ -89,9 +90,11 @@ func (s *Server) login(c echo.Context) error {
 	}
 	user, err := s.DB.GetUserByEmail(request.Email)
 	if err != nil || user == nil {
+		s.recordFailure(ip)
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid email or password"})
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(s.hashPassword(request.Password))) != nil {
+		s.recordFailure(ip)
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid email or password"})
 	}
 	token, err := s.token(user.ID, user.Email)
@@ -103,7 +106,21 @@ func (s *Server) login(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"token": token, "email": user.Email, "message": "Login successful"})
 }
 
-func (s *Server) allowLogin(ip string) bool {
+// Only failed attempts count, so a working session can log in repeatedly.
+func (s *Server) loginBlocked(ip string) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	cutoff := time.Now().Add(-loginBlockWindow)
+	count := 0
+	for _, attempt := range s.loginAttempts[ip] {
+		if attempt.After(cutoff) {
+			count++
+		}
+	}
+	return count >= maxLoginAttempts
+}
+
+func (s *Server) recordFailure(ip string) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	cutoff := time.Now().Add(-loginBlockWindow)
@@ -113,12 +130,7 @@ func (s *Server) allowLogin(ip string) bool {
 			recent = append(recent, attempt)
 		}
 	}
-	if len(recent) >= maxLoginAttempts {
-		s.loginAttempts[ip] = recent
-		return false
-	}
 	s.loginAttempts[ip] = append(recent, time.Now())
-	return true
 }
 
 func (s *Server) profile(c echo.Context) error {
@@ -127,15 +139,7 @@ func (s *Server) profile(c echo.Context) error {
 
 func (s *Server) health(c echo.Context) error {
 	if err := s.DB.Ping(); err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "unhealthy"})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "healthy"})
-}
-
-func (s *Server) newsExists(c echo.Context) error {
-	exists, err := s.DB.NewsExists(c.QueryParam("title"), c.QueryParam("summary"), c.QueryParam("text"))
-	if err != nil {
-		return c.String(http.StatusInternalServerError, "Error checking news existence")
-	}
-	return c.JSON(http.StatusOK, map[string]bool{"exists": exists})
 }

@@ -61,9 +61,20 @@ func New(cfg config.Config, db *store.DB, priceStore *prices.Store, marketClient
 func (s *Server) Router() *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
+	// Nothing runs in front of the server, so forwarded headers must not be trusted:
+	// otherwise rotating X-Forwarded-For bypasses the login throttle.
+	e.IPExtractor = echo.ExtractIPDirect()
 	e.Use(middleware.Recover())
-	e.Use(middleware.Secure())
-	e.Use(middleware.BodyLimit("20M"))
+	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
+		XSSProtection:      "1; mode=block",
+		ContentTypeNosniff: "nosniff",
+		XFrameOptions:      "DENY",
+		ReferrerPolicy:     "no-referrer",
+		ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+			"img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; " +
+			"base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+	}))
+	e.Use(middleware.BodyLimit("8M"))
 	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{Level: 5}))
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: s.Cfg.AllowedOrigins(),
@@ -77,7 +88,6 @@ func (s *Server) Router() *echo.Echo {
 	e.POST("/register", s.register)
 	e.POST("/login", s.login)
 	e.GET("/health", s.health)
-	e.GET("/news_exists", s.newsExists)
 
 	protected := e.Group("/api")
 	protected.Use(echojwt.WithConfig(echojwt.Config{
@@ -100,6 +110,7 @@ func (s *Server) Router() *echo.Echo {
 	protected.GET("/portfolio/daily_sentiment", s.getPortfolioDailySentiment)
 	protected.GET("/portfolio/allocation", s.getPortfolioAllocation)
 	protected.GET("/portfolio/stats", s.getPortfolioStats)
+	protected.GET("/portfolio/risk", s.getPortfolioRisk)
 	protected.GET("/portfolio/backtest", s.getBacktest)
 	protected.GET("/portfolio/top_gainers", s.topGainers)
 	protected.GET("/portfolio/top_losers", s.topLosers)
@@ -148,6 +159,8 @@ func (s *Server) Router() *echo.Echo {
 	protected.DELETE("/bank/transactions", s.deleteBankTransaction)
 
 	protected.GET("/search", s.search)
+	protected.GET("/articles", s.listArticles)
+	protected.GET("/articles/stats", s.articleStats)
 	protected.GET("/convert_currency", s.convertCurrency)
 	protected.GET("/get_price", s.getPrice)
 

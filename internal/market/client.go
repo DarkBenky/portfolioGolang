@@ -2,10 +2,13 @@ package market
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -26,11 +29,44 @@ type cacheEntry struct {
 }
 
 func NewClient() *Client {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          64,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		DialContext:           safeDialer().DialContext,
+	}
 	return &Client{
-		http:     &http.Client{Timeout: 20 * time.Second},
-		fast:     &http.Client{Timeout: 8 * time.Second},
+		http:     &http.Client{Timeout: 20 * time.Second, Transport: transport},
+		fast:     &http.Client{Timeout: 8 * time.Second, Transport: transport},
 		cache:    map[string]cacheEntry{},
 		maxBytes: 4 << 20,
+	}
+}
+
+// safeDialer refuses loopback, private and link local destinations. Search results and
+// article links come from third parties, so without this a hostile result could make
+// the server probe its own network.
+func safeDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   8 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network string, address string, conn syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil {
+				return errors.New("market: unresolved destination")
+			}
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+				ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+				return errors.New("market: blocked destination")
+			}
+			return nil
+		},
 	}
 }
 

@@ -161,11 +161,54 @@
             </div>
             <v-divider v-if="idx < indicatorDefs.length - 1" />
           </template>
+          <v-divider />
+          <div class="ind-row">
+            <span class="ind-swatch" style="background: #ffb300"></span>
+            <span class="ind-label">Volume profile</span>
+            <div class="ind-controls">
+              <v-switch
+                v-model="profileOn"
+                density="compact"
+                hide-details
+                color="#ffb300"
+                class="ind-switch"
+                @update:model-value="applyVolumeProfile"
+              />
+            </div>
+          </div>
         </v-card>
       </v-col>
 
       <!-- Chart area -->
       <v-col cols="12" md="9" lg="10" class="pa-0 tv-chart-col">
+        <div v-if="activeTicker && chartData.length" class="tv-snapshot">
+          <div class="snap-cell">
+            <span class="snap-label">Last</span>
+            <span class="snap-value">{{ formatPrice(lastClose) }}</span>
+          </div>
+          <div class="snap-cell">
+            <span class="snap-label">Change</span>
+            <span class="snap-value" :class="periodChange >= 0 ? 'text-success' : 'text-error'">
+              {{ periodChange >= 0 ? '+' : '' }}{{ periodChange.toFixed(2) }}%
+            </span>
+          </div>
+          <div class="snap-cell">
+            <span class="snap-label">High</span>
+            <span class="snap-value">{{ formatPrice(periodHigh) }}</span>
+          </div>
+          <div class="snap-cell">
+            <span class="snap-label">Low</span>
+            <span class="snap-value">{{ formatPrice(periodLow) }}</span>
+          </div>
+          <div class="snap-cell">
+            <span class="snap-label">Avg volume</span>
+            <span class="snap-value">{{ formatVolume(avgVolume) }}</span>
+          </div>
+          <div class="snap-cell">
+            <span class="snap-label">Bars</span>
+            <span class="snap-value">{{ chartData.length }}</span>
+          </div>
+        </div>
         <div
           v-if="!activeTicker"
           class="d-flex align-center justify-center text-grey tv-placeholder"
@@ -201,9 +244,9 @@
 </template>
 
 <script>
-import { ref, reactive, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import CandleChart from './candleChart.vue'
-import { list, compute } from './indicators.js'
+import { list, compute, volumeProfile } from './indicators.js'
 import { API_BASE_URL } from '../config.js'
 
 function getAuthToken() {
@@ -235,6 +278,8 @@ export default {
     const chartHeight = ref(600)
     const chartReady = ref(false)
     const tradeChart = ref(null)
+    const profileOn = ref(false)
+    const profileLines = []
 
     const holdings = ref([])
     const pinnedSymbols = ref([])
@@ -371,6 +416,7 @@ export default {
       chartError.value = ''
       chartData.value = []
       chartReady.value = false
+      profileLines.length = 0
       Object.keys(activeSeries).forEach(id => delete activeSeries[id])
 
       try {
@@ -395,9 +441,65 @@ export default {
       if (activeTicker.value) loadChart()
     }
 
+    const lastClose = computed(() => {
+      const last = chartData.value[chartData.value.length - 1]
+      return last ? Number(last.close) : 0
+    })
+    const firstClose = computed(() => {
+      const first = chartData.value[0]
+      return first ? Number(first.close) : 0
+    })
+    const periodChange = computed(() => (firstClose.value > 0
+      ? (lastClose.value - firstClose.value) / firstClose.value * 100
+      : 0))
+    const periodHigh = computed(() => chartData.value.reduce((high, bar) => Math.max(high, Number(bar.high) || 0), 0))
+    const periodLow = computed(() => chartData.value.reduce((low, bar) => Math.min(low, Number(bar.low) || Infinity), Infinity))
+    const avgVolume = computed(() => {
+      if (!chartData.value.length) return 0
+      const total = chartData.value.reduce((sum, bar) => sum + (Number(bar.volume) || 0), 0)
+      return Math.round(total / chartData.value.length)
+    })
+    const formatPrice = (value) => (Number.isFinite(value) ? Number(value).toFixed(2) : '-')
+    const formatVolume = (value) => {
+      if (!Number.isFinite(value)) return '-'
+      if (value >= 1e9) return (value / 1e9).toFixed(2) + 'B'
+      if (value >= 1e6) return (value / 1e6).toFixed(2) + 'M'
+      if (value >= 1e3) return (value / 1e3).toFixed(1) + 'K'
+      return String(value)
+    }
+
     function onChartReady() {
       chartReady.value = true
-      nextTick(() => applyAllEnabledIndicators())
+      nextTick(() => {
+        applyAllEnabledIndicators()
+        if (profileOn.value) applyVolumeProfile()
+      })
+    }
+
+    function clearProfileLines() {
+      const series = tradeChart.value?.getCandleSeries?.()
+      if (!series) return
+      for (const line of profileLines) series.removePriceLine(line)
+      profileLines.length = 0
+    }
+
+    function applyVolumeProfile(enabled) {
+      clearProfileLines()
+      if (!enabled || !tradeChart.value || !chartData.value.length) return
+      const profile = volumeProfile(buildCandles())
+      const series = tradeChart.value.getCandleSeries?.()
+      if (!profile || !series) return
+      const line = (price, color, title) => profileLines.push(series.createPriceLine({
+        price,
+        color,
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title,
+      }))
+      line(profile.poc, '#ffb300', 'POC')
+      line(profile.vah, '#8d6e63', 'VAH')
+      line(profile.val, '#8d6e63', 'VAL')
     }
 
     function applyAllEnabledIndicators() {
@@ -490,6 +592,15 @@ export default {
       chartError,
       chartHeight,
       tradeChart,
+      profileOn,
+      lastClose,
+      periodChange,
+      periodHigh,
+      periodLow,
+      avgVolume,
+      formatPrice,
+      formatVolume,
+      applyVolumeProfile,
       indicatorDefs,
       enabledIndicators,
       indicatorParams,
@@ -515,8 +626,49 @@ export default {
 
 <style scoped>
 .tv-root {
-  height: calc(100vh - 64px);
+  height: calc(100vh - 100px);
   overflow: hidden;
+}
+
+.tv-snapshot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.snap-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.snap-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+
+.snap-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 959px) {
+  .tv-root {
+    height: auto;
+    overflow: visible;
+  }
+
+  .tv-panel {
+    height: auto;
+    max-height: none;
+  }
+
+  .tv-chart-col {
+    height: 62vh;
+  }
 }
 
 .tv-panel {

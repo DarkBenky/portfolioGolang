@@ -134,6 +134,7 @@ type ChatMessage struct {
 	Content        string `json:"content"`
 	SearchResults  string `json:"search_results"`
 	Status         string `json:"status"`
+	Trace          string `json:"trace,omitempty"`
 	CreatedAt      int64  `json:"created_at"`
 }
 

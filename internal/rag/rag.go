@@ -44,9 +44,10 @@ type corpusIndex struct {
 	averageLen  float64
 }
 
-// ragRetentionDays keeps the lexical corpus bounded. The legacy database held months
-// of chunks plus their embeddings, which is most of its size.
-const ragRetentionDays = 90
+// ragCorpusLimit bounds the in-memory keyword index. Articles and embeddings are never
+// deleted; only the searchable window is bounded, and the article explorer still reads
+// every stored row straight from the database.
+const ragCorpusLimit = 80000
 
 func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool) *Indexer {
 	return &Indexer{db: db, llm: llmClient, market: marketClient, embeddings: embeddings}
@@ -75,11 +76,8 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 		return nil
 	}
 
-	// Prune first: a legacy database holds months of chunks and their embeddings, and
-	// loading them only to delete them costs time and memory.
-	if err := x.db.PruneRagChunks(ragRetentionDays); err != nil {
-		return err
-	}
+	// Stored articles and embeddings are immutable records: the index only adds new
+	// chunks. Removing them would silently lose history the user asked to keep.
 	items, err := x.collect()
 	if err != nil {
 		return err
@@ -95,26 +93,14 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 		hash  string
 	}
 	var toEmbed []pending
-	current := make(map[string]bool, len(items))
 	for _, item := range items {
 		for _, chunk := range chunkText(item.content, 700, 80) {
 			hash := store.HashString(chunk)
-			current[hash] = true
 			if existing[hash] {
 				continue
 			}
 			toEmbed = append(toEmbed, pending{item: item, chunk: chunk, hash: hash})
 		}
-	}
-
-	var stale []string
-	for hash := range existing {
-		if !current[hash] {
-			stale = append(stale, hash)
-		}
-	}
-	if err := x.db.DeleteRagChunks(stale); err != nil {
-		return err
 	}
 
 	for _, entry := range toEmbed {
@@ -138,7 +124,7 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 
 	x.lastSig = signature
 	if len(toEmbed) > 0 {
-		log.Printf("rag: indexed %d chunks (%d removed)", len(toEmbed), len(stale))
+		log.Printf("rag: indexed %d new chunks", len(toEmbed))
 	}
 	return nil
 }
@@ -379,7 +365,7 @@ func (x *Indexer) corpus() (*corpusIndex, error) {
 		return x.index, nil
 	}
 
-	chunks, err := x.db.AllRagChunks(x.embeddings)
+	chunks, err := x.db.AllRagChunks(x.embeddings, ragCorpusLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 )
 
 func (d *DB) CreateConversation(userID string, title string) (*Conversation, error) {
@@ -61,7 +60,7 @@ func (d *DB) DeleteConversation(id string, userID string) error {
 
 // The inner select needs aliases: the outer query resolves names against the subquery
 // result, not the table, so COALESCE(...) without an alias cannot be found again.
-const messageColumns = `id, conversation_id, role, content, COALESCE(search_results,'') AS search_results, COALESCE(status,'') AS status, created_at`
+const messageColumns = `id, conversation_id, role, content, COALESCE(search_results,'') AS search_results, COALESCE(status,'') AS status, COALESCE(trace,'') AS trace, created_at`
 
 func (d *DB) ConversationMessages(conversationID string, limit int) ([]ChatMessage, error) {
 	rows, err := d.Query(`SELECT `+messageColumns+` FROM (
@@ -75,7 +74,7 @@ func (d *DB) ConversationMessages(conversationID string, limit int) ([]ChatMessa
 	for rows.Next() {
 		var message ChatMessage
 		if err := rows.Scan(&message.ID, &message.ConversationID, &message.Role, &message.Content,
-			&message.SearchResults, &message.Status, &message.CreatedAt); err == nil {
+			&message.SearchResults, &message.Status, &message.Trace, &message.CreatedAt); err == nil {
 			messages = append(messages, message)
 		}
 	}
@@ -97,9 +96,9 @@ func (d *DB) CreatePendingAssistantMessage(conversationID string) (string, error
 	return d.AddChatMessage(conversationID, "assistant", "", "")
 }
 
-func (d *DB) UpdateChatMessage(id string, content string, searchResults string, status string) error {
-	_, err := d.Exec(`UPDATE chat_messages SET content = ?, search_results = ?, status = ? WHERE id = ?`,
-		content, searchResults, status, id)
+func (d *DB) UpdateChatMessage(id string, content string, searchResults string, status string, trace string) error {
+	_, err := d.Exec(`UPDATE chat_messages SET content = ?, search_results = ?, status = ?, trace = ? WHERE id = ?`,
+		content, searchResults, status, trace, id)
 	return err
 }
 
@@ -151,27 +150,6 @@ func (d *DB) RagChunkHashes() (map[string]bool, error) {
 		}
 	}
 	return hashes, rows.Err()
-}
-
-func (d *DB) DeleteRagChunks(hashes []string) error {
-	for start := 0; start < len(hashes); start += 500 {
-		end := min(start+500, len(hashes))
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-start), ",")
-		args := make([]any, 0, end-start)
-		for _, hash := range hashes[start:end] {
-			args = append(args, hash)
-		}
-		if _, err := d.Exec(`DELETE FROM rag_chunks WHERE content_hash IN (`+placeholders+`)`, args...); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (d *DB) PruneRagChunks(retentionDays int) error {
-	cutoff := Now() - int64(retentionDays)*86400
-	_, err := d.Exec(`DELETE FROM rag_chunks WHERE created_at < ?`, cutoff)
-	return err
 }
 
 func (d *DB) CachedLLMResponse(key string) (string, bool) {
@@ -229,16 +207,19 @@ func (d *DB) LLMUsageSummary(userID string, since int64) ([]UsageRow, error) {
 	return summary, rows.Err()
 }
 
-// AllRagChunks loads the corpus in a stable order. Embeddings are only selected when
-// asked for: on a legacy database they are tens of gigabytes of JSON that the lexical
-// index must not read.
-func (d *DB) AllRagChunks(withEmbeddings bool) ([]RagChunk, error) {
+// AllRagChunks loads the newest chunks for the in-memory index. Embeddings are only
+// selected when asked for: on a legacy database they are tens of gigabytes of JSON
+// that the lexical index must not read.
+func (d *DB) AllRagChunks(withEmbeddings bool, limit int) ([]RagChunk, error) {
 	embeddingColumn := "''"
 	if withEmbeddings {
 		embeddingColumn = "COALESCE(embedding,'')"
 	}
+	if limit <= 0 {
+		limit = 80000
+	}
 	rows, err := d.Query(`SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''),
-		content, ` + embeddingColumn + ` FROM rag_chunks ORDER BY id`)
+		content, `+embeddingColumn+` FROM rag_chunks ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

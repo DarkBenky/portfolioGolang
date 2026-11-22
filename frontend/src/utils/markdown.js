@@ -6,6 +6,8 @@ export function formatMarkdown(text) {
   html = html.replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 
   html = html.replace(/^### (.+)$/gm, '<h4 class="text-subtitle-2 font-weight-bold mt-3 mb-1">$1</h4>')
   html = html.replace(/^## (.+)$/gm, '<h3 class="text-subtitle-1 font-weight-bold mt-3 mb-1">$1</h3>')
@@ -22,7 +24,12 @@ export function formatMarkdown(text) {
 
   html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded" style="background: rgba(var(--v-theme-surface-variant), 0.5);">$1</code>')
 
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-primary">$1</a>')
+  // Only http(s) links survive. The escapes above already block attribute
+  // injection, and the scheme check blocks javascript: URLs from model output.
+  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) => {
+    if (!/^https?:\/\//i.test(url)) return label
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary">${label}</a>`
+  })
 
   html = html.replace(/\n\n/g, '</p><p class="mb-2">')
   html = '<p class="mb-2">' + html + '</p>'

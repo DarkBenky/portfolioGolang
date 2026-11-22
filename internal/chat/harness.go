@@ -32,6 +32,42 @@ func New(llmClient *llm.Client, db *store.DB, marketClient *market.Client, price
 
 type Emitter func(event map[string]any)
 
+// Trace is the record of one answer: every prompt part the model received and every
+// tool it called. The UI renders it next to the message so an answer can be audited.
+type Trace struct {
+	Model            string      `json:"model"`
+	System           string      `json:"system"`
+	Context          string      `json:"context"`
+	History          int         `json:"history"`
+	Tools            []string    `json:"tools"`
+	Steps            []TraceStep `json:"steps"`
+	Sources          int         `json:"sources"`
+	DurationMS       int64       `json:"duration_ms"`
+	PromptTokens     int         `json:"prompt_tokens"`
+	CompletionTokens int         `json:"completion_tokens"`
+	CachedTokens     int         `json:"cached_tokens"`
+	CostUSD          float64     `json:"cost_usd"`
+}
+
+type TraceStep struct {
+	Round            int         `json:"round"`
+	Reasoning        string      `json:"reasoning,omitempty"`
+	Content          string      `json:"content,omitempty"`
+	ToolCalls        []TraceTool `json:"tool_calls,omitempty"`
+	PromptTokens     int         `json:"prompt_tokens"`
+	CompletionTokens int         `json:"completion_tokens"`
+	CachedTokens     int         `json:"cached_tokens"`
+	CostUSD          float64     `json:"cost_usd"`
+	DurationMS       int64       `json:"duration_ms"`
+}
+
+type TraceTool struct {
+	Name       string `json:"name"`
+	Arguments  string `json:"arguments"`
+	Result     string `json:"result"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 const (
 	maxToolRounds  = 4
 	maxWebSearches = 3
@@ -42,11 +78,17 @@ const (
 
 // Run drives one chat turn. Local database tools are offered before web search so the
 // model answers portfolio questions without external calls.
-func (s *Service) Run(ctx context.Context, userID string, conversationID string, question string, emit Emitter) (string, []store.SearchResult) {
+func (s *Service) Run(ctx context.Context, userID string, conversationID string, question string, emit Emitter) (string, []store.SearchResult, *Trace) {
+	started := time.Now()
+	contextText := s.context(userID, question)
 	messages := []llm.Message{
 		{Role: "system", Content: systemPrompt},
-		{Role: "system", Content: s.context(userID, question)},
+		{Role: "system", Content: contextText},
 	}
+	tools := localTools()
+	trace := &Trace{Model: s.llm.Model(llm.KindChat), System: systemPrompt,
+		Context: contextText, Tools: toolNames(tools)}
+
 	history, err := s.db.CompactChatHistory(conversationID, historyKeep)
 	if err == nil {
 		// The question is saved before the stream starts, so drop the trailing copy.
@@ -56,25 +98,42 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 		for _, message := range history {
 			if message.Role == "user" || (message.Role == "assistant" && message.Status == "done") {
 				messages = append(messages, llm.Message{Role: message.Role, Content: llm.Truncate(message.Content, 2000)})
+				trace.History++
 			}
 		}
 	}
 	messages = append(messages, llm.Message{Role: "user", Content: question})
 
-	tools := localTools()
 	var sources []store.SearchResult
 	webSearches := 0
 	finalAnswer := ""
 
 	for round := 0; round < maxToolRounds; round++ {
-		completion, err := s.llm.Chat(ctx, llm.KindChat, userID, messages, tools, func(delta string) {
-			emit(map[string]any{"delta": delta})
+		step := TraceStep{Round: round + 1}
+		stepStart := time.Now()
+		completion, err := s.llm.Chat(ctx, llm.KindChat, userID, messages, tools, llm.Handlers{
+			OnDelta: func(delta string) { emit(map[string]any{"delta": delta}) },
+			OnReasoning: func(delta string) {
+				step.Reasoning += delta
+				emit(map[string]any{"reasoning": delta})
+			},
 		})
 		if err != nil {
 			log.Printf("chat: model error: %v", err)
+			trace.DurationMS = time.Since(started).Milliseconds()
 			emit(map[string]any{"error": "Model request failed. Please try again."})
-			return "", nil
+			return "", nil, trace
 		}
+		step.Content = completion.Content
+		step.PromptTokens = completion.PromptTokens
+		step.CompletionTokens = completion.CompletionTokens
+		step.CachedTokens = completion.CachedTokens
+		step.CostUSD = completion.CostUSD
+		step.DurationMS = time.Since(stepStart).Milliseconds()
+		trace.PromptTokens += completion.PromptTokens
+		trace.CompletionTokens += completion.CompletionTokens
+		trace.CachedTokens += completion.CachedTokens
+		trace.CostUSD += completion.CostUSD
 
 		if len(completion.ToolCalls) == 0 {
 			if queries := extractWebSearchQueries(completion.Content); len(queries) > 0 && webSearches < maxWebSearches {
@@ -84,22 +143,35 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 					}
 					webSearches++
 					emit(map[string]any{"status": "Searching the web..."})
+					searchStart := time.Now()
 					result, found := s.webSearch(userID, query)
+					step.ToolCalls = append(step.ToolCalls, TraceTool{Name: "web_search",
+						Arguments: query, Result: llm.Truncate(result, 1200),
+						DurationMS: time.Since(searchStart).Milliseconds()})
 					sources = append(sources, found...)
 					if len(found) > 0 {
 						emit(map[string]any{"search_results": found})
 					}
 					messages = append(messages, llm.Message{Role: "user", Content: "Web search results for \"" + query + "\":\n" + result})
 				}
+				trace.Steps = append(trace.Steps, step)
 				continue
 			}
+			trace.Steps = append(trace.Steps, step)
 			finalAnswer = strings.TrimSpace(stripDSML(completion.Content))
 			break
 		}
 
 		messages = append(messages, llm.Message{Role: "assistant", ToolCalls: completion.ToolCalls})
 		for _, call := range completion.ToolCalls {
+			emit(map[string]any{"tool": map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments}})
+			toolStart := time.Now()
 			result := s.callTool(userID, call, &webSearches, &sources, emit)
+			step.ToolCalls = append(step.ToolCalls, TraceTool{Name: call.Function.Name,
+				Arguments: call.Function.Arguments, Result: llm.Truncate(result, 1200),
+				DurationMS: time.Since(toolStart).Milliseconds()})
+			emit(map[string]any{"tool_result": map[string]any{"name": call.Function.Name,
+				"duration_ms": time.Since(toolStart).Milliseconds(), "preview": llm.Truncate(result, 240)}})
 			messages = append(messages, llm.Message{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -107,13 +179,24 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 				Content:    result,
 			})
 		}
+		trace.Steps = append(trace.Steps, step)
 	}
 
+	trace.Sources = len(sources)
+	trace.DurationMS = time.Since(started).Milliseconds()
 	if strings.TrimSpace(finalAnswer) == "" {
 		emit(map[string]any{"error": "I could not generate an answer. Please try again."})
-		return "", trimSources(sources)
+		return "", trimSources(sources), trace
 	}
-	return finalAnswer, trimSources(sources)
+	return finalAnswer, trimSources(sources), trace
+}
+
+func toolNames(tools []llm.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
+	}
+	return names
 }
 
 func trimSources(sources []store.SearchResult) []store.SearchResult {

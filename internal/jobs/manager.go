@@ -636,7 +636,7 @@ func (m *Manager) GenerateSituation(task store.SituationTask) {
 	failed := false
 
 	for round := 0; round < 4; round++ {
-		completion, err := m.LLM.Chat(ctx, llm.KindSituation, "system", messages, tools, nil)
+		completion, err := m.LLM.Chat(ctx, llm.KindSituation, "system", messages, tools, llm.Handlers{})
 		if err != nil {
 			log.Printf("situation: gather error: %v", err)
 			failed = true
@@ -670,7 +670,7 @@ func (m *Manager) GenerateSituation(task store.SituationTask) {
 		{Role: "user", Content: situationComposePrompt(task, gathered, status, m.DB.PreviousSituationSummary(task.ID, today))},
 	}
 	content, summary := "", ""
-	if completion, err := m.LLM.Chat(ctx, llm.KindSituation, "system", compose, nil, nil); err == nil {
+	if completion, err := m.LLM.Chat(ctx, llm.KindSituation, "system", compose, nil, llm.Handlers{}); err == nil {
 		content, summary = parseSituationJSON(completion.Content)
 	} else {
 		log.Printf("situation: compose error: %v", err)

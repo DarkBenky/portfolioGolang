@@ -25,6 +25,7 @@ const (
 type Client struct {
 	apiKey       string
 	chatModel    string
+	sessionModel string
 	cheapModel   string
 	embedModel   string
 	db           *store.DB
@@ -35,15 +36,19 @@ type Client struct {
 	pricesLoaded time.Time
 }
 
-func New(apiKey string, chatModel string, cheapModel string, embedModel string, db *store.DB, dailyBudget float64) *Client {
+func New(apiKey string, chatModel string, sessionModel string, cheapModel string, embedModel string, db *store.DB, dailyBudget float64) *Client {
+	if sessionModel == "" {
+		sessionModel = chatModel
+	}
 	return &Client{
-		apiKey:      apiKey,
-		chatModel:   chatModel,
-		cheapModel:  cheapModel,
-		embedModel:  embedModel,
-		db:          db,
-		dailyBudget: dailyBudget,
-		http:        &http.Client{Timeout: 180 * time.Second},
+		apiKey:       apiKey,
+		chatModel:    chatModel,
+		sessionModel: sessionModel,
+		cheapModel:   cheapModel,
+		embedModel:   embedModel,
+		db:           db,
+		dailyBudget:  dailyBudget,
+		http:         &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -54,6 +59,9 @@ func (c *Client) Configured() bool {
 func (c *Client) Model(kind Kind) string {
 	if kind.useCheapModel() {
 		return c.cheapModel
+	}
+	if kind == KindChat {
+		return c.sessionModel
 	}
 	return c.chatModel
 }
@@ -92,14 +100,14 @@ func (c *Client) Complete(ctx context.Context, kind Kind, userID string, system 
 }
 
 // Chat streams tokens to onDelta and accumulates tool calls for the agent loop.
-func (c *Client) Chat(ctx context.Context, kind Kind, userID string, messages []Message, tools []Tool, onDelta func(string)) (*Completion, error) {
+func (c *Client) Chat(ctx context.Context, kind Kind, userID string, messages []Message, tools []Tool, handlers Handlers) (*Completion, error) {
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("llm: OPENROUTER_API_KEY not configured")
 	}
 	if err := c.checkBudget(userID); err != nil {
 		return nil, err
 	}
-	return c.stream(ctx, kind, userID, messages, tools, onDelta)
+	return c.stream(ctx, kind, userID, messages, tools, handlers)
 }
 
 func (c *Client) do(ctx context.Context, kind Kind, messages []Message, tools []Tool, toolChoice string) (*Completion, error) {
@@ -163,14 +171,16 @@ func (c *Client) do(ctx context.Context, kind Kind, messages []Message, tools []
 	return nil, lastErr
 }
 
-func (c *Client) stream(ctx context.Context, kind Kind, userID string, messages []Message, tools []Tool, onDelta func(string)) (*Completion, error) {
+func (c *Client) stream(ctx context.Context, kind Kind, userID string, messages []Message, tools []Tool, handlers Handlers) (*Completion, error) {
 	body := request{
 		Model:     c.Model(kind),
 		Messages:  messages,
 		Stream:    true,
 		Tools:     tools,
 		MaxTokens: kind.maxTokens(),
-		Reasoning: &reasoning{Enabled: false},
+		// Low effort keeps thinking short: this model spends the whole token budget
+		// on reasoning at the default level, which truncates the answer.
+		Reasoning: &reasoning{Enabled: kind.useReasoning(), Effort: "low"},
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -223,6 +233,7 @@ func (c *Client) stream(ctx context.Context, kind Kind, userID string, messages 
 		if chunk.Usage != nil {
 			completion.PromptTokens = chunk.Usage.PromptTokens
 			completion.CompletionTokens = chunk.Usage.CompletionTokens
+			completion.CachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 			if chunk.Usage.Cost > 0 {
 				completion.CostUSD = chunk.Usage.Cost
 			}
@@ -234,10 +245,16 @@ func (c *Client) stream(ctx context.Context, kind Kind, userID string, messages 
 		if chunk.Choices[0].FinishReason != "" {
 			completion.FinishReason = chunk.Choices[0].FinishReason
 		}
+		if delta.Reasoning != "" {
+			completion.Reasoning += delta.Reasoning
+			if handlers.OnReasoning != nil {
+				handlers.OnReasoning(delta.Reasoning)
+			}
+		}
 		if delta.Content != "" {
 			completion.Content += delta.Content
-			if onDelta != nil {
-				onDelta(delta.Content)
+			if handlers.OnDelta != nil {
+				handlers.OnDelta(delta.Content)
 			}
 		}
 		for _, call := range delta.ToolCalls {

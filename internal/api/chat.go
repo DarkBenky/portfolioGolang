@@ -67,7 +67,7 @@ func (s *Server) chatHandler(c echo.Context) error {
 			streamed += delta
 			if len(streamed)-lastSaved >= 120 {
 				lastSaved = len(streamed)
-				_ = s.DB.UpdateChatMessage(assistantID, streamed, "", "streaming")
+				_ = s.DB.UpdateChatMessage(assistantID, streamed, "", "streaming", "")
 			}
 		}
 		payload, err := json.Marshal(event)
@@ -81,13 +81,19 @@ func (s *Server) chatHandler(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	answer, sources := s.Chat.Run(ctx, userID, conversation.ID, request.Message, emit)
+	answer, sources, trace := s.Chat.Run(ctx, userID, conversation.ID, request.Message, emit)
+	traceJSON := ""
+	if trace != nil {
+		if encoded, err := json.Marshal(trace); err == nil {
+			traceJSON = string(encoded)
+		}
+	}
 	if answer == "" {
-		_ = s.DB.UpdateChatMessage(assistantID, streamed, "", "failed")
+		_ = s.DB.UpdateChatMessage(assistantID, streamed, "", "failed", traceJSON)
 		return nil
 	}
 	searchJSON, _ := json.Marshal(sources)
-	_ = s.DB.UpdateChatMessage(assistantID, answer, string(searchJSON), "done")
+	_ = s.DB.UpdateChatMessage(assistantID, answer, string(searchJSON), "done", traceJSON)
 	_, _ = response.Write([]byte("data: [DONE]\n\n"))
 	response.Flush()
 	return nil

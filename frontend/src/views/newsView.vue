@@ -25,6 +25,19 @@
           <v-divider class="my-3"></v-divider>
           <div v-if="summary" class="text-body-2 summary-text">{{ summary.summary }}</div>
           <div v-else class="text-caption text-medium-emphasis">No daily summary stored yet.</div>
+          <v-divider class="my-3"></v-divider>
+          <div class="metric-label mb-1">Sentiment trend (1 year)</div>
+          <line-chart
+            v-if="sentimentPoints.length"
+            :points="sentimentPoints"
+            kind="area"
+            color="#26a69a"
+            suffix="%"
+            :decimals="1"
+            :height="140"
+            :zero-line="true"
+          />
+          <div v-else class="text-caption text-medium-emphasis">No sentiment history yet.</div>
         </div>
       </v-col>
       <v-col cols="12" lg="8">
@@ -46,17 +59,19 @@
 
 <script>
 import NewsFeed from '../components/newsFeed.vue'
+import LineChart from '../components/lineChart.vue'
 import { apiGet, apiSend } from '../utils/api'
 
 export default {
   name: 'NewsView',
-  components: { NewsFeed },
+  components: { NewsFeed, LineChart },
   data() {
     return {
       news: [],
       sentiment: 0,
       sentimentCount: 0,
       summary: null,
+      sentimentHistory: [],
       loading: false,
       loadingMore: false,
       generating: false,
@@ -79,6 +94,9 @@ export default {
       if (this.sentiment < -0.2) return 'error'
       return 'medium-emphasis'
     },
+    sentimentPoints() {
+      return this.sentimentHistory.map((point) => ({ time: point.timestamp, value: point.sentiment * 100 }))
+    },
   },
   mounted() {
     this.load()
@@ -88,12 +106,14 @@ export default {
       this.loading = true
       this.error = ''
       try {
-        const [news, sentiment] = await Promise.all([
+        const [news, sentiment, history] = await Promise.all([
           apiGet(`/api/portfolio/news?limit=${this.limit}&offset=0`),
           apiGet('/api/portfolio/sentiment'),
+          apiGet('/api/portfolio/sentiment_history?interval=1d').catch(() => []),
           this.loadSummary(),
         ])
         this.news = news || []
+        this.sentimentHistory = history || []
         this.sentiment = sentiment.average_sentiment || 0
         this.sentimentCount = sentiment.news_count || 0
       } catch (err) {

@@ -4,6 +4,7 @@
 
     <template v-else>
       <v-app-bar flat density="compact" class="app-bar">
+        <v-app-bar-nav-icon v-if="isMobile" @click="drawer = !drawer"></v-app-bar-nav-icon>
         <v-app-bar-title class="text-body-1 font-weight-medium">
           <v-icon size="18" class="mr-2">mdi-chart-line</v-icon>Portfolio
         </v-app-bar-title>
@@ -23,7 +24,13 @@
         </v-btn>
       </v-app-bar>
 
-      <v-navigation-drawer v-model="drawer" rail :rail-width="72" class="nav-drawer">
+      <v-navigation-drawer
+        v-model="drawer"
+        :rail="!isMobile"
+        :temporary="isMobile"
+        :rail-width="72"
+        class="nav-drawer"
+      >
         <v-list nav density="compact">
           <v-list-item
             v-for="item in navigation"
@@ -33,25 +40,43 @@
             :value="item.value"
             :active="view === item.value"
             class="nav-item"
-            @click="view = item.value"
+            @click="selectView(item.value)"
           ></v-list-item>
         </v-list>
       </v-navigation-drawer>
 
       <v-main class="app-main">
-        <v-container fluid class="pa-4 pa-md-6">
-          <dashboard-view v-if="view === 'dashboard'" :currency="homeCurrency" />
+        <v-container fluid class="pa-3 pa-md-6 pb-16 pb-md-6">
+          <dashboard-view v-if="view === 'dashboard'" :currency="homeCurrency" @navigate="selectView" />
           <holdings-view v-else-if="view === 'holdings'" :currency="homeCurrency" />
           <news-view v-else-if="view === 'news'" />
-          <allocation-view v-else-if="view === 'allocation'" />
+          <allocation-view v-else-if="view === 'allocation'" :currency="homeCurrency" />
           <statistics-view v-else-if="view === 'statistics'" :currency="homeCurrency" />
           <trading-viewer v-else-if="view === 'trading'" />
           <running-summary-view v-else-if="view === 'summary'" :auth-token="token" />
           <expenses-view v-else-if="view === 'expenses'" />
           <chat-view v-else-if="view === 'chat'" />
+          <articles-view v-else-if="view === 'articles'" />
           <situation-view v-else-if="view === 'situations'" />
         </v-container>
       </v-main>
+
+      <v-bottom-navigation
+        v-if="isMobile"
+        :model-value="view"
+        grow
+        color="primary"
+        bg-color="#1a1a1a"
+        class="bottom-nav"
+        @update:model-value="onBottomNav"
+      >
+        <v-btn v-for="item in mobileNavigation" :key="item.value" :value="item.value" size="small">
+          <v-icon size="20">{{ item.icon }}</v-icon>
+        </v-btn>
+        <v-btn value="more" size="small">
+          <v-icon size="20">mdi-dots-grid</v-icon>
+        </v-btn>
+      </v-bottom-navigation>
     </template>
   </v-app>
 </template>
@@ -68,6 +93,7 @@ import HoldingsView from './views/holdingsView.vue'
 import NewsView from './views/newsView.vue'
 import AllocationView from './views/allocationView.vue'
 import StatisticsView from './views/statisticsView.vue'
+import ArticlesView from './views/articlesView.vue'
 import { authToken, clearAuth, getCookie } from './utils/api'
 
 export default {
@@ -84,6 +110,7 @@ export default {
     NewsView,
     AllocationView,
     StatisticsView,
+    ArticlesView,
   },
   data() {
     return {
@@ -92,8 +119,8 @@ export default {
       email: getCookie('user_email') || '',
       homeCurrency: localStorage.getItem('homeCurrency') || 'EUR',
       currencies: ['EUR', 'USD', 'CHF', 'GBP'],
-      drawer: true,
-      view: 'dashboard',
+      drawer: !this.isMobileViewport(),
+      view: localStorage.getItem('lastView') || 'dashboard',
       navigation: [
         { value: 'dashboard', title: 'Dashboard', icon: 'mdi-view-dashboard-outline' },
         { value: 'holdings', title: 'Holdings', icon: 'mdi-briefcase-outline' },
@@ -103,12 +130,42 @@ export default {
         { value: 'trading', title: 'Trading View', icon: 'mdi-candlestick' },
         { value: 'summary', title: 'Summary', icon: 'mdi-text-box-outline' },
         { value: 'expenses', title: 'Expenses', icon: 'mdi-wallet-outline' },
+        { value: 'articles', title: 'Articles', icon: 'mdi-database-search-outline' },
         { value: 'chat', title: 'Chat', icon: 'mdi-message-text-outline' },
         { value: 'situations', title: 'Situations', icon: 'mdi-earth' },
       ],
     }
   },
+  computed: {
+    isMobile() {
+      return this.$vuetify.display.mobile
+    },
+    mobileNavigation() {
+      const keep = ['dashboard', 'holdings', 'news', 'chat']
+      return this.navigation.filter((item) => keep.includes(item.value))
+    },
+  },
+  watch: {
+    isMobile(mobile) {
+      this.drawer = !mobile
+    },
+  },
   methods: {
+    isMobileViewport() {
+      return typeof window !== 'undefined' && window.innerWidth < 960
+    },
+    selectView(value) {
+      this.view = value
+      localStorage.setItem('lastView', value)
+      if (this.isMobile) this.drawer = false
+    },
+    onBottomNav(value) {
+      if (value === 'more') {
+        this.drawer = true
+        return
+      }
+      this.selectView(value)
+    },
     persistCurrency(value) {
       localStorage.setItem('homeCurrency', value)
     },
@@ -149,6 +206,11 @@ export default {
 
 .app-main {
   background: #121212;
+  min-height: 100vh;
+}
+
+.bottom-nav {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .metric-label {
@@ -168,5 +230,11 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   background: #1a1a1a;
+}
+
+@media (max-width: 600px) {
+  .metric-value {
+    font-size: 18px;
+  }
 }
 </style>

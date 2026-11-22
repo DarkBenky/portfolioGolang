@@ -177,4 +177,115 @@ register({
   }
 })
 
-export { register, compute, list }
+// Bollinger Bands: middle is the simple average, bands are a standard deviation away.
+function bollinger(candles, period, mult) {
+  const upper = [], middle = [], lower = []
+  for (let i = period - 1; i < candles.length; i++) {
+    let sum = 0
+    for (let j = i - period + 1; j <= i; j++) sum += candles[j].close
+    const mean = sum / period
+    let variance = 0
+    for (let j = i - period + 1; j <= i; j++) variance += (candles[j].close - mean) ** 2
+    const deviation = Math.sqrt(variance / period)
+    upper.push({ time: candles[i].time, value: mean + mult * deviation })
+    middle.push({ time: candles[i].time, value: mean })
+    lower.push({ time: candles[i].time, value: mean - mult * deviation })
+  }
+  return { upper, middle, lower }
+}
+
+register({
+  id: 'BOLL_UP',
+  label: 'Bollinger upper',
+  color: '#5c6bc0',
+  defaultParams: { period: 20, mult: 2 },
+  compute(candles, params) { return bollinger(candles, params.period, params.mult).upper }
+})
+
+register({
+  id: 'BOLL_LOW',
+  label: 'Bollinger lower',
+  color: '#5c6bc0',
+  defaultParams: { period: 20, mult: 2 },
+  compute(candles, params) { return bollinger(candles, params.period, params.mult).lower }
+})
+
+// Donchian channel: highest high and lowest low of the window.
+register({
+  id: 'DON_UP',
+  label: 'Donchian high',
+  color: '#78909c',
+  defaultParams: { period: 20 },
+  compute(candles, { period }) {
+    const result = []
+    for (let i = period - 1; i < candles.length; i++) {
+      let high = -Infinity
+      for (let j = i - period + 1; j <= i; j++) high = Math.max(high, candles[j].high)
+      result.push({ time: candles[i].time, value: high })
+    }
+    return result
+  }
+})
+
+register({
+  id: 'DON_LOW',
+  label: 'Donchian low',
+  color: '#78909c',
+  defaultParams: { period: 20 },
+  compute(candles, { period }) {
+    const result = []
+    for (let i = period - 1; i < candles.length; i++) {
+      let low = Infinity
+      for (let j = i - period + 1; j <= i; j++) low = Math.min(low, candles[j].low)
+      result.push({ time: candles[i].time, value: low })
+    }
+    return result
+  }
+})
+
+// Volume profile over the loaded window: the price levels where the most volume
+// traded, plus the 70 percent value area around the point of control.
+function volumeProfile(candles, levels = 40) {
+  if (!candles.length) return null
+  let high = -Infinity
+  let low = Infinity
+  for (const candle of candles) {
+    high = Math.max(high, candle.high)
+    low = Math.min(low, candle.low)
+  }
+  if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low) return null
+  const buckets = new Float64Array(levels)
+  const step = (high - low) / levels
+  for (const candle of candles) {
+    const volume = candle.volume || 1
+    const first = Math.max(0, Math.floor((candle.low - low) / step))
+    const last = Math.min(levels - 1, Math.floor((candle.high - low) / step))
+    const span = last - first + 1
+    for (let i = first; i <= last; i++) buckets[i] += volume / span
+  }
+  let pocIndex = 0
+  let total = 0
+  for (let i = 0; i < levels; i++) {
+    total += buckets[i]
+    if (buckets[i] > buckets[pocIndex]) pocIndex = i
+  }
+  let lower = pocIndex
+  let upper = pocIndex
+  let covered = buckets[pocIndex]
+  while (covered < total * 0.7 && (lower > 0 || upper < levels - 1)) {
+    const below = lower > 0 ? buckets[lower - 1] : -1
+    const above = upper < levels - 1 ? buckets[upper + 1] : -1
+    if (above >= below) {
+      upper++
+      covered += Math.max(above, 0)
+    } else {
+      lower--
+      covered += Math.max(below, 0)
+    }
+  }
+  const price = (index) => low + (index + 0.5) * step
+  return { poc: price(pocIndex), vah: price(upper), val: price(lower) }
+}
+
+export { register, compute, list, volumeProfile }
+

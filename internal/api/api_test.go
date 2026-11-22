@@ -52,7 +52,7 @@ func newHarness(t testing.TB) *harness {
 		t.Fatalf("prices: %v", err)
 	}
 	marketClient := market.NewClient()
-	llmClient := llm.New("", "test-chat", "test-cheap", "", db, 0)
+	llmClient := llm.New("", "test-chat", "test-chat", "test-cheap", "", db, 0)
 	indexer := rag.New(db, llmClient, marketClient, false)
 	chatService := chat.New(llmClient, db, marketClient, priceStore, indexer)
 	manager := jobs.New(db, priceStore, marketClient, llmClient, indexer, jobs.Settings{

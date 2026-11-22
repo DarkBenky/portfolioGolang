@@ -33,8 +33,12 @@ type ToolCallFunction struct {
 }
 
 type reasoning struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool   `json:"enabled"`
+	Effort  string `json:"effort,omitempty"`
 }
+
+// Handlers receives the two output streams of a chat request. Reasoning is kept
+// separate from the answer so the UI can render it collapsed.
 
 type request struct {
 	Model       string     `json:"model"`
@@ -65,9 +69,11 @@ type response struct {
 
 type Completion struct {
 	Content          string
+	Reasoning        string
 	ToolCalls        []ToolCall
 	PromptTokens     int
 	CompletionTokens int
+	CachedTokens     int
 	CostUSD          float64
 	Model            string
 	FinishReason     string
@@ -88,7 +94,9 @@ const (
 func (k Kind) maxTokens() int {
 	switch k {
 	case KindChat:
-		return 1200
+		// Reasoning tokens are drawn from the same budget, so the cap must leave
+		// room for both the thinking and the answer.
+		return 2500
 	case KindSituation:
 		return 2600
 	case KindRunningSummary:
@@ -108,6 +116,12 @@ func (k Kind) useCheapModel() bool {
 	return k == KindClassify || k == KindDailySummary
 }
 
+// useReasoning enables thinking output for the interactive assistant only. Summary
+// and report jobs stay deterministic and cheap.
+func (k Kind) useReasoning() bool {
+	return k == KindChat
+}
+
 var ErrBudgetExceeded = errors.New("llm: daily spend budget reached")
 
 type Usage struct {
@@ -117,8 +131,16 @@ type Usage struct {
 	Model            string
 }
 
+// Handlers receives the two output streams of a chat request. Reasoning is kept
+// separate from the answer so the UI can render it collapsed.
+type Handlers struct {
+	OnDelta     func(string)
+	OnReasoning func(string)
+}
+
 type streamDelta struct {
 	Content   string `json:"content"`
+	Reasoning string `json:"reasoning"`
 	ToolCalls []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id"`
@@ -135,9 +157,12 @@ type streamChunk struct {
 		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int     `json:"prompt_tokens"`
-		CompletionTokens int     `json:"completion_tokens"`
-		Cost             float64 `json:"cost"`
+		PromptTokens        int     `json:"prompt_tokens"`
+		CompletionTokens    int     `json:"completion_tokens"`
+		Cost                float64 `json:"cost"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`

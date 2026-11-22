@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"math"
+	"sort"
 	"time"
 )
 
@@ -240,4 +241,103 @@ func MonthlyExtremes(timestamps []int64, values []float64) (best float64, bestLa
 func Round(value float64, decimals int) float64 {
 	factor := math.Pow(10, float64(decimals))
 	return math.Round(value*factor) / factor
+}
+
+// Correlation returns the Pearson coefficient of two aligned return series.
+func Correlation(a []float64, b []float64) float64 {
+	n := min(len(a), len(b))
+	if n < 2 {
+		return 0
+	}
+	var sumA, sumB float64
+	for i := 0; i < n; i++ {
+		sumA += a[i]
+		sumB += b[i]
+	}
+	meanA, meanB := sumA/float64(n), sumB/float64(n)
+	var covariance, varianceA, varianceB float64
+	for i := 0; i < n; i++ {
+		diffA, diffB := a[i]-meanA, b[i]-meanB
+		covariance += diffA * diffB
+		varianceA += diffA * diffA
+		varianceB += diffB * diffB
+	}
+	if varianceA == 0 || varianceB == 0 {
+		return 0
+	}
+	return covariance / math.Sqrt(varianceA*varianceB)
+}
+
+// Percentile returns the value at the given quantile (0..1) of a copy of the input.
+func Percentile(values []float64, quantile float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	if quantile < 0 {
+		quantile = 0
+	}
+	if quantile > 1 {
+		quantile = 1
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	index := int(math.Round(quantile * float64(len(sorted)-1)))
+	return sorted[index]
+}
+
+type MonthReturn struct {
+	Label  string
+	Return float64
+}
+
+// MonthlyReturns computes the return of every calendar month covered by the series.
+func MonthlyReturns(timestamps []int64, values []float64) []MonthReturn {
+	type monthValue struct {
+		first float64
+		last  float64
+	}
+	months := map[string]*monthValue{}
+	order := make([]string, 0, 64)
+	n := min(len(timestamps), len(values))
+	for i := 0; i < n; i++ {
+		label := time.Unix(timestamps[i], 0).UTC().Format("2006-01")
+		entry, ok := months[label]
+		if !ok {
+			entry = &monthValue{first: values[i]}
+			months[label] = entry
+			order = append(order, label)
+		}
+		entry.last = values[i]
+	}
+	result := make([]MonthReturn, 0, len(order))
+	for _, label := range order {
+		entry := months[label]
+		if entry.first == 0 {
+			continue
+		}
+		result = append(result, MonthReturn{Label: label, Return: (entry.last - entry.first) / entry.first * 100})
+	}
+	return result
+}
+
+// DrawdownSeries walks the value curve and reports the distance from its running peak.
+func DrawdownSeries(timestamps []int64, values []float64) ([]int64, []float64) {
+	n := min(len(timestamps), len(values))
+	if n == 0 {
+		return nil, nil
+	}
+	times := make([]int64, 0, n)
+	drawdowns := make([]float64, 0, n)
+	peak := values[0]
+	for i := 0; i < n; i++ {
+		if values[i] > peak {
+			peak = values[i]
+		}
+		if peak <= 0 {
+			continue
+		}
+		times = append(times, timestamps[i])
+		drawdowns = append(drawdowns, -(peak-values[i])/peak*100)
+	}
+	return times, drawdowns
 }

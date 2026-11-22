@@ -23,6 +23,7 @@ type Config struct {
 	OpenRouterKey string
 
 	ChatModel         string
+	SessionModel      string
 	CheapModel        string
 	EmbeddingModel    string
 	LLMDailyBudgetUSD float64
@@ -55,6 +56,7 @@ func Load() Config {
 		PriceDBPath:          envOr("PRICE_DB_PATH", "./prices.duckdb"),
 		OpenRouterKey:        os.Getenv("OPENROUTER_API_KEY"),
 		ChatModel:            envOr("OPENROUTER_MODEL", "qwen/qwen3.7-flash"),
+		SessionModel:         envOr("OPENROUTER_CHAT_MODEL", "tencent/hy4-flash"),
 		CheapModel:           envOr("OPENROUTER_CHEAP_MODEL", "inclusionai/ling-3.0-flash"),
 		EmbeddingModel:       envOr("OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small"),
 		LLMDailyBudgetUSD:    envFloat("LLM_DAILY_BUDGET_USD", 0),
