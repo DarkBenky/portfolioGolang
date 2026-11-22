@@ -1,5 +1,5 @@
 <template>
-  <div class="donut">
+  <div class="donut" :style="{ '--legend-max': legendMaxHeight ? legendMaxHeight + 'px' : 'none' }">
     <div class="donut-graphic" :style="{ width: size + 'px', height: size + 'px' }">
       <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`">
         <circle
@@ -49,6 +49,14 @@
 const palette = ['#26a69a', '#2196f3', '#ff9800', '#ab47bc', '#ef5350', '#42a5f5',
   '#ffca28', '#66bb6a', '#8d6e63', '#78909c']
 
+// Long lists (a portfolio can hold 100+ companies) need more colours than the
+// hand-picked palette. Golden angle hues keep neighbours apart.
+function sliceColor(index) {
+  if (index < palette.length) return palette[index]
+  const hue = (index * 137.508) % 360
+  return `hsl(${hue.toFixed(0)}, 62%, ${index % 2 ? 62 : 46}%)`
+}
+
 export default {
   name: 'DonutChart',
   props: {
@@ -59,7 +67,8 @@ export default {
     centerValue: { type: String, default: '' },
     showLegend: { type: Boolean, default: true },
     legendBars: { type: Boolean, default: true },
-    maxSlices: { type: Number, default: 7 },
+    legendMaxHeight: { type: Number, default: 0 },
+    maxSlices: { type: Number, default: 0 },
   },
   computed: {
     radius() {
@@ -74,15 +83,16 @@ export default {
         .filter((item) => item.value > 0)
         .sort((a, b) => b.value - a.value)
       if (!sorted.length) return []
-      const visible = sorted.slice(0, this.maxSlices)
-      const rest = sorted.slice(this.maxSlices)
+      const limit = this.maxSlices > 0 ? this.maxSlices : sorted.length
+      const visible = sorted.slice(0, limit)
+      const rest = sorted.slice(limit)
       if (rest.length) {
         visible.push({ name: 'Remaining', value: rest.reduce((sum, item) => sum + item.value, 0) })
       }
       let offset = 0
       return visible.map((item, index) => {
         const length = (item.value / 100) * this.circumference
-        const slice = { ...item, color: palette[index % palette.length], length, offset }
+        const slice = { ...item, color: sliceColor(index), length, offset }
         offset += length
         return slice
       })
@@ -129,6 +139,8 @@ export default {
 .donut-legend {
   flex: 1;
   min-width: 130px;
+  max-height: var(--legend-max, none);
+  overflow-y: auto;
 }
 
 .legend-row {

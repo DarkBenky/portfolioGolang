@@ -226,10 +226,13 @@ export default {
             type: 'volume'
           },
           priceScaleId: 'volume',
-          scaleMargins: {
-            top: 0.93,
-            bottom: 0
-          }
+          priceLineVisible: false,
+          lastValueVisible: false
+        })
+        // The volume overlay scale needs its margins applied on the scale
+        // itself, otherwise it stretches over the whole pane and hides prices.
+        chart.priceScale('volume').applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 }
         })
       }
 
@@ -359,6 +362,9 @@ export default {
         priceScaleId: options.priceScaleId || 'volume',
         ...options
       })
+
+      const scale = chart.priceScale(options.priceScaleId || 'volume')
+      if (scale) scale.applyOptions({ scaleMargins: options.scaleMargins || { top: 0.82, bottom: 0 } })
       
       additionalSeries.value.push(series)
       return series

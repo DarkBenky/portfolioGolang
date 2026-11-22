@@ -72,7 +72,7 @@
             :items="group.items"
             :size="120"
             :thickness="16"
-            :max-slices="6"
+            :legend-max-height="200"
             :center-label="group.short"
             :center-value="group.top.toFixed(0) + '%'"
           />
@@ -208,7 +208,7 @@
             <span class="text-body-2" :class="`text-${changeColor(bank.net)}`">{{ money(bank.net) }}</span>
           </div>
           <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">Spent this month</span>
+            <span class="text-caption text-medium-emphasis">{{ monthSpendLabel }}</span>
             <span class="text-body-2">{{ money(monthSpend) }}</span>
           </div>
           <div class="snapshot-row">
@@ -267,7 +267,6 @@ export default {
       risk: {},
       stats: {},
       bank: {},
-      monthlyExpenses: {},
       summary: null,
       loading: false,
       summaryGenerating: false,
@@ -342,8 +341,24 @@ export default {
       return 'grey'
     },
     monthSpend() {
-      const month = new Date().toISOString().slice(0, 7)
-      return Number(this.monthlyExpenses[month]) || 0
+      const months = this.bank.by_month || {}
+      const keys = Object.keys(months).sort()
+      if (!keys.length) return 0
+      const current = new Date().toISOString().slice(0, 7)
+      // Statements are imported at the turn of the month, so the current month is
+      // usually still empty. Fall back to the newest imported month.
+      const key = months[current] !== undefined ? current : keys[keys.length - 1]
+      return Number(months[key]) || 0
+    },
+    monthSpendLabel() {
+      const months = this.bank.by_month || {}
+      const keys = Object.keys(months).sort()
+      const current = new Date().toISOString().slice(0, 7)
+      if (!keys.length || months[current] !== undefined) return 'Spent this month'
+      const [year, month] = keys[keys.length - 1].split('-')
+      const name = new Date(Number(year), Number(month) - 1, 1)
+        .toLocaleString('en', { month: 'short' })
+      return `Spent in ${name} ${year}`
     },
     savingsRate() {
       const income = Number(this.bank.total_in) || 0
@@ -410,7 +425,7 @@ export default {
       const query = `?currency=${this.currency}`
       try {
         const [value, holdings, sentiment, gainers, losers, allocation, risk, stats, news, bank,
-          monthlyExpenses, overview] = await Promise.all([
+          overview] = await Promise.all([
           apiGet(`/api/portfolio/change${query}`),
           apiGet(`/api/portfolio/holdings${query}`),
           apiGet('/api/portfolio/sentiment'),
@@ -421,7 +436,6 @@ export default {
           apiGet(`/api/portfolio/stats${query}`),
           apiGet('/api/portfolio/news?limit=5').catch(() => []),
           apiGet('/api/bank/stats').catch(() => ({})),
-          apiGet('/api/expenses/stats/monthly').catch(() => ({})),
           apiGet('/api/portfolio/daily_sentiment?date=' + new Date().toISOString().slice(0, 10))
             .catch(() => null),
         ])
@@ -436,7 +450,6 @@ export default {
         this.stats = stats || {}
         this.news = news || []
         this.bank = bank || {}
-        this.monthlyExpenses = monthlyExpenses || {}
         this.summary = { ...(overview || {}), running: (await this.runningSummary()) }
         await this.loadChart()
       } catch (err) {

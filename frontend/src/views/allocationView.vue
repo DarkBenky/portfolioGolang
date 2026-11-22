@@ -25,7 +25,7 @@
             :items="section.items"
             :size="132"
             :thickness="18"
-            :max-slices="7"
+            :legend-max-height="240"
             :center-label="section.short"
             :center-value="section.top.toFixed(0) + '%'"
           />

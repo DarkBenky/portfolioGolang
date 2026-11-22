@@ -137,7 +137,7 @@ export default {
         { value: 'news', title: 'News', icon: 'mdi-newspaper' },
         { value: 'allocation', title: 'Allocation', icon: 'mdi-chart-donut' },
         { value: 'statistics', title: 'Statistics', icon: 'mdi-chart-box-outline' },
-        { value: 'trading', title: 'Trading View', icon: 'mdi-candlestick' },
+        { value: 'trading', title: 'Trading View', icon: 'mdi-finance' },
         { value: 'summary', title: 'Summary', icon: 'mdi-text-box-outline' },
         { value: 'expenses', title: 'Expenses', icon: 'mdi-wallet-outline' },
         { value: 'articles', title: 'Articles', icon: 'mdi-database-search-outline' },
