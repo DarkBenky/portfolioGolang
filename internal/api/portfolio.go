@@ -439,10 +439,7 @@ func (s *Server) underlyingTickers(holding store.Holding) []string {
 
 func (s *Server) getPortfolioNews(c echo.Context) error {
 	limit := queryInt(c, "limit", 10)
-	offset := queryInt(c, "offset", 0) - 1
-	if offset < 0 {
-		offset = 0
-	}
+	offset := queryOffset(c)
 	tickers, holdings, err := s.portfolioTickers(s.userID(c))
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Error retrieving holdings")
@@ -884,7 +881,7 @@ func (s *Server) generateNewsSummary(c echo.Context) error {
 		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "Please wait before generating another summary", "retry_after_min": retry/60 + 1})
 	}
 	date := store.Today()
-	if err := s.Jobs.UpdatePortfolioSentiment(userID, date); err != nil {
+	if err := s.Jobs.RegeneratePortfolioSentiment(userID, date); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate summary"})
 	}
 	sentiment, err := s.DB.GetPortfolioSentiment(userID, date)
@@ -903,7 +900,7 @@ func (s *Server) generateHoldingSummary(c echo.Context) error {
 	if ok, retry := s.allow("ticker-summary:"+ticker, 15*time.Minute); !ok {
 		return c.JSON(http.StatusTooManyRequests, map[string]any{"error": "Please wait before generating another summary", "retry_after_min": retry/60 + 1})
 	}
-	if err := s.Jobs.UpdateTickerSentiment(ticker); err != nil {
+	if err := s.Jobs.RegenerateTickerSentiment(ticker); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate summary"})
 	}
 	sentiment, err := s.DB.GetDailySentiment(ticker, store.Today())

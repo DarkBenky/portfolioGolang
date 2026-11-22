@@ -49,6 +49,10 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 	}
 	history, err := s.db.CompactChatHistory(conversationID, historyKeep)
 	if err == nil {
+		// The question is saved before the stream starts, so drop the trailing copy.
+		if n := len(history); n > 0 && history[n-1].Role == "user" && history[n-1].Content == question {
+			history = history[:n-1]
+		}
 		for _, message := range history {
 			if message.Role == "user" || (message.Role == "assistant" && message.Status == "done") {
 				messages = append(messages, llm.Message{Role: message.Role, Content: llm.Truncate(message.Content, 2000)})

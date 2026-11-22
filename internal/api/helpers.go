@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"strconv"
 	"time"
+
+	"github.com/labstack/echo/v4"
 
 	"portfolio/internal/prices"
 )
@@ -62,6 +65,14 @@ func intervalBucketFor(interval string) intervalBucket {
 	default:
 		return intervalBucket{seconds: 86400}
 	}
+}
+
+func queryOffset(c echo.Context) int {
+	value, err := strconv.Atoi(c.QueryParam("offset"))
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }
 
 func defaultQuery(c interface{ QueryParam(string) string }, name string, fallback string) string {

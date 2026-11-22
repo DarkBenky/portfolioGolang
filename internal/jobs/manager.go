@@ -250,13 +250,15 @@ func (m *Manager) FetchNews(sourceTicker string, storeAs string, limit int) erro
 	assets, _ := m.DB.GetAssetsByTicker(storeAs)
 	holdings, _ := m.DB.GetHoldingsByTicker(storeAs)
 	for _, item := range items {
+		if exists, err := m.DB.NewsExists(item.Title, item.Summary, ""); err == nil && exists {
+			continue
+		}
 		text := m.Market.ArticleText(item.URL)
 		summary := item.Summary
 		if summary == "" {
 			summary = llm.Truncate(text, 400)
 		}
-		exists, err := m.DB.NewsExists(item.Title, summary, llm.Truncate(text, 500))
-		if err != nil || exists {
+		if exists, err := m.DB.NewsExists(item.Title, summary, llm.Truncate(text, 500)); err == nil && exists {
 			continue
 		}
 		title := item.Title
@@ -371,13 +373,24 @@ func (m *Manager) UpdateAllSentiments() {
 	}
 }
 
-// UpdateTickerSentiment writes one row per ticker per day. Existing rows are reused
-// unless the day gained news, which keeps repeat runs free.
+// UpdateTickerSentiment skips tickers that already have today's summary, which makes
+// the scheduled run free.
 func (m *Manager) UpdateTickerSentiment(ticker string) error {
+	return m.updateTickerSentiment(ticker, false)
+}
+
+// RegenerateTickerSentiment forces a new summary for the manual button.
+func (m *Manager) RegenerateTickerSentiment(ticker string) error {
+	return m.updateTickerSentiment(ticker, true)
+}
+
+func (m *Manager) updateTickerSentiment(ticker string, force bool) error {
 	today := store.Today()
-	existing, err := m.DB.GetDailySentiment(ticker, today)
-	if err == nil && existing != nil && existing.Summary != "" {
-		return nil
+	if !force {
+		existing, err := m.DB.GetDailySentiment(ticker, today)
+		if err == nil && existing != nil && existing.Summary != "" {
+			return nil
+		}
 	}
 	items, err := m.DB.NewsForTickerToday(ticker, today)
 	if err != nil {
@@ -408,9 +421,19 @@ func (m *Manager) UpdateTickerSentiment(ticker string) error {
 }
 
 func (m *Manager) UpdatePortfolioSentiment(userID string, date string) error {
-	existing, err := m.DB.GetPortfolioSentiment(userID, date)
-	if err == nil && existing != nil && existing.Summary != "" {
-		return nil
+	return m.updatePortfolioSentiment(userID, date, false)
+}
+
+func (m *Manager) RegeneratePortfolioSentiment(userID string, date string) error {
+	return m.updatePortfolioSentiment(userID, date, true)
+}
+
+func (m *Manager) updatePortfolioSentiment(userID string, date string, force bool) error {
+	if !force {
+		existing, err := m.DB.GetPortfolioSentiment(userID, date)
+		if err == nil && existing != nil && existing.Summary != "" {
+			return nil
+		}
 	}
 	holdings, err := m.DB.GetHoldingsByUser(userID)
 	if err != nil {
@@ -496,9 +519,31 @@ func (m *Manager) UpdateRunningSummary(userID string, windowDays int) error {
 }
 
 func (m *Manager) RefreshAssetDetails() {
-	tickers, err := m.DB.UniqueTickers()
+	seen := map[string]bool{}
+	var tickers []string
+	add := func(ticker string) {
+		if ticker == "" || seen[ticker] {
+			return
+		}
+		seen[ticker] = true
+		tickers = append(tickers, ticker)
+	}
+	holdings, _ := m.DB.GetAllETFHoldings()
+	for _, holding := range holdings {
+		assets, err := m.DB.GetAssetsForHolding(holding.IDHolding)
+		if err != nil {
+			continue
+		}
+		for _, asset := range assets {
+			add(asset.Ticker)
+		}
+	}
+	unique, err := m.DB.UniqueTickers()
 	if err != nil {
 		return
+	}
+	for _, ticker := range unique {
+		add(ticker)
 	}
 	for _, ticker := range tickers {
 		if err := m.UpdateAssetDetails(ticker); err != nil {

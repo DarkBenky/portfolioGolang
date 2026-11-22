@@ -34,12 +34,17 @@ func (s *Server) search(c echo.Context) error {
 	}
 
 	if searchType == "isin" {
+		if found, err := s.Market.TickerSearch(identifier, 5); err == nil && len(found) > 0 {
+			quotes := make([]quoteResult, 0, len(found))
+			for _, quote := range found {
+				quotes = append(quotes, quoteResult{Ticker: quote.Ticker, Name: quote.Name,
+					Exchange: quote.Exchange, ISIN: identifier, Currency: quote.Currency,
+					Type: quote.Type, Price: quote.Price})
+			}
+			return c.JSON(http.StatusOK, quotes)
+		}
 		quotes := make([]quoteResult, 0, 1)
-		details, err := s.Market.Details(identifier, identifier)
-		if err == nil && details != nil {
-			quotes = append(quotes, quoteResult{Ticker: details.Ticker, Name: details.Ticker,
-				ISIN: identifier, Type: "ETF"})
-		} else if ticker := s.Market.ISINToTicker(identifier); ticker != "" {
+		if ticker := s.Market.ISINToTicker(identifier); ticker != "" {
 			quotes = append(quotes, quoteResult{Ticker: ticker, Name: ticker, ISIN: identifier})
 		}
 		return c.JSON(http.StatusOK, quotes)
@@ -206,10 +211,7 @@ func (s *Server) getAssetChange(c echo.Context) error {
 
 func (s *Server) getAssetNews(c echo.Context) error {
 	limit := queryInt(c, "limit", 10)
-	offset := queryInt(c, "offset", 0) - 1
-	if offset < 0 {
-		offset = 0
-	}
+	offset := queryOffset(c)
 	identifier := c.QueryParam("ticker")
 	ticker := s.Market.ResolveTicker(identifier)
 	tickers := []string{ticker}
