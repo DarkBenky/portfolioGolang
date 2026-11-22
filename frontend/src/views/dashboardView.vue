@@ -15,21 +15,22 @@
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>
     <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3">{{ error }}</v-alert>
 
-    <div class="panel pa-3 pa-md-4 mb-2">
-      <div class="headline-grid">
-        <div v-for="item in headline" :key="item.label" class="headline-cell">
-          <div class="metric-label">{{ item.label }}</div>
-          <div class="headline-value" :class="item.color">{{ item.value }}</div>
-          <div class="text-caption" :class="item.hintColor || 'text-medium-emphasis'">{{ item.hint }}</div>
-        </div>
+    <div class="metric-grid mb-1">
+      <div v-for="item in metrics" :key="item.label" class="panel pa-3 metric-cell">
+        <div class="metric-label">{{ item.label }}</div>
+        <div class="metric-value" :class="item.color">{{ item.value }}</div>
+        <div class="text-caption" :class="item.hintColor || 'text-medium-emphasis'">{{ item.hint }}</div>
       </div>
-      <v-divider class="my-3"></v-divider>
-      <div class="inline-grid">
-        <div v-for="item in inline" :key="item.label" class="inline-cell">
-          <span class="text-caption text-medium-emphasis">{{ item.label }}</span>
-          <span class="text-body-2" :class="item.color">{{ item.value }}</span>
-        </div>
-      </div>
+    </div>
+    <div class="d-flex flex-wrap ga-4 text-caption text-medium-emphasis mb-2 px-1">
+      <span>Cost basis <span class="text-high-emphasis">{{ money(stats.total_cost) }}</span></span>
+      <span>Positions <span class="text-high-emphasis">{{ holdings.length }}</span></span>
+      <span>Volatility <span class="text-high-emphasis">{{ (risk.volatility || 0).toFixed(1) }}%</span></span>
+      <span>Sharpe <span class="text-high-emphasis">{{ (risk.sharpe || 0).toFixed(2) }}</span></span>
+      <span>
+        vs {{ risk.benchmark || 'SPY' }}
+        <span :class="`text-${changeColor(risk.benchmark_return)}`">{{ percent(risk.benchmark_return) }}</span>
+      </span>
     </div>
 
     <div class="panel pa-3 mb-2">
@@ -84,7 +85,7 @@
     </v-row>
 
     <v-row dense class="mb-2">
-      <v-col cols="12" md="6">
+      <v-col cols="12" md="4">
         <div class="panel pa-3 h-100">
           <div class="d-flex align-center mb-2">
             <v-icon size="16" color="success" class="mr-2">mdi-trending-up</v-icon>
@@ -111,7 +112,7 @@
         </div>
       </v-col>
 
-      <v-col cols="12" md="6">
+      <v-col cols="12" md="4">
         <div class="panel pa-3 h-100">
           <div class="d-flex align-center mb-2">
             <v-icon size="16" color="error" class="mr-2">mdi-trending-down</v-icon>
@@ -134,6 +135,31 @@
           </div>
           <div v-if="!movers.losers.length" class="text-caption text-medium-emphasis py-4 text-center">
             No losers in the last session.
+          </div>
+        </div>
+      </v-col>
+
+      <v-col cols="12" md="4">
+        <div class="panel pa-3 h-100">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="metric-label">Latest news</span>
+            <v-btn size="x-small" variant="text" class="px-1" @click="$emit('navigate', 'news')">ALL</v-btn>
+          </div>
+          <div
+            v-for="item in news"
+            :key="item.id_news"
+            class="mover-row news-row"
+            @click="$emit('open-ticker', item.ticker)"
+          >
+            <div class="news-body">
+              <div class="news-title">{{ item.title }}</div>
+              <div class="text-caption text-medium-emphasis">
+                {{ item.ticker }} · {{ ago(item.published_at) }}
+              </div>
+            </div>
+          </div>
+          <div v-if="!news.length" class="text-caption text-medium-emphasis py-4 text-center">
+            No articles for your holdings yet.
           </div>
         </div>
       </v-col>
@@ -236,6 +262,7 @@ export default {
       sentimentCount: 0,
       gainers: [],
       losers: [],
+      news: [],
       allocation: { sectors: [], regions: [], companies: [] },
       risk: {},
       stats: {},
@@ -252,32 +279,22 @@ export default {
     chartHeight() {
       return this.$vuetify.display.mobile ? 260 : 360
     },
-    headline() {
+    metrics() {
       const stats = this.stats
-      return [
-        { label: 'Total value', value: this.money(stats.total_value),
-          hint: `${this.money(stats.total_gain_loss)} (${this.percent(stats.total_gain_loss_pct)})`,
-          hintColor: `text-${changeColor(stats.total_gain_loss_pct)}` },
-        { label: 'Today', value: this.money(this.value.day_change),
-          color: `text-${changeColor(this.value.day_change)}`,
-          hint: this.percent(this.value.day_change_percent),
-          hintColor: `text-${changeColor(this.value.day_change_percent)}` },
-        { label: 'YoY return', value: this.percent(stats.yoy_return),
-          color: `text-${changeColor(stats.yoy_return)}`, hint: 'annual performance' },
-        { label: 'Sortino', value: (stats.sortino_ratio || 0).toFixed(2),
-          hint: `max DD ${(stats.max_drawdown || 0).toFixed(1)}%` },
-      ]
-    },
-    inline() {
       const risk = this.risk
       return [
-        { label: 'Cost basis', value: this.money(this.stats.total_cost) },
-        { label: 'Aggregated TER', value: `${((this.stats.aggregated_ter || 0) * 100).toFixed(3)}%` },
-        { label: 'Positions', value: String(this.holdings.length) },
-        { label: 'Volatility', value: `${(risk.volatility || 0).toFixed(1)}%` },
-        { label: 'Sharpe', value: (risk.sharpe || 0).toFixed(2) },
-        { label: `vs ${risk.benchmark || 'SPY'}`, value: this.percent(risk.benchmark_return),
-          color: `text-${changeColor(risk.benchmark_return)}` },
+        { label: 'Total value', value: this.money(stats.total_value),
+          hint: `${this.money(stats.total_gain_loss)} total` },
+        { label: 'Gain', value: this.percent(stats.total_gain_loss_pct),
+          color: `text-${changeColor(stats.total_gain_loss_pct)}`, hint: 'since purchase' },
+        { label: 'YoY return', value: this.percent(stats.yoy_return),
+          color: `text-${changeColor(stats.yoy_return)}`, hint: 'annual performance' },
+        { label: 'Max drawdown', value: `${(stats.max_drawdown || 0).toFixed(1)}%`,
+          hint: 'worst peak to trough' },
+        { label: 'Sortino', value: (stats.sortino_ratio || 0).toFixed(2),
+          hint: `sharpe ${(risk.sharpe || 0).toFixed(2)}` },
+        { label: 'TER', value: `${((stats.aggregated_ter || 0) * 100).toFixed(2)}%`,
+          hint: 'weighted fund cost' },
       ]
     },
     allocationGroups() {
@@ -352,6 +369,15 @@ export default {
     percent(value) {
       return formatPercent(value)
     },
+    ago(timestamp) {
+      const seconds = parseInt(timestamp, 10)
+      if (!seconds) return ''
+      const minutes = Math.floor((Date.now() / 1000 - seconds) / 60)
+      if (minutes < 60) return `${Math.max(minutes, 1)}m ago`
+      const hours = Math.floor(minutes / 60)
+      if (hours < 24) return `${hours}h ago`
+      return `${Math.floor(hours / 24)}d ago`
+    },
     applyBreakEven() {
       const series = this.$refs.portfolioChart?.getCandleSeries?.()
       if (!series) return
@@ -383,7 +409,7 @@ export default {
       this.error = ''
       const query = `?currency=${this.currency}`
       try {
-        const [value, holdings, sentiment, gainers, losers, allocation, risk, stats, bank,
+        const [value, holdings, sentiment, gainers, losers, allocation, risk, stats, news, bank,
           monthlyExpenses, overview] = await Promise.all([
           apiGet(`/api/portfolio/change${query}`),
           apiGet(`/api/portfolio/holdings${query}`),
@@ -393,6 +419,7 @@ export default {
           apiGet('/api/portfolio/allocation'),
           apiGet('/api/portfolio/risk?period=1y'),
           apiGet(`/api/portfolio/stats${query}`),
+          apiGet('/api/portfolio/news?limit=5').catch(() => []),
           apiGet('/api/bank/stats').catch(() => ({})),
           apiGet('/api/expenses/stats/monthly').catch(() => ({})),
           apiGet('/api/portfolio/daily_sentiment?date=' + new Date().toISOString().slice(0, 10))
@@ -407,6 +434,7 @@ export default {
         this.allocation = allocation || { sectors: [], regions: [], companies: [] }
         this.risk = risk || {}
         this.stats = stats || {}
+        this.news = news || []
         this.bank = bank || {}
         this.monthlyExpenses = monthlyExpenses || {}
         this.summary = { ...(overview || {}), running: (await this.runningSummary()) }
@@ -442,34 +470,23 @@ export default {
 </script>
 
 <style scoped>
-.headline-grid {
+.metric-grid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
-.headline-cell {
+.metric-cell {
   min-width: 0;
 }
 
-.headline-value {
-  font-size: 22px;
+.metric-value {
+  font-size: 20px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.3;
   white-space: nowrap;
-}
-
-.inline-grid {
-  display: grid;
-  gap: 8px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-}
-
-.inline-cell {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mover-row {
@@ -497,6 +514,23 @@ export default {
   min-width: 0;
 }
 
+.news-row {
+  align-items: flex-start;
+}
+
+.news-body {
+  min-width: 0;
+}
+
+.news-title {
+  font-size: 13px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .snapshot-row {
   display: flex;
   align-items: center;
@@ -514,9 +548,19 @@ export default {
   overflow-y: auto;
 }
 
+@media (max-width: 900px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 600px) {
-  .headline-value {
-    font-size: 18px;
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-value {
+    font-size: 17px;
   }
 }
 </style>
