@@ -408,6 +408,20 @@ func (s *Server) getAssetDetails(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "Error retrieving asset details")
 	}
 	if latest == nil {
+		// Fundamentals are stored under the ISIN for stocks, so a ticker lookup falls
+		// back to the ISIN recorded on the holding.
+		if holdings, holdingErr := s.DB.GetHoldingsByTicker(ticker); holdingErr == nil {
+			for _, holding := range holdings {
+				if holding.ISIN == "" {
+					continue
+				}
+				if latest, err = s.DB.LatestAssetDetails(holding.ISIN); err == nil && latest != nil {
+					break
+				}
+			}
+		}
+	}
+	if latest == nil {
 		return c.JSON(http.StatusOK, nil)
 	}
 	return c.JSON(http.StatusOK, latest)

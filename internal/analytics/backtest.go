@@ -150,7 +150,10 @@ func Backtest(input Input) (*Result, error) {
 
 	portfolioReturns := DailyReturns(portfolioValues)
 	benchmarkReturns := DailyReturns(benchmarkValues)
-	years := math.Max(input.End.Sub(input.Start).Hours()/(24*365.25), 1.0/365.25)
+	// Annualize over the span the data actually covers, not the requested range: a
+	// benchmark that only has recent bars would otherwise report a far too low CAGR.
+	spanDays := float64(benchmark.Dates[len(benchmark.Dates)-1]-benchmark.Dates[0]) / 86400
+	years := math.Max(spanDays/365.25, 1.0/365.25)
 	lastPortfolio := portfolioValues[len(portfolioValues)-1]
 	lastBenchmark := benchmarkValues[len(benchmarkValues)-1]
 	cagrPortfolio := (math.Pow(lastPortfolio/100, 1/years) - 1) * 100
