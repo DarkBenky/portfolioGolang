@@ -24,13 +24,23 @@ func nullable(value string) any {
 }
 
 func (d *DB) NewsExists(title string, summary string, text string) (bool, error) {
-	var count int
-	var err error
-	if text != "" {
-		err = d.QueryRow(`SELECT COUNT(1) FROM news WHERE title = ? OR summary = ? OR text = ?`, title, summary, text).Scan(&count)
-	} else {
-		err = d.QueryRow(`SELECT COUNT(1) FROM news WHERE title = ? OR summary = ?`, title, summary).Scan(&count)
+	// Empty fields must not take part in the comparison: a Yahoo item without a
+	// summary would otherwise match every stored row that also has none and be
+	// silently dropped as a duplicate.
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	for _, field := range [][2]string{{"title", title}, {"summary", summary}, {"text", text}} {
+		if field[1] == "" {
+			continue
+		}
+		clauses = append(clauses, field[0]+" = ?")
+		args = append(args, field[1])
 	}
+	if len(clauses) == 0 {
+		return false, nil
+	}
+	var count int
+	err := d.QueryRow(`SELECT COUNT(1) FROM news WHERE `+strings.Join(clauses, " OR "), args...).Scan(&count)
 	return count > 0, err
 }
 

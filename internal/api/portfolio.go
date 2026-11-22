@@ -860,11 +860,17 @@ func (s *Server) topMovers(c echo.Context, gainers bool) error {
 	newsStart := now.Add(-24 * time.Hour).Format("2006-01-02")
 	results := make([]store.GainerLoser, 0, len(holdings))
 	for _, holding := range holdings {
-		closes, err := s.Prices.CloseSeries(holding.Ticker, start, now.Unix())
-		if err != nil || len(closes) < 2 || closes[0] == 0 {
+		// Compare the last close with the close 24h ago. When the market was
+		// closed inside that window the previous session is the honest anchor.
+		last, err := s.Prices.LastCloseBefore(holding.Ticker, now.Unix())
+		if err != nil || last == 0 {
 			continue
 		}
-		change := (closes[len(closes)-1] - closes[0]) / closes[0] * 100
+		prev, err := s.Prices.LastCloseBefore(holding.Ticker, start)
+		if err != nil || prev == 0 {
+			continue
+		}
+		change := (last - prev) / prev * 100
 		assets, _ := s.DB.GetAssetsForHolding(holding.IDHolding)
 		news, _ := s.DB.NewsBetween(holding.Ticker, newsStart, now.Format("2006-01-02"))
 		entry := store.GainerLoser{Holding: &holding, PriceChangePct: change, RelatedNews: news}
