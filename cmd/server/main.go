@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/labstack/echo/v4"
 
 	"portfolio/internal/api"
 	"portfolio/internal/bills"
@@ -70,9 +74,11 @@ func main() {
 
 	manager.Start()
 	go warmHistory(manager, db)
+	go compactOnce(priceStore, cfg)
 	go logMemory(db)
 
 	server := api.New(cfg, db, priceStore, marketClient, llmClient, indexer, chatService, manager, webui.FS())
+	router := server.Router()
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -87,10 +93,37 @@ func main() {
 		os.Exit(0)
 	}()
 
+	for _, port := range cfg.ExtraHTTPPorts {
+		go serveExtraPort(router, port)
+	}
+
 	log.Printf("serving on %s (chat model %s, cheap model %s)", cfg.HTTPAddr, cfg.ChatModel, cfg.CheapModel)
-	if err := server.Router().Start(cfg.HTTPAddr); err != nil {
+	if err := router.Start(cfg.HTTPAddr); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// serveExtraPort exposes the same router on an additional port, which keeps the old
+// frontend URL working now that a single process serves the API and the UI.
+func serveExtraPort(router *echo.Echo, port string) {
+	server := &http.Server{Addr: ":" + port, Handler: router, ReadHeaderTimeout: 15 * time.Second}
+	log.Printf("serving on :%s (extra listener)", port)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("extra listener on :%s stopped: %v", port, err)
+	}
+}
+
+// compactOnce folds intraday bars older than the retention window into coarser ones.
+// A database written by the previous version holds 30 days of 5 minute bars, so the
+// first start reclaims that space without waiting a day for the periodic job.
+func compactOnce(priceStore *prices.Store, cfg config.Config) {
+	time.Sleep(30 * time.Second)
+	started := time.Now()
+	if err := priceStore.Compact(cfg.PriceRetention5mDays, cfg.PriceRetention1hDays); err != nil {
+		log.Printf("warm: compaction failed: %v", err)
+		return
+	}
+	log.Printf("warm: compaction finished in %s", time.Since(started).Round(time.Second))
 }
 
 // warmHistory fills the store for tickers that have no history yet. It runs after the

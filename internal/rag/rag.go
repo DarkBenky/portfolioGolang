@@ -39,9 +39,14 @@ type corpusIndex struct {
 	chunks      []store.RagChunk
 	tokens      [][]string
 	frequencies []map[string]int
+	vectors     [][]float32
 	idf         map[string]float64
 	averageLen  float64
 }
+
+// ragRetentionDays keeps the lexical corpus bounded. The legacy database held months
+// of chunks plus their embeddings, which is most of its size.
+const ragRetentionDays = 90
 
 func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool) *Indexer {
 	return &Indexer{db: db, llm: llmClient, market: marketClient, embeddings: embeddings}
@@ -70,6 +75,11 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 		return nil
 	}
 
+	// Prune first: a legacy database holds months of chunks and their embeddings, and
+	// loading them only to delete them costs time and memory.
+	if err := x.db.PruneRagChunks(ragRetentionDays); err != nil {
+		return err
+	}
 	items, err := x.collect()
 	if err != nil {
 		return err
@@ -106,7 +116,6 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 	if err := x.db.DeleteRagChunks(stale); err != nil {
 		return err
 	}
-	_ = x.db.PruneRagChunks(90)
 
 	for _, entry := range toEmbed {
 		chunk := store.RagChunk{
@@ -311,6 +320,15 @@ func (x *Indexer) Search(userID string, tickers []string, query string, limit in
 		tickerSet[ticker] = true
 	}
 
+	// Vectors are only loaded and only paid for when embeddings are enabled; the
+	// default path is keyword only and has no model cost.
+	var queryVector []float32
+	if x.embeddings && len(index.vectors) > 0 && x.llm != nil && x.llm.Configured() {
+		if vectors, embedErr := x.llm.Embed(context.Background(), []string{query}); embedErr == nil && len(vectors) == 1 {
+			queryVector = vectors[0]
+		}
+	}
+
 	const k1, b = 1.5, 0.75
 	results := make([]Result, 0, 32)
 	for i, chunk := range index.chunks {
@@ -330,6 +348,11 @@ func (x *Indexer) Search(userID string, tickers []string, query string, limit in
 			}
 			idf := index.idf[term]
 			score += idf * frequency * (k1 + 1) / (frequency + k1*(1-b+b*float64(len(tokens))/index.averageLen))
+		}
+		if queryVector != nil {
+			if similarity := cosineSimilarity(queryVector, index.vectors[i]); similarity > 0.2 {
+				score += float64(similarity)
+			}
 		}
 		if score > 0 {
 			results = append(results, Result{Chunk: chunk, Score: score})
@@ -356,7 +379,7 @@ func (x *Indexer) corpus() (*corpusIndex, error) {
 		return x.index, nil
 	}
 
-	chunks, err := x.db.AllRagChunks()
+	chunks, err := x.db.AllRagChunks(x.embeddings)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +388,12 @@ func (x *Indexer) corpus() (*corpusIndex, error) {
 		tokens:      make([][]string, len(chunks)),
 		frequencies: make([]map[string]int, len(chunks)),
 		idf:         map[string]float64{},
+	}
+	if x.embeddings {
+		index.vectors = make([][]float32, len(chunks))
+		for i, chunk := range chunks {
+			index.vectors[i] = chunk.Embedding
+		}
 	}
 	documentFrequency := map[string]int{}
 	totalLength := 0
@@ -410,4 +439,18 @@ var stopWords = map[string]bool{
 	"with": true, "this": true, "that": true, "from": true, "have": true, "was": true, "were": true,
 	"has": true, "had": true, "will": true, "would": true, "can": true, "could": true, "its": true,
 	"their": true, "they": true, "our": true, "your": true, "about": true, "into": true, "over": true,
+}
+
+func cosineSimilarity(a []float32, b []float32) float32 {
+	length := min(len(a), len(b))
+	var dot, normA, normB float64
+	for i := 0; i < length; i++ {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
 }

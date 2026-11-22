@@ -172,38 +172,6 @@ func (d *DB) PruneRagChunks(retentionDays int) error {
 	return err
 }
 
-func (d *DB) RagChunksForUser(userID string, tickers []string) ([]RagChunk, error) {
-	query := `SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding
-		FROM rag_chunks WHERE (user_id = '' OR user_id = ?)`
-	args := []any{userID}
-	if len(tickers) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(tickers)), ",")
-		query += ` AND (ticker = '' OR ticker IN (` + placeholders + `))`
-		for _, ticker := range tickers {
-			args = append(args, ticker)
-		}
-	}
-	rows, err := d.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var chunks []RagChunk
-	for rows.Next() {
-		var chunk RagChunk
-		var embedding string
-		if err := rows.Scan(&chunk.ID, &chunk.Source, &chunk.Ticker, &chunk.UserID, &chunk.Date,
-			&chunk.Content, &embedding); err != nil {
-			return nil, err
-		}
-		if embedding != "" {
-			_ = json.Unmarshal([]byte(embedding), &chunk.Embedding)
-		}
-		chunks = append(chunks, chunk)
-	}
-	return chunks, rows.Err()
-}
-
 func (d *DB) CachedLLMResponse(key string) (string, bool) {
 	var response string
 	err := d.QueryRow(`SELECT response FROM llm_cache WHERE cache_key = ?`, key).Scan(&response)
@@ -259,9 +227,16 @@ func (d *DB) LLMUsageSummary(userID string, since int64) ([]UsageRow, error) {
 	return summary, rows.Err()
 }
 
-func (d *DB) AllRagChunks() ([]RagChunk, error) {
-	rows, err := d.Query(`SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content, embedding
-		FROM rag_chunks`)
+// AllRagChunks loads the corpus in a stable order. Embeddings are only selected when
+// asked for: on a legacy database they are tens of gigabytes of JSON that the lexical
+// index must not read.
+func (d *DB) AllRagChunks(withEmbeddings bool) ([]RagChunk, error) {
+	embeddingColumn := "''"
+	if withEmbeddings {
+		embeddingColumn = "COALESCE(embedding,'')"
+	}
+	rows, err := d.Query(`SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''),
+		content, ` + embeddingColumn + ` FROM rag_chunks ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +248,9 @@ func (d *DB) AllRagChunks() ([]RagChunk, error) {
 		if err := rows.Scan(&chunk.ID, &chunk.Source, &chunk.Ticker, &chunk.UserID, &chunk.Date,
 			&chunk.Content, &embedding); err != nil {
 			return nil, err
+		}
+		if embedding != "" {
+			_ = json.Unmarshal([]byte(embedding), &chunk.Embedding)
 		}
 		chunks = append(chunks, chunk)
 	}

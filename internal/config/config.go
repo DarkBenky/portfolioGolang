@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -34,6 +35,7 @@ type Config struct {
 
 	EnableEmbeddings bool
 	HTTPAddr         string
+	ExtraHTTPPorts   []string
 }
 
 func Load() Config {
@@ -75,6 +77,13 @@ func Load() Config {
 	}
 
 	cfg.HTTPAddr = ":" + cfg.GoPort
+	// The UI used to be served by a separate process on 5173, so the same router is
+	// also exposed there to keep the existing URL working.
+	for _, port := range strings.Split(os.Getenv("EXTRA_HTTP_PORTS"), ",") {
+		if trimmed := strings.TrimSpace(port); trimmed != "" {
+			cfg.ExtraHTTPPorts = append(cfg.ExtraHTTPPorts, trimmed)
+		}
+	}
 	return cfg
 }
 

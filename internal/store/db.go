@@ -100,6 +100,7 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_rag_chunks_ticker ON rag_chunks(ticker)`,
 		`CREATE INDEX IF NOT EXISTS idx_rag_chunks_user_id ON rag_chunks(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_rag_chunks_date ON rag_chunks(date)`,
+		`CREATE INDEX IF NOT EXISTS idx_rag_chunks_created ON rag_chunks(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_web_searches_created_at ON web_searches(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_holdings_user_id ON holdings(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_assets_id_holding ON assets(id_holding)`,
