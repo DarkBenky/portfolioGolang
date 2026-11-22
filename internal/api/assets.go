@@ -201,14 +201,20 @@ func (s *Server) getAssetChange(c echo.Context) error {
 	if quantity == 0 {
 		return c.String(http.StatusNotFound, "No holdings found for the specified asset")
 	}
-	latestMap, _ := s.Prices.LatestCloses([]string{ticker})
-	latest := latestMap[ticker]
+	// Daily candles give one close per session. A fixed 24h window returns the
+	// same close twice once the market is shut, which reported a flat day.
+	now := time.Now().UTC()
+	previous, latest := 0.0, 0.0
+	if candles, err := s.Prices.Candles(ticker, now.AddDate(0, 0, -14).Unix(), now.Unix(), "1d"); err == nil && len(candles) >= 2 {
+		previous = candles[len(candles)-2].Close
+		latest = candles[len(candles)-1].Close
+	} else {
+		latestMap, _ := s.Prices.LatestCloses([]string{ticker})
+		latest = latestMap[ticker]
+		previous = latest
+	}
 	if latest == 0 {
 		return c.String(http.StatusInternalServerError, "Error retrieving latest price")
-	}
-	previous := latest
-	if value, err := s.Prices.LastCloseBefore(ticker, time.Now().Add(-24*time.Hour).Unix()); err == nil {
-		previous = value
 	}
 	currentValue := latest * quantity
 	dayChange := (latest - previous) * quantity

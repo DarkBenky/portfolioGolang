@@ -11,18 +11,22 @@
           :stroke-width="thickness"
         />
         <circle
-          v-for="slice in slices"
+          v-for="(slice, index) in slices"
           :key="slice.name"
           :cx="size / 2"
           :cy="size / 2"
           :r="radius"
           fill="none"
           :stroke="slice.color"
-          :stroke-width="thickness"
+          :stroke-width="hovered === index ? thickness + 4 : thickness"
           :stroke-dasharray="`${slice.length} ${circumference - slice.length}`"
           :stroke-dashoffset="-slice.offset"
           :transform="`rotate(-90 ${size / 2} ${size / 2})`"
+          :opacity="hovered === null || hovered === index ? 1 : 0.45"
           stroke-linecap="butt"
+          class="donut-slice"
+          @mouseenter="hovered = index"
+          @mouseleave="hovered = null"
         >
           <title>{{ slice.name }}: {{ slice.value.toFixed(1) }}%</title>
         </circle>
@@ -33,7 +37,14 @@
       </div>
     </div>
     <div v-if="showLegend" class="donut-legend">
-      <div v-for="slice in slices" :key="'l-' + slice.name" class="legend-row">
+      <div
+        v-for="(slice, index) in slices"
+        :key="'l-' + slice.name"
+        class="legend-row"
+        :class="{ 'legend-row--active': hovered === index }"
+        @mouseenter="hovered = index"
+        @mouseleave="hovered = null"
+      >
         <span class="legend-dot" :style="{ background: slice.color }"></span>
         <span class="legend-name">{{ slice.name }}</span>
         <span class="legend-value">{{ slice.value.toFixed(1) }}%</span>
@@ -69,6 +80,9 @@ export default {
     legendBars: { type: Boolean, default: true },
     legendMaxHeight: { type: Number, default: 0 },
     maxSlices: { type: Number, default: 0 },
+  },
+  data() {
+    return { hovered: null }
   },
   computed: {
     radius() {
@@ -149,7 +163,18 @@ export default {
   align-items: center;
   gap: 6px 8px;
   font-size: 12px;
-  padding: 3px 0;
+  padding: 3px 4px;
+  border-radius: 4px;
+  transition: background-color 0.12s ease;
+}
+
+.legend-row--active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.donut-slice {
+  transition: stroke-width 0.12s ease, opacity 0.12s ease;
+  cursor: default;
 }
 
 .legend-track {

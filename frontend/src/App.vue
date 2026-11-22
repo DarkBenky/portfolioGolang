@@ -221,6 +221,12 @@ export default {
 .nav-item {
   border-radius: 8px;
   margin: 2px 8px;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateX(2px);
 }
 
 .app-main {
@@ -249,6 +255,12 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   background: #1a1a1a;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.panel:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #1d1d1d;
 }
 
 .equal-rows {
