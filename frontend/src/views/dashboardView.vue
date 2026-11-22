@@ -232,6 +232,7 @@
       </div>
       <v-progress-linear :model-value="storage.disk.used_percent" :color="storageBarColor" height="8" rounded />
       <div class="d-flex flex-wrap ga-4 mt-2 text-caption text-medium-emphasis">
+        <span v-if="storage.host">{{ storage.host }}</span>
         <span>{{ storage.directory }}</span>
         <span>used {{ (storage.disk.used_percent || 0).toFixed(1) }}%</span>
         <span>databases {{ bytes(storage.database_bytes) }}</span>

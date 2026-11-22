@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/labstack/echo/v4"
@@ -12,7 +13,11 @@ func (s *Server) getStorage(c echo.Context) error {
 	if dir == "" {
 		dir = "."
 	}
-	disk := readDisk(dir)
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		dir = s.Cfg.DataDir
+	}
+	host, _ := os.Hostname()
 	files := directoryFiles([]string{
 		s.Cfg.SQLitePath,
 		s.Cfg.SQLitePath + "-wal",
@@ -24,9 +29,10 @@ func (s *Server) getStorage(c echo.Context) error {
 		databaseBytes += file.Bytes
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"disk":           disk,
+		"disk":           readDisk(dir),
 		"files":          files,
 		"database_bytes": databaseBytes,
-		"directory":      filepath.Clean(dir),
+		"directory":      dir,
+		"host":           host,
 	})
 }
