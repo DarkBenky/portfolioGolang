@@ -57,7 +57,9 @@ make run
 - Every non chat completion is cached in `llm_cache` under a content hash, so the same
   news set is never billed twice. Chat is the only streaming path.
 - Retrieval is BM25 over text already stored in SQLite. Embeddings are opt in with
-  `RAG_USE_EMBEDDINGS=1` and are only needed for semantic search.
+  `RAG_USE_EMBEDDINGS=1` and are only needed for semantic search. `RAG_EMBED_ARTICLES=1`
+  stores vectors for new chunks without loading them at query time. Articles and their
+  embeddings are never pruned.
 - Chat offers local tools (`get_portfolio`, `get_price_history`, `get_news`,
   `get_spending`, `search_documents`) before `web_search`; searches per turn and per
   situation run are capped.

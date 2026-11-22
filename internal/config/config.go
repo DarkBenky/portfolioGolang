@@ -35,6 +35,7 @@ type Config struct {
 	ChartMaxPoints       int
 
 	EnableEmbeddings bool
+	EmbedArticles    bool
 	HTTPAddr         string
 	ExtraHTTPPorts   []string
 }
@@ -59,12 +60,13 @@ func Load() Config {
 		SessionModel:         envOr("OPENROUTER_CHAT_MODEL", "tencent/hy4-flash"),
 		CheapModel:           envOr("OPENROUTER_CHEAP_MODEL", "inclusionai/ling-3.0-flash"),
 		EmbeddingModel:       envOr("OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small"),
-		LLMDailyBudgetUSD:    envFloat("LLM_DAILY_BUDGET_USD", 0),
+		LLMDailyBudgetUSD:    envFloat("LLM_DAILY_BUDGET_USD", 0.5),
 		PriceRetention5mDays: envInt("PRICE_RETENTION_5M_DAYS", 14),
 		PriceRetention1hDays: envInt("PRICE_RETENTION_1H_DAYS", 120),
 		PriceLookback5mDays:  envInt("PRICE_LOOKBACK_5M_DAYS", 14),
 		ChartMaxPoints:       envInt("CHART_MAX_POINTS", 500),
 		EnableEmbeddings:     os.Getenv("RAG_USE_EMBEDDINGS") == "1",
+		EmbedArticles:        os.Getenv("RAG_EMBED_ARTICLES") == "1",
 	}
 
 	if hours := os.Getenv("JWT_EXPIRY_HOURS"); hours != "" {

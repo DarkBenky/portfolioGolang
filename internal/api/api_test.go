@@ -53,7 +53,7 @@ func newHarness(t testing.TB) *harness {
 	}
 	marketClient := market.NewClient()
 	llmClient := llm.New("", "test-chat", "test-chat", "test-cheap", "", db, 0)
-	indexer := rag.New(db, llmClient, marketClient, false)
+	indexer := rag.New(db, llmClient, marketClient, false, false)
 	chatService := chat.New(llmClient, db, marketClient, priceStore, indexer)
 	manager := jobs.New(db, priceStore, marketClient, llmClient, indexer, jobs.Settings{
 		Retention5mDays: 14, Retention1hDays: 120, Lookback5mDays: 14, SummaryMaxChars: 1000,

@@ -49,6 +49,10 @@ func validEmail(email string) bool {
 }
 
 func (s *Server) register(c echo.Context) error {
+	if ok, retry := s.allow("register:"+c.RealIP(), 10*time.Minute); !ok {
+		return c.JSON(http.StatusTooManyRequests, map[string]any{
+			"error": "Please wait before creating another account", "retry_after_sec": retry})
+	}
 	var request struct {
 		UserName string `json:"user_name"`
 		Email    string `json:"email"`

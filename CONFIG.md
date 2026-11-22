@@ -27,12 +27,19 @@ PRICE_DB_PATH=./prices.duckdb
 ## Models and cost
 
 ```
-OPENROUTER_MODEL=qwen/qwen3.7-flash          # chat
+OPENROUTER_MODEL=qwen/qwen3.7-flash          # summaries, reports, classification fallback
+OPENROUTER_CHAT_MODEL=tencent/hy4-flash      # interactive chat, reasoning enabled
 OPENROUTER_CHEAP_MODEL=inclusionai/ling-3.0-flash  # daily summaries and classification
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
-LLM_DAILY_BUDGET_USD=0      # 0 disables the guard; otherwise stops work per user per day
+LLM_DAILY_BUDGET_USD=0.50   # 0 disables the guard; otherwise stops work per user per day
 RAG_USE_EMBEDDINGS=0        # 1 adds vector search on top of BM25
+RAG_EMBED_ARTICLES=0        # 1 stores embeddings for new article chunks (batched)
 ```
+
+Chat answers stream both the reasoning and a trace (system prompt, portfolio context,
+tools, tokens and cost). Stored articles and embeddings are never deleted: retention
+limits only apply to price data, and `RAG_USE_EMBEDDINGS` affects query time only, so
+enabling it does not rewrite or drop stored vectors.
 
 ## Prices and charts
 

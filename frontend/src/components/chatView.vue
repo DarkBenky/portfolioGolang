@@ -60,8 +60,11 @@
             <div class="message-bubble" :class="msg.role === 'user' ? 'message-bubble-user' : 'message-bubble-assistant'">
               <div v-if="msg.role === 'assistant' && msg.content" class="markdown-content" v-html="formatMarkdown(msg.content)"></div>
               <div v-else-if="msg.role === 'assistant'" class="d-flex align-center">
-                <v-progress-circular size="14" indeterminate color="primary" class="mr-2"></v-progress-circular>
-                <span class="text-caption text-grey">Generating</span>
+                <template v-if="msg.status === 'streaming'">
+                  <v-progress-circular size="14" indeterminate color="primary" class="mr-2"></v-progress-circular>
+                  <span class="text-caption text-grey">Generating</span>
+                </template>
+                <span v-else class="text-caption text-grey">The model returned no answer.</span>
               </div>
               <div v-else class="white-space-pre-wrap">{{ msg.content }}</div>
 
@@ -344,7 +347,9 @@ async function selectConversation(id) {
     const res = await apiFetch(`/api/chat/conversations/${id}`)
     if (res.ok) {
       const data = await res.json()
-      messages.value = (data.messages || []).map(parseMessage)
+      messages.value = (data.messages || [])
+        .map(parseMessage)
+        .filter((message) => !(message.role === 'assistant' && !message.content && message.status === 'failed'))
       scrollToBottom()
       if (messages.value.some((m) => m.status === 'streaming')) {
         pollTimer = setTimeout(() => {

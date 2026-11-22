@@ -13,6 +13,10 @@ import (
 	"portfolio/internal/store"
 )
 
+// A chat message longer than this is not a question; it is an attempt to make the
+// server pay for a large prompt.
+const maxChatMessage = 8000
+
 func (s *Server) chatHandler(c echo.Context) error {
 	userID := s.userID(c)
 	if !s.Cfg.DevMode {
@@ -33,6 +37,9 @@ func (s *Server) chatHandler(c echo.Context) error {
 	request.Message = strings.TrimSpace(request.Message)
 	if request.Message == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Message is required"})
+	}
+	if len(request.Message) > maxChatMessage {
+		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": "Message is too long"})
 	}
 
 	conversation, err := s.DB.GetConversation(request.ConversationID, userID)

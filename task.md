@@ -35,6 +35,7 @@ Note - i added to the .env new api key for open router with 2 dollars of credits
 25. ![alt text](image-6.png) this button is doing nothing
 26. ![alt text](image-7.png) i liked this kind of bar in main view main view shoud contain staff that can halp you see on first view how is portfolio doing and also maybe staff related to how you are doing financlly
 27. look into master / main branch and check if some functionalities are not missing
+28. ![alt text](image-8.png)
 
 27. deploy this new updated version on vm http://91.98.145.193:5173/
 28. try to exploited it and find any other security issues and fix them

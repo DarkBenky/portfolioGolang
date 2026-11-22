@@ -19,13 +19,14 @@ import (
 )
 
 type Indexer struct {
-	db          *store.DB
-	llm         *llm.Client
-	market      *market.Client
-	embeddings  bool
-	mu          sync.Mutex
-	lastSig     string
-	lastTrigger time.Time
+	db            *store.DB
+	llm           *llm.Client
+	market        *market.Client
+	embeddings    bool
+	embedArticles bool
+	mu            sync.Mutex
+	lastSig       string
+	lastTrigger   time.Time
 
 	indexMu     sync.Mutex
 	index       *corpusIndex
@@ -49,8 +50,12 @@ type corpusIndex struct {
 // every stored row straight from the database.
 const ragCorpusLimit = 80000
 
-func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool) *Indexer {
-	return &Indexer{db: db, llm: llmClient, market: marketClient, embeddings: embeddings}
+// embeddings enables vector search; embedArticles stores vectors for new chunks
+// without paying the memory cost of loading them at query time. Stored vectors are
+// never deleted.
+func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool, embedArticles bool) *Indexer {
+	return &Indexer{db: db, llm: llmClient, market: marketClient,
+		embeddings: embeddings, embedArticles: embedArticles}
 }
 
 type sourceItem struct {
@@ -103,19 +108,34 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 		}
 	}
 
-	for _, entry := range toEmbed {
-		chunk := store.RagChunk{
-			ID:      entry.hash,
-			Source:  entry.item.source,
-			Ticker:  entry.item.ticker,
-			UserID:  entry.item.userID,
-			Date:    entry.item.date,
-			Content: entry.chunk,
-		}
-		if x.embeddings && x.llm != nil && x.llm.Configured() {
-			if embeddings, err := x.llm.Embed(ctx, []string{entry.chunk}); err == nil && len(embeddings) == 1 {
-				chunk.Embedding = embeddings[0]
+	// Embedding requests are batched: one call per chunk costs the same tokens but
+	// adds a round trip for every single article.
+	vectors := make([][]float32, len(toEmbed))
+	if x.embedArticles && x.llm != nil && x.llm.Configured() {
+		const batchSize = 32
+		for start := 0; start < len(toEmbed); start += batchSize {
+			end := min(start+batchSize, len(toEmbed))
+			texts := make([]string, 0, end-start)
+			for _, entry := range toEmbed[start:end] {
+				texts = append(texts, entry.chunk)
 			}
+			if embeddings, err := x.llm.Embed(ctx, texts); err == nil && len(embeddings) == len(texts) {
+				copy(vectors[start:], embeddings)
+			} else if err != nil {
+				log.Printf("rag: embedding batch failed: %v", err)
+				break
+			}
+		}
+	}
+	for i, entry := range toEmbed {
+		chunk := store.RagChunk{
+			ID:        entry.hash,
+			Source:    entry.item.source,
+			Ticker:    entry.item.ticker,
+			UserID:    entry.item.userID,
+			Date:      entry.item.date,
+			Content:   entry.chunk,
+			Embedding: vectors[i],
 		}
 		if err := x.db.UpsertRagChunk(chunk); err != nil {
 			return err
