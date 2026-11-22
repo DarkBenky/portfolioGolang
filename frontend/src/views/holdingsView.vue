@@ -22,10 +22,12 @@
             <th></th>
             <th>Ticker</th>
             <th class="text-right">Price</th>
+            <th class="text-right">Day %</th>
             <th class="text-right">Day</th>
-            <th class="text-right">Quantity</th>
-            <th class="text-right">Value</th>
+            <th class="text-right">Gain %</th>
             <th class="text-right">Gain</th>
+            <th class="text-right">Value</th>
+            <th></th>
           </tr>
         </thead>
         <holding-view

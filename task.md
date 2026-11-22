@@ -44,7 +44,9 @@ Note - i added to the .env new api key for open router with 2 dollars of credits
 34. ![alt text](image-17.png) this coudl be more detailed show alll of them
 35. ![alt text](image-18.png) scale volume bars so they will not cover the chart main one
 36. ![alt text](image-19.png) wthf is this gray box
+37. ![alt text](image-20.png) hoding tabb is mising sorrting in the table and search
+38. ![alt text](image-21.png) missing hover effects on staff
 
-37. deploy this new updated version on vm http://91.98.145.193:5173/
-38. try to exploited it and find any other security issues and fix them
-39. evaluate if you solved each of the tasks above
+39. deploy this new updated version on vm http://91.98.145.193:5173/
+40. try to exploited it and find any other security issues and fix them
+41. evaluate if you solved each of the tasks above
