@@ -181,6 +181,7 @@ export default {
 
 .holdings-search {
   max-width: 280px;
+  min-width: 240px;
 }
 
 .sortable {

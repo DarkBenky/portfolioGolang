@@ -52,6 +52,8 @@
 </template>
 
 <script>
+import { formatMarkdown } from '../utils/markdown'
+
 export default {
   name: 'SentimentCard',
   
@@ -143,22 +145,9 @@ export default {
     },
 
     formattedSummary() {
-      if (!this.summary) return ''
-      
-      let text = this.summary
-        .replace(/^Here is a sample .+?:\s*/i, '')
-        .replace(/^Here is .+?:\s*/i, '')
-        .replace(/###\s*/g, '')
-        .replace(/##\s*/g, '')
-        .replace(/#\s*/g, '')
-        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/^\s*-\s+/gm, '• ')
-        .replace(/\n\n+/g, '<br><br>')
-        .replace(/\n/g, '<br>')
-      
-      return text
+      // The summary mixes model output with scraped headlines, so it must go
+      // through the escaping renderer instead of ad hoc regex substitutions.
+      return this.summary ? formatMarkdown(this.summary) : ''
     }
   },
 
