@@ -304,7 +304,43 @@ func (s *Server) getPortfolioHistory(c echo.Context) error {
 	}
 
 	attachSentiment(s, s.userID(c), interval, result)
-	return c.JSON(http.StatusOK, result)
+	return c.JSON(http.StatusOK, downsamplePortfolio(result, s.Cfg.ChartMaxPoints))
+}
+
+// downsamplePortfolio applies the same point budget as single ticker candles, so the
+// dashboard payload stays small even for accounts with many holdings.
+func downsamplePortfolio(candles []portfolioCandle, maxPoints int) []portfolioCandle {
+	if maxPoints <= 1 || len(candles) <= maxPoints {
+		return candles
+	}
+	factor := (len(candles) + maxPoints - 1) / maxPoints
+	result := make([]portfolioCandle, 0, (len(candles)+factor-1)/factor)
+	for start := 0; start < len(candles); start += factor {
+		end := min(start+factor, len(candles))
+		bucket := candles[start]
+		bucket.Volume = 0
+		sentimentSum, sentimentCount := 0.0, 0
+		for i := start; i < end; i++ {
+			candle := candles[i]
+			if candle.High > bucket.High {
+				bucket.High = candle.High
+			}
+			if candle.Low < bucket.Low {
+				bucket.Low = candle.Low
+			}
+			bucket.Close = candle.Close
+			bucket.Volume += candle.Volume
+			if candle.Sentiment != 0 {
+				sentimentSum += candle.Sentiment
+				sentimentCount++
+			}
+		}
+		if sentimentCount > 0 {
+			bucket.Sentiment = sentimentSum / float64(sentimentCount)
+		}
+		result = append(result, bucket)
+	}
+	return result
 }
 
 // attachSentiment merges the stored daily sentiment into the chart candles. Putting it

@@ -140,9 +140,12 @@ func Backtest(input Input) (*Result, error) {
 	if portfolioValues[0] == 0 || benchmarkValues[0] == 0 {
 		return nil, fmt.Errorf("insufficient price data at range start")
 	}
+	// Bases must be captured before the loop: normalizing in place would divide the
+	// later points by the already normalized 100 instead of the original value.
+	portfolioBase, benchmarkBase := portfolioValues[0], benchmarkValues[0]
 	for i := range portfolioValues {
-		portfolioValues[i] = portfolioValues[i] / portfolioValues[0] * 100
-		benchmarkValues[i] = benchmarkValues[i] / benchmarkValues[0] * 100
+		portfolioValues[i] = portfolioValues[i] / portfolioBase * 100
+		benchmarkValues[i] = benchmarkValues[i] / benchmarkBase * 100
 	}
 
 	portfolioReturns := DailyReturns(portfolioValues)

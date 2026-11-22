@@ -140,3 +140,31 @@ func BenchmarkBacktest(b *testing.B) {
 		}
 	}
 }
+
+func TestBacktestNormalizesBothSeries(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	dates := []int64{start.Unix(), start.AddDate(0, 0, 1).Unix(), start.AddDate(0, 0, 2).Unix()}
+	benchmark := Series{Dates: dates, Closes: []float64{500, 505, 510}}
+	prices := map[string]Series{
+		"A": {Dates: dates, Closes: []float64{1000, 1010, 1020}},
+	}
+	holdings := []store.Holding{{Ticker: "A", Name: "A", Quantity: 2, PurchasePrice: 20}}
+	result, err := Backtest(Input{Start: start, End: start.AddDate(0, 0, 2), Benchmark: benchmark,
+		Holdings: holdings, Prices: prices})
+	if err != nil {
+		t.Fatalf("backtest: %v", err)
+	}
+	if result.PortfolioValues[0] != 100 || result.BenchmarkValues[0] != 100 {
+		t.Fatalf("both series must start at 100, got %v %v",
+			result.PortfolioValues[0], result.BenchmarkValues[0])
+	}
+	if math.Abs(result.BenchmarkValues[2]-102) > 0.001 {
+		t.Errorf("benchmark must be normalized, got %v", result.BenchmarkValues[2])
+	}
+	if math.Abs(result.PortfolioValues[2]-102) > 0.001 {
+		t.Errorf("portfolio must be normalized, got %v", result.PortfolioValues[2])
+	}
+	if math.Abs(result.CAGRBenchmark) < 1 {
+		t.Errorf("benchmark CAGR must use the normalized series, got %v", result.CAGRBenchmark)
+	}
+}

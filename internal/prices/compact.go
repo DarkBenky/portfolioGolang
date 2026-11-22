@@ -1,6 +1,7 @@
 package prices
 
 import (
+	"fmt"
 	"log"
 	"time"
 )
@@ -16,14 +17,22 @@ func (s *Store) Compact(retention5mDays, retention1hDays int) error {
 	if err != nil {
 		return err
 	}
+	failures := 0
 	for _, ticker := range tickers {
+		// One unreadable series must not block compaction for every other ticker.
 		if err := s.CompactTicker(ticker, cutoffHourly, epochBucket(3600)); err != nil {
-			return err
+			log.Printf("prices: compaction %s hourly: %v", ticker, err)
+			failures++
+			continue
 		}
 		if err := s.CompactTicker(ticker, cutoffDaily, epochBucket(86400)); err != nil {
-			return err
+			log.Printf("prices: compaction %s daily: %v", ticker, err)
+			failures++
 		}
 	}
-	log.Printf("prices: compaction finished for %d tickers", len(tickers))
+	log.Printf("prices: compaction finished for %d tickers (%d failures)", len(tickers), failures)
+	if failures == len(tickers) {
+		return fmt.Errorf("compaction failed for every ticker")
+	}
 	return nil
 }
