@@ -41,6 +41,7 @@ type Settings struct {
 	Lookback5mDays       int
 	SummaryMaxChars      int
 	ChatSummaryMaxTokens int
+	EmbedArticles        bool
 }
 
 func New(db *store.DB, priceStore *prices.Store, marketClient *market.Client, llmClient *llm.Client, indexer *rag.Indexer, settings Settings) *Manager {
@@ -60,27 +61,47 @@ func New(db *store.DB, priceStore *prices.Store, marketClient *market.Client, ll
 // Start launches the periodic pipelines. Every loop waits one full interval before the
 // first run so a restart does not stampede the external APIs.
 func (m *Manager) Start() {
-	go m.every(10*time.Minute, m.FetchAllPrices)
-	go m.every(45*time.Minute, m.FetchAllNews)
-	go m.every(24*time.Hour, m.compact)
-	go m.every(6*time.Hour, func() {
+	// Each loop runs soon after startup and then on its own interval. Waiting a full
+	// interval first meant a service that restarted a few times a day never ran the
+	// slow jobs (news, sentiments) at all.
+	go m.every(30*time.Second, 10*time.Minute, m.FetchAllPrices)
+	go m.every(60*time.Second, 45*time.Minute, m.FetchAllNews)
+	go m.every(6*time.Hour, 24*time.Hour, m.compact)
+	go m.every(10*time.Minute, 6*time.Hour, func() {
 		if err := m.Prices.Checkpoint(); err != nil {
 			log.Printf("jobs: price checkpoint: %v", err)
 		}
 	})
-	go m.every(24*time.Hour, m.UpdateAllSentiments)
-	go m.every(30*time.Minute, m.RefreshAllETFs)
-	go m.every(1*time.Hour, m.RefreshAssetDetails)
-	go m.every(30*time.Minute, func() {
+	go m.every(3*time.Minute, 24*time.Hour, m.UpdateAllSentiments)
+	go m.every(2*time.Minute, 30*time.Minute, m.RefreshAllETFs)
+	go m.every(4*time.Minute, time.Hour, m.RefreshAssetDetails)
+	go m.every(2*time.Minute, 30*time.Minute, func() {
 		if err := m.RAG.Reindex(context.Background()); err != nil {
 			log.Printf("jobs: rag reindex: %v", err)
 		}
 	})
-	go m.every(30*time.Minute, m.SituationTick)
+	// Backfilling embeddings happens in bounded passes so a legacy corpus is filled
+	// gradually without a single huge spend.
+	go m.every(5*time.Minute, 15*time.Minute, func() {
+		if !m.Cfg.EmbedArticles || !m.LLM.Configured() {
+			return
+		}
+		if state := m.RAG.EmbedStats(); state.Pending == 0 {
+			return
+		}
+		if _, err := m.RAG.EmbedMissing(context.Background()); err != nil {
+			log.Printf("jobs: rag embed: %v", err)
+		}
+	})
+	go m.every(90*time.Second, 30*time.Minute, m.SituationTick)
 	go m.startAutoReportLoop()
 }
 
-func (m *Manager) every(interval time.Duration, task func()) {
+// every waits the initial delay, runs once, then repeats on the interval.
+func (m *Manager) every(initial time.Duration, interval time.Duration, task func()) {
+	timer := time.NewTimer(initial)
+	<-timer.C
+	task()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {

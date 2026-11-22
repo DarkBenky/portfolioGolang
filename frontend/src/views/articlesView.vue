@@ -12,6 +12,41 @@
       </v-btn>
     </div>
 
+    <div class="panel pa-4 mb-2">
+      <div class="d-flex align-center flex-wrap ga-3">
+        <div class="flex-grow-1" style="min-width: 220px">
+          <div class="metric-label">Embedding coverage</div>
+          <div class="d-flex align-baseline ga-2">
+            <span class="metric-value">{{ formatNumber(embedding.embedded) }}</span>
+            <span class="text-caption text-medium-emphasis">of {{ formatNumber(embedding.total) }} chunks</span>
+          </div>
+          <v-progress-linear
+            :model-value="embedding.total ? (embedding.embedded / embedding.total) * 100 : 0"
+            color="teal"
+            height="6"
+            rounded
+            class="mt-1"
+          />
+          <div class="text-caption text-medium-emphasis mt-1">
+            {{ formatNumber(embedding.pending) }} pending
+            <span v-if="embedding.wrong_size"> · {{ formatNumber(embedding.wrong_size) }} from an older size</span>
+            <span v-if="embedding.model"> · {{ embedding.model }}</span>
+            <span v-if="embedding.dimensions"> · {{ embedding.dimensions }} dims</span>
+          </div>
+        </div>
+        <v-btn
+          size="small"
+          color="teal"
+          variant="flat"
+          prepend-icon="mdi-vector-polyline"
+          :loading="embedding.running"
+          :disabled="!embedding.pending"
+          @click="embedMissing"
+        >{{ embedding.running ? 'Embedding...' : 'Embed missing' }}</v-btn>
+      </div>
+      <v-alert v-if="embedError" type="warning" variant="tonal" density="compact" class="mt-2">{{ embedError }}</v-alert>
+    </div>
+
     <v-row dense class="mb-1">
       <v-col v-for="card in statCards" :key="card.label" cols="6" md="3">
         <div class="panel pa-4">
@@ -115,7 +150,7 @@
 </template>
 
 <script>
-import { apiGet } from '../utils/api'
+import { apiGet, apiSend } from '../utils/api'
 
 const PAGE = 40
 
@@ -133,13 +168,16 @@ export default {
       error: '',
       expanded: {},
       searchTimer: null,
+      embedding: { embedded: 0, total: 0, pending: 0, wrong_size: 0, running: false },
+      embedError: '',
+      embedTimer: null,
     }
   },
   computed: {
     statCards() {
       return [
-        { label: 'Stored chunks', value: this.formatNumber(this.stats.total), hint: `${this.stats.oldest_date || '-'} to ${this.stats.newest_date || '-'}` },
-        { label: 'With embeddings', value: this.formatNumber(this.stats.with_embeddings), hint: 'vectors kept for search' },
+        { label: 'Stored chunks', value: this.formatNumber(this.stats.total), hint: `${this.shortDate(this.stats.oldest_date)} to ${this.shortDate(this.stats.newest_date)}` },
+        { label: 'With embeddings', value: this.formatNumber(this.embedding.embedded), hint: `${this.formatNumber(this.embedding.pending)} pending` },
         { label: 'Article text', value: this.formatBytes(this.stats.content_bytes), hint: 'original content' },
         { label: 'Embedding data', value: this.formatBytes(this.stats.vector_bytes), hint: 'never pruned' },
       ]
@@ -163,6 +201,9 @@ export default {
   },
   mounted() {
     this.reload()
+  },
+  beforeUnmount() {
+    clearTimeout(this.embedTimer)
   },
   methods: {
     async reload() {
@@ -188,8 +229,27 @@ export default {
     async loadStats() {
       try {
         this.stats = await apiGet('/api/articles/stats')
+        this.embedding = this.stats.embedding || this.embedding
+        this.syncEmbedPolling()
       } catch (err) {
         this.error = err.message
+      }
+    },
+    // Poll only while a backfill is in flight, so an idle tab makes no requests.
+    syncEmbedPolling() {
+      clearTimeout(this.embedTimer)
+      if (!this.embedding.running) return
+      this.embedTimer = setTimeout(() => this.loadStats(), 2500)
+    },
+    async embedMissing() {
+      this.embedError = ''
+      try {
+        const result = await apiSend('/api/articles/embed', 'POST', {})
+        this.embedding = result.embedding || this.embedding
+        this.embedding.running = true
+        this.syncEmbedPolling()
+      } catch (err) {
+        this.embedError = err.message
       }
     },
     loadMore() {
@@ -205,6 +265,12 @@ export default {
     },
     formatNumber(value) {
       return new Intl.NumberFormat('en-US').format(Number(value) || 0)
+    },
+    shortDate(value) {
+      const raw = String(value || '')
+      if (!raw) return '-'
+      if (/^\d{9,}$/.test(raw)) return new Date(Number(raw) * 1000).toISOString().slice(0, 10)
+      return raw.length > 10 ? raw.slice(0, 10) : raw
     },
     formatBytes(value) {
       const bytes = Number(value) || 0

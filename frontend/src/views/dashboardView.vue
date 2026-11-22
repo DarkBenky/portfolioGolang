@@ -20,6 +20,13 @@
       </v-col>
     </v-row>
 
+    <div class="strip mt-2">
+      <div v-for="cell in strip" :key="cell.label" class="strip-cell">
+        <div class="metric-label">{{ cell.label }}</div>
+        <div class="strip-value" :class="cell.color">{{ cell.value }}</div>
+      </div>
+    </div>
+
     <v-row dense class="mt-1">
       <v-col cols="12" lg="8">
         <div class="panel pa-3">
@@ -141,6 +148,35 @@
       </v-col>
 
       <v-col cols="12" md="6" lg="3">
+        <div class="panel pa-4 h-100">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="metric-label">Financial health</span>
+            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'expenses')">expenses</v-btn>
+          </div>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">Money in</span>
+            <span class="text-body-2 text-success">{{ money(bank.total_in) }}</span>
+          </div>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">Money out</span>
+            <span class="text-body-2 text-error">{{ money(bank.total_out) }}</span>
+          </div>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">Net</span>
+            <span class="text-body-2" :class="`text-${changeColor(bank.net)}`">{{ money(bank.net) }}</span>
+          </div>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">This month</span>
+            <span class="text-body-2">{{ money(monthSpend) }}</span>
+          </div>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">Savings roundups</span>
+            <span class="text-body-2">{{ money(bank.total_savings) }}</span>
+          </div>
+        </div>
+      </v-col>
+
+      <v-col cols="12" md="6" lg="6">
         <div class="panel pa-4 h-100 d-flex flex-column">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="metric-label">Running summary</span>
@@ -180,6 +216,9 @@ export default {
       news: [],
       allocation: { sectors: [], regions: [], companies: [] },
       risk: {},
+      stats: {},
+      bank: {},
+      monthlyExpenses: {},
       summary: '',
       loading: false,
       error: '',
@@ -201,6 +240,25 @@ export default {
         { label: 'News sentiment', value: this.sentimentLabel,
           color: `text-${this.sentimentColor}`, hint: `${this.sentimentCount} items today` },
       ]
+    },
+    strip() {
+      const risk = this.risk
+      const stats = this.stats
+      return [
+        { label: 'Gain', value: this.percent(stats.total_gain_loss_pct),
+          color: `text-${changeColor(stats.total_gain_loss_pct)}` },
+        { label: 'YoY return', value: this.percent(stats.yoy_return),
+          color: `text-${changeColor(stats.yoy_return)}` },
+        { label: 'Max drawdown', value: `${(stats.max_drawdown || 0).toFixed(2)}%` },
+        { label: 'Sortino', value: (stats.sortino_ratio || 0).toFixed(2) },
+        { label: 'Volatility', value: `${(risk.volatility || 0).toFixed(1)}%` },
+        { label: 'Sharpe', value: (risk.sharpe || 0).toFixed(2) },
+        { label: 'TER', value: `${((stats.aggregated_ter || 0) * 100).toFixed(2)}%` },
+      ]
+    },
+    monthSpend() {
+      const thisMonth = new Date().toISOString().slice(0, 7)
+      return Number(this.monthlyExpenses[thisMonth]) || 0
     },
     riskRows() {
       const risk = this.risk
@@ -301,7 +359,8 @@ export default {
       this.error = ''
       const query = `?currency=${this.currency}`
       try {
-        const [candles, value, holdings, sentiment, gainers, losers, news, allocation, risk, summary] = await Promise.all([
+        const [candles, value, holdings, sentiment, gainers, losers, news, allocation, risk, summary,
+          stats, bank, monthlyExpenses] = await Promise.all([
           apiGet(`/api/portfolio/history?interval=${this.interval}`),
           apiGet(`/api/portfolio/change${query}`),
           apiGet(`/api/portfolio/holdings${query}`),
@@ -312,6 +371,9 @@ export default {
           apiGet('/api/portfolio/allocation'),
           apiGet('/api/portfolio/risk?period=1y'),
           apiGet('/api/running-summary').catch(() => null),
+          apiGet(`/api/portfolio/stats?currency=${this.currency}`).catch(() => ({})),
+          apiGet('/api/bank/stats').catch(() => ({})),
+          apiGet('/api/expenses/stats/monthly').catch(() => ({})),
         ])
         this.candles = candles
         this.value = value
@@ -323,6 +385,9 @@ export default {
         this.news = news || []
         this.allocation = allocation || { sectors: [], regions: [], companies: [] }
         this.risk = risk || {}
+        this.stats = stats || {}
+        this.bank = bank || {}
+        this.monthlyExpenses = monthlyExpenses || {}
         this.summary = summary?.summary || ''
         this.$nextTick(this.applyBreakEven)
       } catch (err) {
@@ -370,6 +435,25 @@ export default {
 
 .snapshot-row:last-child {
   border-bottom: none;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.strip-cell {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: #1a1a1a;
+  padding: 10px 12px;
+}
+
+.strip-value {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .summary-text {

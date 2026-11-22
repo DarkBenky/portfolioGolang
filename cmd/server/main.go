@@ -63,13 +63,14 @@ func main() {
 
 	marketClient := market.NewClient()
 	llmClient := llm.New(cfg.OpenRouterKey, cfg.ChatModel, cfg.SessionModel, cfg.CheapModel, cfg.EmbeddingModel, db, cfg.LLMDailyBudgetUSD)
-	indexer := rag.New(db, llmClient, marketClient, cfg.EnableEmbeddings, cfg.EmbedArticles)
+	indexer := rag.New(db, llmClient, marketClient, cfg.EnableEmbeddings, cfg.EmbedArticles, cfg.EmbedDimensions)
 	chatService := chat.New(llmClient, db, marketClient, priceStore, indexer)
 	manager := jobs.New(db, priceStore, marketClient, llmClient, indexer, jobs.Settings{
 		Retention5mDays: cfg.PriceRetention5mDays,
 		Retention1hDays: cfg.PriceRetention1hDays,
 		Lookback5mDays:  cfg.PriceLookback5mDays,
 		SummaryMaxChars: 12000,
+		EmbedArticles:   cfg.EmbedArticles,
 	})
 
 	manager.Start()

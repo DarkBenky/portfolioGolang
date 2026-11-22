@@ -245,3 +245,59 @@ func (d *DB) RagVersion() (int64, int64, error) {
 	err := d.QueryRow(`SELECT COUNT(*), COALESCE(MAX(created_at),0) FROM rag_chunks`).Scan(&count, &latest)
 	return count, latest, err
 }
+
+// RagChunksMissingEmbedding returns chunks without a vector, or with a vector of a
+// different size than the current model produces, newest first.
+func (d *DB) RagChunksMissingEmbedding(limit int, dimensions int) ([]RagChunk, error) {
+	where := `length(COALESCE(embedding,'')) <= 2`
+	args := []any{}
+	if dimensions > 0 {
+		where += ` OR json_array_length(embedding) <> ?`
+		args = append(args, dimensions)
+	}
+	args = append(args, limit)
+	rows, err := d.Query(`SELECT id, source, COALESCE(ticker,''), COALESCE(user_id,''), COALESCE(date,''), content
+		FROM rag_chunks WHERE `+where+` ORDER BY created_at DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chunks []RagChunk
+	for rows.Next() {
+		var chunk RagChunk
+		if err := rows.Scan(&chunk.ID, &chunk.Source, &chunk.Ticker, &chunk.UserID,
+			&chunk.Date, &chunk.Content); err == nil {
+			chunks = append(chunks, chunk)
+		}
+	}
+	return chunks, rows.Err()
+}
+
+func (d *DB) SetRagChunkEmbedding(id string, vector []float32) error {
+	payload, err := json.Marshal(vector)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE rag_chunks SET embedding = ? WHERE id = ?`, string(payload), id)
+	return err
+}
+
+// RagEmbeddingCounts reports how much of the corpus carries a vector and how many
+// vectors do not have the expected size. Older vectors keep working; they are simply
+// skipped by search, so a dimension change only means re-embedding.
+func (d *DB) RagEmbeddingCounts(dimensions int) (embedded int64, total int64, wrongSize int64, err error) {
+	if err = d.QueryRow(`SELECT
+		COALESCE(SUM(CASE WHEN length(COALESCE(embedding,'')) > 2 THEN 1 ELSE 0 END),0),
+		COUNT(*) FROM rag_chunks`).Scan(&embedded, &total); err != nil {
+		return 0, 0, 0, err
+	}
+	if dimensions <= 0 {
+		return embedded, total, 0, nil
+	}
+	// json_array_length is present in the bundled SQLite; a parse failure only
+	// means the counter stays at zero.
+	d.QueryRow(`SELECT COUNT(*) FROM rag_chunks
+		WHERE length(COALESCE(embedding,'')) > 2 AND json_array_length(embedding) <> ?`,
+		dimensions).Scan(&wrongSize)
+	return embedded, total, wrongSize, nil
+}

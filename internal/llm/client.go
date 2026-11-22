@@ -390,11 +390,27 @@ func parseFloat(value string) float64 {
 	return parsed
 }
 
-func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+// Embed requests vectors for the given texts. dimensions trims the model output when
+// the provider supports it, which cuts both storage and the memory needed for search.
+func (c *Client) Embed(ctx context.Context, texts []string, dimensions int) ([][]float32, error) {
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("llm: OPENROUTER_API_KEY not configured")
 	}
-	payload, err := json.Marshal(map[string]any{"model": c.embedModel, "input": texts})
+	vectors, err := c.embed(ctx, texts, dimensions)
+	if err != nil && dimensions > 0 {
+		// Not every embedding model accepts dimensions; retry at the model default
+		// instead of failing the whole batch.
+		return c.embed(ctx, texts, 0)
+	}
+	return vectors, err
+}
+
+func (c *Client) embed(ctx context.Context, texts []string, dimensions int) ([][]float32, error) {
+	body := map[string]any{"model": c.embedModel, "input": texts}
+	if dimensions > 0 {
+		body["dimensions"] = dimensions
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}

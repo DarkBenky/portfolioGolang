@@ -35,8 +35,12 @@ Note - i added to the .env new api key for open router with 2 dollars of credits
 25. ![alt text](image-6.png) this button is doing nothing
 26. ![alt text](image-7.png) i liked this kind of bar in main view main view shoud contain staff that can halp you see on first view how is portfolio doing and also maybe staff related to how you are doing financlly
 27. look into master / main branch and check if some functionalities are not missing
-28. ![alt text](image-8.png)
+28. ![alt text](image-8.png) why so small amount of embeding i pay for embeding so never prune them
+29. ![alt text](image-9.png) not uniform sizes
+30. ![alt text](image-10.png) it would be nice to see them all same for this ![alt text](image-11.png)
+31. ![alt text](image-12.png) it would be nice when you click for example to this ticker it will open it in holding tab or in trading view ![alt text](image-13.png) ![alt text](image-14.png)
+32. portfolio overview css looks kinda bad ![alt text](image-15.png)
 
-27. deploy this new updated version on vm http://91.98.145.193:5173/
-28. try to exploited it and find any other security issues and fix them
-29. evaluate if you solved each of the tasks above
+32. deploy this new updated version on vm http://91.98.145.193:5173/
+33. try to exploited it and find any other security issues and fix them
+34. evaluate if you solved each of the tasks above

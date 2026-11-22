@@ -161,6 +161,7 @@ func (s *Server) Router() *echo.Echo {
 	protected.GET("/search", s.search)
 	protected.GET("/articles", s.listArticles)
 	protected.GET("/articles/stats", s.articleStats)
+	protected.POST("/articles/embed", s.embedArticles)
 	protected.GET("/convert_currency", s.convertCurrency)
 	protected.GET("/get_price", s.getPrice)
 

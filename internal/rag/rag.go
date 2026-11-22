@@ -32,6 +32,10 @@ type Indexer struct {
 	index       *corpusIndex
 	indexCount  int64
 	indexLatest int64
+
+	embedDimensions int
+	backfillMu      sync.Mutex
+	backfillRunning bool
 }
 
 // corpusIndex is the tokenized chunk set kept in memory. Scoring from a cached index
@@ -52,10 +56,11 @@ const ragCorpusLimit = 80000
 
 // embeddings enables vector search; embedArticles stores vectors for new chunks
 // without paying the memory cost of loading them at query time. Stored vectors are
-// never deleted.
-func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool, embedArticles bool) *Indexer {
+// never deleted. dimensions trims the model output to keep storage small.
+func New(db *store.DB, llmClient *llm.Client, marketClient *market.Client, embeddings bool,
+	embedArticles bool, dimensions int) *Indexer {
 	return &Indexer{db: db, llm: llmClient, market: marketClient,
-		embeddings: embeddings, embedArticles: embedArticles}
+		embeddings: embeddings, embedArticles: embedArticles, embedDimensions: dimensions}
 }
 
 type sourceItem struct {
@@ -119,7 +124,7 @@ func (x *Indexer) Reindex(ctx context.Context) error {
 			for _, entry := range toEmbed[start:end] {
 				texts = append(texts, entry.chunk)
 			}
-			if embeddings, err := x.llm.Embed(ctx, texts); err == nil && len(embeddings) == len(texts) {
+			if embeddings, err := x.llm.Embed(ctx, texts, x.embedDimensions); err == nil && len(embeddings) == len(texts) {
 				copy(vectors[start:], embeddings)
 			} else if err != nil {
 				log.Printf("rag: embedding batch failed: %v", err)
@@ -330,7 +335,7 @@ func (x *Indexer) Search(userID string, tickers []string, query string, limit in
 	// default path is keyword only and has no model cost.
 	var queryVector []float32
 	if x.embeddings && len(index.vectors) > 0 && x.llm != nil && x.llm.Configured() {
-		if vectors, embedErr := x.llm.Embed(context.Background(), []string{query}); embedErr == nil && len(vectors) == 1 {
+		if vectors, embedErr := x.llm.Embed(context.Background(), []string{query}, x.embedDimensions); embedErr == nil && len(vectors) == 1 {
 			queryVector = vectors[0]
 		}
 	}
@@ -356,8 +361,12 @@ func (x *Indexer) Search(userID string, tickers []string, query string, limit in
 			score += idf * frequency * (k1 + 1) / (frequency + k1*(1-b+b*float64(len(tokens))/index.averageLen))
 		}
 		if queryVector != nil {
-			if similarity := cosineSimilarity(queryVector, index.vectors[i]); similarity > 0.2 {
-				score += float64(similarity)
+			// Vectors written by another model or size cannot be compared; they are
+			// skipped, not deleted, and the backfill rewrites them.
+			if vector := index.vectors[i]; len(vector) == len(queryVector) {
+				if similarity := cosineSimilarity(queryVector, vector); similarity > 0.2 {
+					score += float64(similarity)
+				}
 			}
 		}
 		if score > 0 {

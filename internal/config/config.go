@@ -36,6 +36,7 @@ type Config struct {
 
 	EnableEmbeddings bool
 	EmbedArticles    bool
+	EmbedDimensions  int
 	HTTPAddr         string
 	ExtraHTTPPorts   []string
 }
@@ -67,6 +68,7 @@ func Load() Config {
 		ChartMaxPoints:       envInt("CHART_MAX_POINTS", 500),
 		EnableEmbeddings:     os.Getenv("RAG_USE_EMBEDDINGS") == "1",
 		EmbedArticles:        os.Getenv("RAG_EMBED_ARTICLES") == "1",
+		EmbedDimensions:      envInt("RAG_EMBED_DIMENSIONS", 512),
 	}
 
 	if hours := os.Getenv("JWT_EXPIRY_HOURS"); hours != "" {
