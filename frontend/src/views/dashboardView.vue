@@ -1,153 +1,169 @@
 <template>
   <div>
-    <div class="d-flex align-center justify-space-between mb-4 flex-wrap ga-2">
+    <div class="d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
       <div>
-        <div class="text-h6">Dashboard</div>
-        <div class="text-caption text-medium-emphasis">Live portfolio overview</div>
+        <div class="text-h6">Portfolio Overview</div>
+        <div class="text-caption text-medium-emphasis">
+          How the portfolio and your spending stand right now
+        </div>
       </div>
-      <v-btn-toggle v-model="interval" density="compact" variant="outlined" divided mandatory @update:model-value="load">
-        <v-btn v-for="option in intervals" :key="option" :value="option" size="small">{{ option }}</v-btn>
+      <v-btn-toggle v-model="interval" density="compact" variant="outlined" divided mandatory @update:model-value="loadChart">
+        <v-btn v-for="option in intervals" :key="option" :value="option" size="x-small">{{ option }}</v-btn>
       </v-btn-toggle>
     </div>
 
-    <v-row dense>
-      <v-col v-for="metric in metrics" :key="metric.label" cols="6" md="3">
-        <div class="panel pa-3 pa-md-4">
-          <div class="metric-label">{{ metric.label }}</div>
-          <div class="metric-value" :class="metric.color">{{ metric.value }}</div>
-          <div class="text-caption" :class="metric.hintColor || 'text-medium-emphasis'">{{ metric.hint }}</div>
-        </div>
-      </v-col>
-    </v-row>
+    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>
+    <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3">{{ error }}</v-alert>
 
-    <div class="strip mt-2">
-      <div v-for="cell in strip" :key="cell.label" class="strip-cell">
-        <div class="metric-label">{{ cell.label }}</div>
-        <div class="strip-value" :class="cell.color">{{ cell.value }}</div>
+    <div class="panel pa-3 pa-md-4 mb-2">
+      <div class="headline-grid">
+        <div v-for="item in headline" :key="item.label" class="headline-cell">
+          <div class="metric-label">{{ item.label }}</div>
+          <div class="headline-value" :class="item.color">{{ item.value }}</div>
+          <div class="text-caption" :class="item.hintColor || 'text-medium-emphasis'">{{ item.hint }}</div>
+        </div>
+      </div>
+      <v-divider class="my-3"></v-divider>
+      <div class="inline-grid">
+        <div v-for="item in inline" :key="item.label" class="inline-cell">
+          <span class="text-caption text-medium-emphasis">{{ item.label }}</span>
+          <span class="text-body-2" :class="item.color">{{ item.value }}</span>
+        </div>
       </div>
     </div>
 
-    <v-row dense class="mt-1">
-      <v-col cols="12" lg="8">
-        <div class="panel pa-3">
-          <div class="d-flex align-center justify-space-between mb-2 flex-wrap">
-            <span class="text-body-2 font-weight-medium">Portfolio value</span>
-            <span class="text-caption text-medium-emphasis">
-              {{ candles.length }} points · break-even {{ money(value.total_invested) }}
-            </span>
+    <div class="panel pa-3 mb-2">
+      <div class="d-flex align-center justify-space-between mb-2 flex-wrap ga-2">
+        <span class="text-body-2 font-weight-medium">Portfolio value</span>
+        <div class="d-flex align-center ga-3">
+          <span v-if="sentimentCount" class="text-caption" :class="`text-${sentimentColor}`">
+            <v-icon size="14" class="mr-1">mdi-chart-timeline-variant</v-icon>
+            Sentiment {{ sentiment.toFixed(2) }}
+          </span>
+          <span class="text-caption text-medium-emphasis">
+            {{ candles.length }} points · break-even {{ money(value.total_invested) }}
+          </span>
+        </div>
+      </div>
+      <candle-chart
+        v-if="candles.length"
+        ref="portfolioChart"
+        :data="candles"
+        :height="chartHeight"
+        :show-volume="false"
+        :price-decimals="2"
+        @chart-ready="applyBreakEven"
+      />
+      <div v-else-if="!loading" class="text-caption text-medium-emphasis py-10 text-center">
+        No price history yet. Add a holding to start.
+      </div>
+    </div>
+
+    <v-row dense class="mb-2">
+      <v-col v-for="group in allocationGroups" :key="group.key" cols="12" md="4">
+        <div class="panel pa-3 h-100">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="metric-label">{{ group.title }}</span>
+            <span class="text-caption text-medium-emphasis">{{ group.items.length }} groups</span>
           </div>
-          <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>
-          <v-alert v-if="error" type="error" variant="tonal" density="compact">{{ error }}</v-alert>
-          <candle-chart
-            v-if="candles.length"
-            ref="portfolioChart"
-            :data="candles"
-            :height="340"
-            :show-volume="false"
-            :price-decimals="2"
-            @chart-ready="applyBreakEven"
+          <donut-chart
+            v-if="group.items.length"
+            :items="group.items"
+            :size="120"
+            :thickness="16"
+            :max-slices="6"
+            :center-label="group.short"
+            :center-value="group.items[0].percentage.toFixed(0) + '%'"
           />
-          <v-alert v-else-if="!loading" type="info" variant="tonal" density="compact">
-            No price history yet. Add a holding to start.
-          </v-alert>
-        </div>
-      </v-col>
-
-      <v-col cols="12" lg="4">
-        <div class="panel pa-4 mb-3">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="metric-label">Movers today</span>
-            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'statistics')">stats</v-btn>
-          </div>
-          <div v-for="mover in movers" :key="mover.ticker" class="mover-row">
-            <span class="text-body-2 text-truncate mr-2">{{ mover.ticker }}</span>
-            <v-progress-linear
-              :model-value="Math.min(Math.abs(mover.change) * 8, 100)"
-              :color="mover.change >= 0 ? 'success' : 'error'"
-              height="3"
-              rounded
-              class="flex-grow-1 mr-2"
-            />
-            <span class="text-body-2 text-no-wrap" :class="`text-${changeColor(mover.change)}`">
-              {{ percent(mover.change) }}
-            </span>
-          </div>
-          <div v-if="!movers.length" class="text-caption text-medium-emphasis">No intraday data.</div>
-        </div>
-
-        <div class="panel pa-4">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="metric-label">Latest news</span>
-            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'news')">all</v-btn>
-          </div>
-          <div v-for="item in news" :key="item.id_news" class="py-2 news-item">
-            <a :href="item.link" target="_blank" rel="noopener noreferrer" class="text-body-2 news-link">{{ item.title }}</a>
-            <div class="text-caption text-medium-emphasis">
-              {{ item.ticker }} · {{ relativeDate(item.published_at) }}
-            </div>
-          </div>
-          <div v-if="!news.length" class="text-caption text-medium-emphasis">No news stored yet.</div>
+          <div v-else class="text-caption text-medium-emphasis py-6 text-center">No breakdown stored.</div>
+          <v-btn size="x-small" variant="text" class="px-0 mt-1" @click="$emit('navigate', 'allocation')">
+            Full allocation
+          </v-btn>
         </div>
       </v-col>
     </v-row>
 
-    <v-row dense class="mt-1">
-      <v-col cols="12" md="6" lg="3">
+    <v-row dense class="mb-2">
+      <v-col cols="12" md="6">
+        <div class="panel pa-3 h-100">
+          <div class="d-flex align-center mb-2">
+            <v-icon size="16" color="success" class="mr-2">mdi-trending-up</v-icon>
+            <span class="metric-label">Top gainers (24h)</span>
+          </div>
+          <div
+            v-for="mover in movers.gainers"
+            :key="'g-' + mover.ticker"
+            class="mover-row"
+            @click="$emit('open-ticker', mover.ticker)"
+          >
+            <div class="mover-name">
+              <span class="ticker-link">{{ mover.ticker }}</span>
+              <span class="text-caption text-medium-emphasis text-truncate">{{ mover.name }}</span>
+            </div>
+            <span v-if="mover.news" class="text-caption text-medium-emphasis text-no-wrap mr-2">
+              <v-icon size="12">mdi-newspaper</v-icon> {{ mover.news }}
+            </span>
+            <span class="text-body-2 text-success text-no-wrap">{{ percent(mover.change) }}</span>
+          </div>
+          <div v-if="!movers.gainers.length" class="text-caption text-medium-emphasis py-4 text-center">
+            No gainers in the last 24 hours.
+          </div>
+        </div>
+      </v-col>
+
+      <v-col cols="12" md="6">
+        <div class="panel pa-3 h-100">
+          <div class="d-flex align-center mb-2">
+            <v-icon size="16" color="error" class="mr-2">mdi-trending-down</v-icon>
+            <span class="metric-label">Top losers (24h)</span>
+          </div>
+          <div
+            v-for="mover in movers.losers"
+            :key="'l-' + mover.ticker"
+            class="mover-row"
+            @click="$emit('open-ticker', mover.ticker)"
+          >
+            <div class="mover-name">
+              <span class="ticker-link">{{ mover.ticker }}</span>
+              <span class="text-caption text-medium-emphasis text-truncate">{{ mover.name }}</span>
+            </div>
+            <span v-if="mover.news" class="text-caption text-medium-emphasis text-no-wrap mr-2">
+              <v-icon size="12">mdi-newspaper</v-icon> {{ mover.news }}
+            </span>
+            <span class="text-body-2 text-error text-no-wrap">{{ percent(mover.change) }}</span>
+          </div>
+          <div v-if="!movers.losers.length" class="text-caption text-medium-emphasis py-4 text-center">
+            No losers in the last 24 hours.
+          </div>
+        </div>
+      </v-col>
+    </v-row>
+
+    <v-row dense class="mb-2">
+      <v-col cols="12" md="6">
         <div class="panel pa-4 h-100">
           <div class="d-flex align-center justify-space-between mb-2">
-            <span class="metric-label">Sectors</span>
-            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'allocation')">details</v-btn>
+            <span class="metric-label">Portfolio sentiment</span>
+            <v-btn
+              size="x-small"
+              variant="text"
+              prepend-icon="mdi-magic"
+              :loading="summaryGenerating"
+              @click="generateSummary"
+            >{{ summary ? 'Regenerate' : 'Generate' }}</v-btn>
           </div>
-          <donut-chart
-            :items="allocation.sectors || []"
-            :size="128"
-            :thickness="17"
-            :max-slices="6"
-            :center-label="topSectorName"
-            :center-value="topSectorValue"
-          />
-        </div>
-      </v-col>
-
-      <v-col cols="12" md="6" lg="3">
-        <div class="panel pa-4 h-100">
-          <div class="metric-label mb-2">Risk snapshot</div>
-          <div class="snapshot-row" v-for="row in riskRows" :key="row.label">
-            <span class="text-caption text-medium-emphasis">{{ row.label }}</span>
-            <span class="text-body-2" :class="row.color">{{ row.value }}</span>
+          <div class="d-flex align-center ga-2 mb-2">
+            <v-chip size="small" variant="tonal" :color="sentimentColor">{{ sentimentLabel }}</v-chip>
+            <span v-if="summary?.date" class="text-caption text-medium-emphasis">{{ summary.date }}</span>
           </div>
-          <v-btn size="x-small" variant="text" class="mt-2 px-0" @click="$emit('navigate', 'statistics')">
-            Open statistics
-          </v-btn>
-        </div>
-      </v-col>
-
-      <v-col cols="12" md="6" lg="3">
-        <div class="panel pa-4 h-100">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="metric-label">Allocation</span>
-            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'holdings')">holdings</v-btn>
-          </div>
-          <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">Positions</span>
-            <span class="text-body-2">{{ holdings.length }}</span>
-          </div>
-          <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">Largest position</span>
-            <span class="text-body-2">{{ largestHolding }}</span>
-          </div>
-          <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">Top company</span>
-            <span class="text-body-2">{{ topCompany }}</span>
-          </div>
-          <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">Top region</span>
-            <span class="text-body-2">{{ topRegion }}</span>
+          <div v-if="summary?.summary" class="markdown-content summary-text" v-html="formatMarkdown(summary.summary)"></div>
+          <div v-else class="text-caption text-medium-emphasis">
+            No AI summary for today yet. Generate one to see the drivers behind the sentiment.
           </div>
         </div>
       </v-col>
 
-      <v-col cols="12" md="6" lg="3">
+      <v-col cols="12" md="6">
         <div class="panel pa-4 h-100">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="metric-label">Financial health</span>
@@ -166,34 +182,41 @@
             <span class="text-body-2" :class="`text-${changeColor(bank.net)}`">{{ money(bank.net) }}</span>
           </div>
           <div class="snapshot-row">
-            <span class="text-caption text-medium-emphasis">This month</span>
+            <span class="text-caption text-medium-emphasis">Spent this month</span>
             <span class="text-body-2">{{ money(monthSpend) }}</span>
           </div>
           <div class="snapshot-row">
             <span class="text-caption text-medium-emphasis">Savings roundups</span>
             <span class="text-body-2">{{ money(bank.total_savings) }}</span>
           </div>
-        </div>
-      </v-col>
-
-      <v-col cols="12" md="6" lg="6">
-        <div class="panel pa-4 h-100 d-flex flex-column">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="metric-label">Running summary</span>
-            <v-btn size="x-small" variant="text" @click="$emit('navigate', 'summary')">open</v-btn>
+          <div class="snapshot-row">
+            <span class="text-caption text-medium-emphasis">Savings rate</span>
+            <span class="text-body-2" :class="`text-${changeColor(savingsRate)}`">{{ savingsRate.toFixed(0) }}%</span>
           </div>
-          <div v-if="summary" class="text-body-2 summary-text">{{ summary }}</div>
-          <div v-else class="text-caption text-medium-emphasis">No summary stored yet.</div>
         </div>
       </v-col>
     </v-row>
+
+    <div class="panel pa-4">
+      <div class="d-flex align-center justify-space-between mb-2">
+        <span class="metric-label">Running summary</span>
+        <v-btn size="x-small" variant="text" @click="$emit('navigate', 'summary')">open report</v-btn>
+      </div>
+      <div v-if="summary?.running" class="markdown-content summary-text" v-html="formatMarkdown(summary.running)"></div>
+      <div v-else class="text-caption text-medium-emphasis">
+        No running summary stored yet.
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
 import CandleChart from '../components/candleChart.vue'
 import DonutChart from '../components/donutChart.vue'
-import { apiGet, changeColor, formatCurrency, formatPercent } from '../utils/api'
+import { apiGet, apiSend, changeColor, formatCurrency, formatPercent } from '../utils/api'
+import { formatMarkdown } from '../utils/markdown'
+
+const INTERVALS = ['5m', '15m', '1h', '4h', '1d', '1w', '1M']
 
 export default {
   name: 'DashboardView',
@@ -201,11 +224,11 @@ export default {
   props: {
     currency: { type: String, default: 'EUR' },
   },
-  emits: ['navigate'],
+  emits: ['navigate', 'open-ticker'],
   data() {
     return {
       interval: '1d',
-      intervals: ['1h', '1d', '1w', '1M'],
+      intervals: INTERVALS,
       candles: [],
       value: {},
       holdings: [],
@@ -213,65 +236,68 @@ export default {
       sentimentCount: 0,
       gainers: [],
       losers: [],
-      news: [],
       allocation: { sectors: [], regions: [], companies: [] },
       risk: {},
       stats: {},
       bank: {},
       monthlyExpenses: {},
-      summary: '',
+      summary: null,
       loading: false,
+      summaryGenerating: false,
       error: '',
       breakEvenLine: null,
     }
   },
   computed: {
-    metrics() {
-      return [
-        { label: 'Portfolio value', value: this.money(this.value.current_value),
-          hint: `${this.percent(this.value.total_change_percent)} total`,
-          hintColor: `text-${this.changeColor(this.value.total_change_percent)}` },
-        { label: 'Today', value: this.money(this.value.day_change),
-          color: `text-${this.changeColor(this.value.day_change)}`,
-          hint: this.percent(this.value.day_change_percent),
-          hintColor: `text-${this.changeColor(this.value.day_change_percent)}` },
-        { label: 'Invested', value: this.money(this.value.total_invested),
-          hint: `${this.holdings.length} ${this.holdings.length === 1 ? 'holding' : 'holdings'}` },
-        { label: 'News sentiment', value: this.sentimentLabel,
-          color: `text-${this.sentimentColor}`, hint: `${this.sentimentCount} items today` },
-      ]
+    chartHeight() {
+      return this.$vuetify.display.mobile ? 260 : 360
     },
-    strip() {
-      const risk = this.risk
+    headline() {
       const stats = this.stats
       return [
-        { label: 'Gain', value: this.percent(stats.total_gain_loss_pct),
-          color: `text-${changeColor(stats.total_gain_loss_pct)}` },
+        { label: 'Total value', value: this.money(stats.total_value),
+          hint: `${this.money(stats.total_gain_loss)} (${this.percent(stats.total_gain_loss_pct)})`,
+          hintColor: `text-${changeColor(stats.total_gain_loss_pct)}` },
+        { label: 'Today', value: this.money(this.value.day_change),
+          color: `text-${changeColor(this.value.day_change)}`,
+          hint: this.percent(this.value.day_change_percent),
+          hintColor: `text-${changeColor(this.value.day_change_percent)}` },
         { label: 'YoY return', value: this.percent(stats.yoy_return),
-          color: `text-${changeColor(stats.yoy_return)}` },
-        { label: 'Max drawdown', value: `${(stats.max_drawdown || 0).toFixed(2)}%` },
-        { label: 'Sortino', value: (stats.sortino_ratio || 0).toFixed(2) },
-        { label: 'Volatility', value: `${(risk.volatility || 0).toFixed(1)}%` },
-        { label: 'Sharpe', value: (risk.sharpe || 0).toFixed(2) },
-        { label: 'TER', value: `${((stats.aggregated_ter || 0) * 100).toFixed(2)}%` },
+          color: `text-${changeColor(stats.yoy_return)}`, hint: 'annual performance' },
+        { label: 'Sortino', value: (stats.sortino_ratio || 0).toFixed(2),
+          hint: `max DD ${(stats.max_drawdown || 0).toFixed(1)}%` },
       ]
     },
-    monthSpend() {
-      const thisMonth = new Date().toISOString().slice(0, 7)
-      return Number(this.monthlyExpenses[thisMonth]) || 0
-    },
-    riskRows() {
+    inline() {
       const risk = this.risk
-      if (!risk.observations) {
-        return [{ label: 'Status', value: 'not enough data', color: 'text-medium-emphasis' }]
-      }
       return [
-        { label: '1y return', value: this.percent(risk.total_return), color: `text-${this.changeColor(risk.total_return)}` },
+        { label: 'Cost basis', value: this.money(this.stats.total_cost) },
+        { label: 'Aggregated TER', value: `${((this.stats.aggregated_ter || 0) * 100).toFixed(3)}%` },
+        { label: 'Positions', value: String(this.holdings.length) },
         { label: 'Volatility', value: `${(risk.volatility || 0).toFixed(1)}%` },
         { label: 'Sharpe', value: (risk.sharpe || 0).toFixed(2) },
-        { label: 'Max drawdown', value: `${(risk.max_drawdown || 0).toFixed(1)}%`, color: 'text-error' },
-        { label: `vs ${risk.benchmark || 'SPY'}`, value: this.percent(risk.benchmark_return), color: `text-${this.changeColor(risk.benchmark_return)}` },
+        { label: `vs ${risk.benchmark || 'SPY'}`, value: this.percent(risk.benchmark_return),
+          color: `text-${changeColor(risk.benchmark_return)}` },
       ]
+    },
+    allocationGroups() {
+      const allocation = this.allocation
+      return [
+        { key: 'sectors', title: 'Sector allocation', short: 'Top sector', items: allocation.sectors || [] },
+        { key: 'regions', title: 'Region allocation', short: 'Top region', items: allocation.regions || [] },
+        { key: 'companies', title: 'Top companies', short: 'Top company', items: allocation.companies || [] },
+      ]
+    },
+    movers() {
+      const asRow = (entry) => ({
+        ticker: entry.holding?.ticker || '',
+        name: entry.holding?.name || '',
+        change: entry.price_change_pct || 0,
+        news: (entry.related_news || []).length,
+      })
+      const gainers = (this.gainers || []).map(asRow).filter((row) => row.ticker && row.change > 0)
+      const losers = (this.losers || []).map(asRow).filter((row) => row.ticker && row.change < 0)
+      return { gainers, losers }
     },
     sentimentLabel() {
       if (!this.sentimentCount) return 'No data'
@@ -282,62 +308,38 @@ export default {
     sentimentColor() {
       if (this.sentiment > 0.2) return 'success'
       if (this.sentiment < -0.2) return 'error'
-      return 'medium-emphasis'
+      return 'grey'
     },
-    movers() {
-      return [...this.gainers, ...this.losers]
-        .filter((item) => item.holding)
-        .map((item) => ({ ticker: item.holding.ticker, change: item.price_change_pct }))
-        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-        .slice(0, 6)
+    monthSpend() {
+      const month = new Date().toISOString().slice(0, 7)
+      return Number(this.monthlyExpenses[month]) || 0
     },
-    topSectorName() {
-      return this.allocation.sectors?.[0]?.name?.split(' ')[0] || '-'
-    },
-    topSectorValue() {
-      const top = this.allocation.sectors?.[0]
-      return top ? `${top.percentage.toFixed(0)}%` : '-'
-    },
-    largestHolding() {
-      const sorted = [...this.holdings].sort((a, b) => (b.weight || 0) - (a.weight || 0))
-      return sorted[0] ? `${sorted[0].ticker} ${(sorted[0].weight || 0).toFixed(0)}%` : '-'
-    },
-    topCompany() {
-      const top = this.allocation.companies?.[0]
-      return top ? `${top.name} ${top.percentage.toFixed(1)}%` : '-'
-    },
-    topRegion() {
-      const top = this.allocation.regions?.[0]
-      return top ? `${top.name} ${top.percentage.toFixed(1)}%` : '-'
+    savingsRate() {
+      const income = Number(this.bank.total_in) || 0
+      const out = Number(this.bank.total_out) || 0
+      if (income <= 0) return 0
+      return Math.max(-100, Math.min(100, (income - out) / income * 100))
     },
   },
   watch: {
     currency() {
-      this.load()
+      this.loadAll()
     },
   },
   mounted() {
-    this.load()
+    this.loadAll()
   },
   methods: {
     changeColor,
+    formatMarkdown,
     money(value) {
       return formatCurrency(value, this.currency)
     },
     percent(value) {
       return formatPercent(value)
     },
-    relativeDate(unix) {
-      const timestamp = Number(unix)
-      if (!timestamp) return ''
-      const hours = Math.round((Date.now() / 1000 - timestamp) / 3600)
-      if (hours < 1) return 'just now'
-      if (hours < 24) return `${hours}h ago`
-      return `${Math.round(hours / 24)}d ago`
-    },
     applyBreakEven() {
-      const chart = this.$refs.portfolioChart
-      const series = chart?.getCandleSeries?.()
+      const series = this.$refs.portfolioChart?.getCandleSeries?.()
       if (!series) return
       if (this.breakEvenLine) {
         series.removePriceLine(this.breakEvenLine)
@@ -354,46 +356,71 @@ export default {
         })
       }
     },
-    async load() {
+    async loadChart() {
+      try {
+        this.candles = await apiGet(`/api/portfolio/history?interval=${this.interval}`)
+        this.$nextTick(this.applyBreakEven)
+      } catch (err) {
+        this.error = err.message
+      }
+    },
+    async loadAll() {
       this.loading = true
       this.error = ''
       const query = `?currency=${this.currency}`
       try {
-        const [candles, value, holdings, sentiment, gainers, losers, news, allocation, risk, summary,
-          stats, bank, monthlyExpenses] = await Promise.all([
-          apiGet(`/api/portfolio/history?interval=${this.interval}`),
+        const [value, holdings, sentiment, gainers, losers, allocation, risk, stats, bank,
+          monthlyExpenses, overview] = await Promise.all([
           apiGet(`/api/portfolio/change${query}`),
           apiGet(`/api/portfolio/holdings${query}`),
           apiGet('/api/portfolio/sentiment'),
           apiGet('/api/portfolio/top_gainers'),
           apiGet('/api/portfolio/top_losers'),
-          apiGet('/api/portfolio/news?limit=6'),
           apiGet('/api/portfolio/allocation'),
           apiGet('/api/portfolio/risk?period=1y'),
-          apiGet('/api/running-summary').catch(() => null),
-          apiGet(`/api/portfolio/stats?currency=${this.currency}`).catch(() => ({})),
+          apiGet(`/api/portfolio/stats${query}`),
           apiGet('/api/bank/stats').catch(() => ({})),
           apiGet('/api/expenses/stats/monthly').catch(() => ({})),
+          apiGet('/api/portfolio/daily_sentiment?date=' + new Date().toISOString().slice(0, 10))
+            .catch(() => null),
         ])
-        this.candles = candles
-        this.value = value
+        this.value = value || {}
         this.holdings = holdings || []
         this.sentiment = sentiment.average_sentiment || 0
         this.sentimentCount = sentiment.news_count || 0
         this.gainers = gainers || []
         this.losers = losers || []
-        this.news = news || []
         this.allocation = allocation || { sectors: [], regions: [], companies: [] }
         this.risk = risk || {}
         this.stats = stats || {}
         this.bank = bank || {}
         this.monthlyExpenses = monthlyExpenses || {}
-        this.summary = summary?.summary || ''
-        this.$nextTick(this.applyBreakEven)
+        this.summary = { ...(overview || {}), running: (await this.runningSummary()) }
+        await this.loadChart()
       } catch (err) {
         this.error = err.message
       } finally {
         this.loading = false
+      }
+    },
+    async runningSummary() {
+      try {
+        const data = await apiGet('/api/running-summary')
+        return data?.summary || ''
+      } catch {
+        return ''
+      }
+    },
+    async generateSummary() {
+      this.summaryGenerating = true
+      this.error = ''
+      try {
+        const result = await apiSend('/api/news/generate-summary', 'POST', {})
+        this.summary = { ...(this.summary || {}), ...(result || {}) }
+      } catch (err) {
+        this.error = err.message
+      } finally {
+        this.summaryGenerating = false
       }
     },
   },
@@ -401,28 +428,59 @@ export default {
 </script>
 
 <style scoped>
-.news-item {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+.headline-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
-.news-item:last-child {
-  border-bottom: none;
+.headline-cell {
+  min-width: 0;
 }
 
-.news-link {
-  color: rgba(255, 255, 255, 0.88);
-  text-decoration: none;
+.headline-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
-.news-link:hover {
-  color: rgb(var(--v-theme-primary));
+.inline-grid {
+  display: grid;
+  gap: 8px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.inline-cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .mover-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.mover-row:last-child {
+  border-bottom: none;
+}
+
+.mover-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mover-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .snapshot-row {
@@ -437,31 +495,14 @@ export default {
   border-bottom: none;
 }
 
-.strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
-}
-
-.strip-cell {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: #1a1a1a;
-  padding: 10px 12px;
-}
-
-.strip-value {
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
 .summary-text {
-  white-space: pre-wrap;
-  font-size: 12px;
-  line-height: 1.45;
-  max-height: 150px;
-  overflow: hidden;
-  color: rgba(255, 255, 255, 0.8);
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+@media (max-width: 600px) {
+  .headline-value {
+    font-size: 18px;
+  }
 }
 </style>

@@ -13,15 +13,13 @@
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2"></v-progress-linear>
     <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3">{{ error }}</v-alert>
 
-    <v-row dense>
-      <v-col v-for="metric in metrics" :key="metric.label" cols="6" md="3" lg="2">
-        <div class="panel pa-3">
-          <div class="metric-label">{{ metric.label }}</div>
-          <div class="metric-value" :class="metric.color">{{ metric.value }}</div>
-          <div v-if="metric.hint" class="text-caption text-medium-emphasis">{{ metric.hint }}</div>
-        </div>
-      </v-col>
-    </v-row>
+    <div class="metric-grid mb-2">
+      <div v-for="metric in metrics" :key="metric.label" class="panel pa-3 metric-card">
+        <div class="metric-label">{{ metric.label }}</div>
+        <div class="metric-value" :class="metric.color">{{ metric.value }}</div>
+        <div class="text-caption text-medium-emphasis metric-hint">{{ metric.hint || '' }}</div>
+      </div>
+    </div>
 
     <v-row dense class="mt-1">
       <v-col cols="12" lg="6">
@@ -99,7 +97,7 @@
           </div>
           <div v-for="row in risk.exposure || []" :key="row.ticker" class="exposure-row">
             <span class="text-body-2 text-truncate">
-              <span class="font-weight-medium">{{ row.ticker }}</span>
+              <span class="font-weight-medium ticker-link" @click="$emit('open-ticker', row.ticker)">{{ row.ticker }}</span>
               <span class="text-medium-emphasis ml-2 d-none d-sm-inline">{{ row.name }}</span>
             </span>
             <span class="text-body-2">{{ (row.weight || 0).toFixed(1) }}%</span>
@@ -114,7 +112,11 @@
         <div class="panel pa-4 h-100">
           <div class="metric-label mb-3">Signal per holding</div>
           <div v-for="row in holdingReturns" :key="row.ticker" class="d-flex align-center py-1">
-            <span class="text-body-2" style="width: 84px">{{ row.ticker }}</span>
+            <span
+              class="text-body-2 ticker-link"
+              style="width: 84px"
+              @click="$emit('open-ticker', row.ticker)"
+            >{{ row.ticker }}</span>
             <span class="text-caption text-medium-emphasis flex-grow-1">{{ row.signal }}</span>
             <span class="text-body-2" :class="`text-${changeColor(row.total_return)}`">{{ percent(row.total_return) }}</span>
           </div>
@@ -138,6 +140,7 @@ export default {
   props: {
     currency: { type: String, default: 'EUR' },
   },
+  emits: ['open-ticker'],
   data() {
     const now = new Date()
     const yearAgo = new Date(now.getTime() - 365 * 24 * 3600 * 1000)
@@ -254,6 +257,24 @@ export default {
 </script>
 
 <style scoped>
+.metric-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 84px;
+}
+
+.metric-hint {
+  min-height: 16px;
+  margin-top: 2px;
+}
+
 .exposure-head,
 .exposure-row {
   display: grid;

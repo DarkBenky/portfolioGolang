@@ -14,28 +14,22 @@
     <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3">{{ error }}</v-alert>
 
     <v-row dense>
-      <v-col v-for="section in sections" :key="section.key" cols="12" md="4">
-        <div class="panel pa-4 h-100">
+      <v-col v-for="section in sections" :key="section.key" cols="12" md="4" class="d-flex">
+        <div class="panel pa-4 flex-grow-1 d-flex flex-column">
           <div class="d-flex align-center justify-space-between mb-3">
             <span class="metric-label">{{ section.title }}</span>
             <span class="text-caption text-medium-emphasis">{{ section.items.length }} groups</span>
           </div>
           <donut-chart
+            v-if="section.items.length"
             :items="section.items"
-            :size="150"
-            :thickness="20"
+            :size="132"
+            :thickness="18"
+            :max-slices="7"
             :center-label="section.short"
-            :center-value="section.items[0]?.percentage ? section.items[0].percentage.toFixed(0) + '%' : '-'"
+            :center-value="section.items[0].percentage.toFixed(0) + '%'"
           />
-          <v-divider class="my-3"></v-divider>
-          <div v-for="item in section.items.slice(0, 8)" :key="item.name" class="mb-2">
-            <div class="d-flex justify-space-between text-body-2 mb-1">
-              <span class="text-truncate mr-2">{{ item.name }}</span>
-              <span class="text-medium-emphasis">{{ item.percentage.toFixed(1) }}%</span>
-            </div>
-            <v-progress-linear :model-value="item.percentage" :color="section.color" height="4" rounded />
-          </div>
-          <div v-if="!section.items.length" class="text-caption text-medium-emphasis">No data.</div>
+          <div v-else class="text-caption text-medium-emphasis py-6 text-center">No data.</div>
         </div>
       </v-col>
     </v-row>
@@ -47,7 +41,7 @@
           <div v-for="row in byHolding" :key="row.id_holding" class="mb-3">
             <div class="d-flex justify-space-between text-body-2 mb-1">
               <span class="text-truncate mr-2">
-                <span class="font-weight-medium">{{ row.ticker }}</span>
+                <span class="font-weight-medium ticker-link" @click="$emit('open-ticker', row.ticker)">{{ row.ticker }}</span>
                 <span class="text-medium-emphasis ml-2">{{ row.name }}</span>
               </span>
               <span class="text-medium-emphasis text-no-wrap">
@@ -97,6 +91,7 @@ export default {
   props: {
     currency: { type: String, default: 'EUR' },
   },
+  emits: ['open-ticker'],
   data() {
     return {
       allocation: { sectors: [], regions: [], companies: [], total_value: 0 },

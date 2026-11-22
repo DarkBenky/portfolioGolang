@@ -1,43 +1,113 @@
-export function formatMarkdown(text) {
-  if (!text) return ''
-
-  let html = text
-
-  html = html.replace(/&/g, '&amp;')
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
 
-  html = html.replace(/^### (.+)$/gm, '<h4 class="text-subtitle-2 font-weight-bold mt-3 mb-1">$1</h4>')
-  html = html.replace(/^## (.+)$/gm, '<h3 class="text-subtitle-1 font-weight-bold mt-3 mb-1">$1</h3>')
-  html = html.replace(/^# (.+)$/gm, '<h2 class="text-h6 font-weight-bold mt-3 mb-2">$1</h2>')
-
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
-  html = html.replace(/_(.+?)_/g, '<em>$1</em>')
-
-  html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="ml-4 my-2">$&</ul>')
-  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-
-  html = html.replace(/`([^`]+)`/g, '<code class="px-1 rounded" style="background: rgba(var(--v-theme-surface-variant), 0.5);">$1</code>')
-
-  // Only http(s) links survive. The escapes above already block attribute
-  // injection, and the scheme check blocks javascript: URLs from model output.
-  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) => {
+function inline(text) {
+  let result = escapeHtml(text)
+  result = result.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+  result = result.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  result = result.replace(/\*(.+?)\*/g, '<em>$1</em>')
+  result = result.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+  // Only http(s) links survive. Everything else is rendered as plain text, which
+  // keeps javascript: URLs from model output harmless.
+  result = result.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) => {
     if (!/^https?:\/\//i.test(url)) return label
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary">${label}</a>`
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
   })
+  return result
+}
 
-  html = html.replace(/\n\n/g, '</p><p class="mb-2">')
-  html = '<p class="mb-2">' + html + '</p>'
-  html = html.replace(/\n/g, '<br>')
+// formatMarkdown turns model output into HTML block by block. Rendering complete
+// blocks avoids the empty paragraphs that a chain of global replaces produces, which
+// is what made long summaries look like they had holes in them.
+export function formatMarkdown(text) {
+  if (!text) return ''
 
-  html = html.replace(/<p class="mb-2"><\/p>/g, '')
-  html = html.replace(/<p class="mb-2">(<h[2-4])/g, '$1')
-  html = html.replace(/(<\/h[2-4]>)<\/p>/g, '$1')
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n')
+  const out = []
+  let paragraph = []
+  let list = null
+  let listTag = ''
+  let ordered = false
 
-  return html
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    out.push(`<p>${paragraph.map(inline).join('<br>')}</p>`)
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!list) return
+    out.push(`<${listTag}>${list.join('')}</${listTag}>`)
+    list = null
+  }
+  const closeBlocks = () => {
+    flushParagraph()
+    flushList()
+  }
+
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      closeBlocks()
+      continue
+    }
+    if (/^([-*_])\1{2,}$/.test(trimmed)) {
+      closeBlocks()
+      out.push('<hr>')
+      continue
+    }
+
+    const heading = trimmed.match(/^(#{1,4})\s+(.*)$/)
+    if (heading) {
+      closeBlocks()
+      const level = Math.min(heading[1].length + 1, 5)
+      out.push(`<h${level}>${inline(heading[2])}</h${level}>`)
+      continue
+    }
+
+    const bullet = trimmed.match(/^[-*+]\s+(.*)$/)
+    if (bullet) {
+      flushParagraph()
+      if (!list || ordered) {
+        flushList()
+        list = []
+        listTag = 'ul'
+        ordered = false
+      }
+      list.push(`<li>${inline(bullet[1])}</li>`)
+      continue
+    }
+
+    const numbered = trimmed.match(/^\d+[.)]\s+(.*)$/)
+    if (numbered) {
+      flushParagraph()
+      if (!list || !ordered) {
+        flushList()
+        list = []
+        listTag = 'ol'
+        ordered = true
+      }
+      list.push(`<li>${inline(numbered[1])}</li>`)
+      continue
+    }
+
+    // A line indented under a list item continues that item.
+    if (list && /^\s{2,}/.test(line)) {
+      const last = list.length - 1
+      list[last] = list[last].replace(/<\/li>$/, ` ${inline(trimmed)}</li>`)
+      continue
+    }
+
+    flushList()
+    paragraph.push(trimmed)
+  }
+  closeBlocks()
+  return out.join('')
 }

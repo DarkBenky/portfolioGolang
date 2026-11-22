@@ -46,7 +46,7 @@
                 <v-chip :color="sentimentColor" size="small" variant="tonal" class="mr-2">
                   {{ sentimentLabel }}
                 </v-chip>
-                <span class="text-caption text-grey">
+                <span class="text-caption text-medium-emphasis">
                   {{ windowDays }}-day window ending {{ formatDate(data.date) }}
                 </span>
               </div>
@@ -58,13 +58,13 @@
                   rounded
                 ></v-progress-linear>
                 <div class="d-flex justify-space-between mt-1">
-                  <span class="text-caption text-grey">Very Negative</span>
-                  <span class="text-caption text-grey">Negative</span>
+                  <span class="text-caption text-medium-emphasis">Very Negative</span>
+                  <span class="text-caption text-medium-emphasis">Negative</span>
                   <span class="text-caption font-weight-bold" :style="{ color: sentimentColor }">
                     {{ data.sentiment.toFixed(2) }}
                   </span>
-                  <span class="text-caption text-grey">Positive</span>
-                  <span class="text-caption text-grey">Very Positive</span>
+                  <span class="text-caption text-medium-emphasis">Positive</span>
+                  <span class="text-caption text-medium-emphasis">Very Positive</span>
                 </div>
               </div>
               <div class="text-body-2 markdown-content" v-html="formatMarkdown(data.summary)"></div>
@@ -80,14 +80,18 @@
             Key Themes
           </div>
         </v-col>
-        <v-col v-for="(theme, i) in data.theme_predictions" :key="'theme-' + i" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="theme-card">
-            <v-card-text class="pa-2">
-              <div class="d-flex align-center mb-1">
-                <span class="font-weight-bold text-body-2">{{ theme.theme }}</span>
-              </div>
-              <div v-for="(sc, j) in (theme.scenarios || []).slice(0, 1)" :key="'ts-' + j">
-                <p class="text-caption text-grey-darken-2 mb-0">{{ sc.description }}</p>
+        <v-col v-for="(theme, i) in data.theme_predictions" :key="'theme-' + i" cols="12" md="6" lg="4" class="d-flex">
+          <v-card variant="outlined" class="theme-card flex-grow-1">
+            <v-card-text class="pa-3">
+              <div class="text-body-2 font-weight-bold mb-2">{{ theme.theme }}</div>
+              <div v-for="(sc, j) in (theme.scenarios || []).slice(0, 2)" :key="'ts-' + j" class="mb-2">
+                <div class="d-flex align-center mb-1">
+                  <v-chip :color="getScenarioColor(sc.label)" size="x-small" variant="flat" class="mr-2">
+                    {{ sc.probability }}%
+                  </v-chip>
+                  <span class="text-caption font-weight-medium">{{ sc.label }}</span>
+                </div>
+                <p class="text-caption text-medium-emphasis mb-0 scenario-desc">{{ sc.description }}</p>
               </div>
             </v-card-text>
           </v-card>
@@ -101,8 +105,8 @@
             Sector Predictions
           </div>
         </v-col>
-        <v-col v-for="(sp, i) in data.sector_predictions" :key="'sector-' + i" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="prediction-card">
+        <v-col v-for="(sp, i) in data.sector_predictions" :key="'sector-' + i" cols="12" md="6" lg="4" class="d-flex">
+          <v-card variant="outlined" class="prediction-card flex-grow-1">
             <v-card-text class="pa-2">
               <div class="font-weight-bold text-body-2 mb-2">{{ sp.sector }}</div>
               <div v-for="(sc, j) in sp.scenarios" :key="'sc-' + j" class="scenario-row mb-1">
@@ -121,7 +125,7 @@
                   rounded
                   class="mt-1"
                 ></v-progress-linear>
-                <p class="text-caption text-grey-darken-2 mt-1 mb-0 scenario-desc">{{ sc.description }}</p>
+                <p class="text-caption text-medium-emphasis mt-1 mb-0 scenario-desc">{{ sc.description }}</p>
               </div>
             </v-card-text>
           </v-card>
@@ -135,8 +139,8 @@
             Theme Predictions
           </div>
         </v-col>
-        <v-col v-for="(tp, i) in data.theme_predictions" :key="'tpred-' + i" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="prediction-card">
+        <v-col v-for="(tp, i) in data.theme_predictions" :key="'tpred-' + i" cols="12" md="6" lg="4" class="d-flex">
+          <v-card variant="outlined" class="prediction-card flex-grow-1">
             <v-card-text class="pa-2">
               <div class="font-weight-bold text-body-2 mb-2">{{ tp.theme }}</div>
               <div v-for="(sc, j) in tp.scenarios" :key="'tsc-' + j" class="scenario-row mb-1">
@@ -155,7 +159,7 @@
                   rounded
                   class="mt-1"
                 ></v-progress-linear>
-                <p class="text-caption text-grey-darken-2 mt-1 mb-0 scenario-desc">{{ sc.description }}</p>
+                <p class="text-caption text-medium-emphasis mt-1 mb-0 scenario-desc">{{ sc.description }}</p>
               </div>
             </v-card-text>
           </v-card>
@@ -188,7 +192,7 @@
                   rounded
                   class="mb-1"
                 ></v-progress-linear>
-                <p class="text-caption text-grey-darken-2 mb-0">{{ sc.description }}</p>
+                <p class="text-caption text-medium-emphasis mb-0">{{ sc.description }}</p>
               </div>
             </v-card-text>
           </v-card>
@@ -498,7 +502,7 @@ export default {
 }
 
 .scenario-desc {
-  line-height: 1.3;
+  line-height: 1.35;
   padding-left: 2px;
 }
 

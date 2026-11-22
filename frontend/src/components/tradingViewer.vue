@@ -265,7 +265,12 @@ export default {
   name: 'TradingViewer',
   components: { CandleChart },
 
-  setup() {
+  props: {
+    focusTicker: { type: String, default: '' },
+    focusNonce: { type: Number, default: 0 },
+  },
+
+  setup(props) {
     const searchQuery = ref('')
     const searchResults = ref([])
     const searchTimeout = ref(null)
@@ -571,10 +576,18 @@ export default {
       })
     })
 
+    // A click on a ticker elsewhere in the app opens it here.
+    function applyFocus() {
+      if (!props.focusTicker) return
+      selectSymbol(props.focusTicker, '')
+    }
+
+    watch(() => props.focusNonce, () => applyFocus())
+
     onMounted(() => {
       updateChartHeight()
       window.addEventListener('resize', updateChartHeight)
-      loadWatchlist()
+      loadWatchlist().then(applyFocus)
     })
 
     onUnmounted(() => {

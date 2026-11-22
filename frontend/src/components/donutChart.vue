@@ -37,6 +37,9 @@
         <span class="legend-dot" :style="{ background: slice.color }"></span>
         <span class="legend-name">{{ slice.name }}</span>
         <span class="legend-value">{{ slice.value.toFixed(1) }}%</span>
+        <span v-if="legendBars" class="legend-track">
+          <span class="legend-bar" :style="{ width: slice.value + '%', background: slice.color }"></span>
+        </span>
       </div>
     </div>
   </div>
@@ -55,6 +58,7 @@ export default {
     centerLabel: { type: String, default: '' },
     centerValue: { type: String, default: '' },
     showLegend: { type: Boolean, default: true },
+    legendBars: { type: Boolean, default: true },
     maxSlices: { type: Number, default: 7 },
   },
   computed: {
@@ -128,11 +132,26 @@ export default {
 }
 
 .legend-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   font-size: 12px;
-  padding: 2px 0;
+  padding: 3px 0;
+}
+
+.legend-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.legend-bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
 }
 
 .legend-dot {

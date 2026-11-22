@@ -34,6 +34,8 @@
           :holding="holding"
           :auth-token="token"
           :home-currency="currency"
+          :focus="focusNonceFor(holding.ticker)"
+          @open-ticker="$emit('open-ticker', { ticker: $event, target: 'trading' })"
           @holding-updated="load"
           @holding-removed="load"
         />
@@ -55,7 +57,10 @@ export default {
   components: { HoldingView, AddHoldingPanel },
   props: {
     currency: { type: String, default: 'EUR' },
+    focusTicker: { type: String, default: '' },
+    focusNonce: { type: Number, default: 0 },
   },
+  emits: ['open-ticker'],
   data() {
     return {
       token: authToken(),
@@ -65,13 +70,28 @@ export default {
       showAdd: false,
     }
   },
+  watch: {
+    focusNonce() {
+      this.scrollToFocus()
+    },
+  },
   mounted() {
-    this.load()
+    this.load().then(() => this.scrollToFocus())
   },
   methods: {
     onChanged() {
       this.showAdd = false
       this.load()
+    },
+    focusNonceFor(ticker) {
+      return this.focusTicker && ticker === this.focusTicker ? this.focusNonce : 0
+    },
+    scrollToFocus() {
+      if (!this.focusTicker) return
+      this.$nextTick(() => {
+        const row = document.querySelector(`[data-ticker="${CSS.escape(this.focusTicker)}"]`)
+        row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
     },
     async load() {
       this.loading = true

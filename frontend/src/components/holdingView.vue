@@ -29,7 +29,7 @@
   </v-dialog>
 
   <tbody class="holding-tbody">
-    <tr class="holding-row" @click="opened = !opened">
+    <tr class="holding-row" :data-ticker="holding.ticker" @click="opened = !opened">
       <!-- Mini Chart -->
       <td class="chart-cell">
         <div class="mini-chart-container">
@@ -44,7 +44,11 @@
       <td>
         <div class="d-flex align-center">
           <div>
-            <div class="font-weight-bold">{{ holding.ticker }}</div>
+            <div
+              class="font-weight-bold ticker-link"
+              title="Open on the trading chart"
+              @click.stop="$emit('open-ticker', holding.ticker)"
+            >{{ holding.ticker }}</div>
             <div class="text-caption text-grey text-truncate" style="max-width: 140px;">
               {{ holding.name }}
             </div>
@@ -899,10 +903,20 @@ export default {
     homeCurrency: {
       type: String,
       default: 'EUR'
+    },
+    focus: {
+      type: Number,
+      default: 0
     }
   },
 
-  emits: ['click', 'day-change'],
+  emits: ['click', 'day-change', 'open-ticker'],
+
+  watch: {
+    focus(value) {
+      if (value > 0) this.opened = true
+    },
+  },
 
   data() {
     return {

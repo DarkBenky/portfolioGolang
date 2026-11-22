@@ -47,12 +47,21 @@
 
       <v-main class="app-main">
         <v-container fluid class="pa-3 pa-md-6 pb-16 pb-md-6">
-          <dashboard-view v-if="view === 'dashboard'" :currency="homeCurrency" @navigate="selectView" />
-          <holdings-view v-else-if="view === 'holdings'" :currency="homeCurrency" />
+          <dashboard-view
+            v-if="view === 'dashboard'"
+            :currency="homeCurrency"
+            @navigate="selectView"
+            @open-ticker="openTicker"
+          />
+          <holdings-view v-else-if="view === 'holdings'" :currency="homeCurrency"
+            :focus-ticker="focus.ticker" :focus-nonce="focus.nonce" />
           <news-view v-else-if="view === 'news'" />
-          <allocation-view v-else-if="view === 'allocation'" :currency="homeCurrency" />
-          <statistics-view v-else-if="view === 'statistics'" :currency="homeCurrency" />
-          <trading-viewer v-else-if="view === 'trading'" />
+          <allocation-view v-else-if="view === 'allocation'" :currency="homeCurrency"
+            @open-ticker="openTicker" />
+          <statistics-view v-else-if="view === 'statistics'" :currency="homeCurrency"
+            @open-ticker="openTicker" />
+          <trading-viewer v-else-if="view === 'trading'"
+            :focus-ticker="focus.ticker" :focus-nonce="focus.nonce" />
           <running-summary-view v-else-if="view === 'summary'" :auth-token="token" />
           <expenses-view v-else-if="view === 'expenses'" />
           <chat-view v-else-if="view === 'chat'" />
@@ -121,6 +130,7 @@ export default {
       currencies: ['EUR', 'USD', 'CHF', 'GBP'],
       drawer: !this.isMobileViewport(),
       view: localStorage.getItem('lastView') || 'dashboard',
+      focus: { ticker: '', nonce: 0 },
       navigation: [
         { value: 'dashboard', title: 'Dashboard', icon: 'mdi-view-dashboard-outline' },
         { value: 'holdings', title: 'Holdings', icon: 'mdi-briefcase-outline' },
@@ -158,6 +168,15 @@ export default {
       this.view = value
       localStorage.setItem('lastView', value)
       if (this.isMobile) this.drawer = false
+    },
+    // Any ticker rendered by a view can be opened in the holdings table or on the
+    // trading chart. The nonce makes a repeated click re-trigger the target.
+    openTicker(payload) {
+      const ticker = typeof payload === 'string' ? payload : payload?.ticker
+      if (!ticker) return
+      const target = typeof payload === 'string' ? 'trading' : payload.target || 'trading'
+      this.focus = { ticker, nonce: this.focus.nonce + 1 }
+      this.selectView(target)
     },
     onBottomNav(value) {
       if (value === 'more') {
@@ -230,6 +249,100 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   background: #1a1a1a;
+}
+
+.equal-rows {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.equal-rows > * {
+  height: 100%;
+}
+
+.markdown-content {
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.85);
+  overflow-wrap: anywhere;
+}
+
+.markdown-content p {
+  margin: 0 0 8px;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.markdown-content h2 {
+  font-size: 15px;
+}
+
+.markdown-content h3 {
+  font-size: 14px;
+}
+
+.markdown-content h4,
+.markdown-content h5 {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.markdown-content li {
+  margin: 2px 0;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 10px 0;
+}
+
+.markdown-content a {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+.markdown-content .inline-code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 12px;
+}
+
+.ticker-link {
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.ticker-link:hover {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
 }
 
 @media (max-width: 600px) {
