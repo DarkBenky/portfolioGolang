@@ -73,7 +73,7 @@
             :thickness="16"
             :max-slices="6"
             :center-label="group.short"
-            :center-value="group.items[0].percentage.toFixed(0) + '%'"
+            :center-value="group.top.toFixed(0) + '%'"
           />
           <div v-else class="text-caption text-medium-emphasis py-6 text-center">No breakdown stored.</div>
           <v-btn size="x-small" variant="text" class="px-0 mt-1" @click="$emit('navigate', 'allocation')">
@@ -282,10 +282,17 @@ export default {
     },
     allocationGroups() {
       const allocation = this.allocation
+      const group = (key, title, short, items) => ({
+        key,
+        title,
+        short,
+        items,
+        top: items.reduce((best, item) => Math.max(best, Number(item.percentage) || 0), 0),
+      })
       return [
-        { key: 'sectors', title: 'Sector allocation', short: 'Top sector', items: allocation.sectors || [] },
-        { key: 'regions', title: 'Region allocation', short: 'Top region', items: allocation.regions || [] },
-        { key: 'companies', title: 'Top companies', short: 'Top company', items: allocation.companies || [] },
+        group('sectors', 'Sector allocation', 'Top sector', allocation.sectors || []),
+        group('regions', 'Region allocation', 'Top region', allocation.regions || []),
+        group('companies', 'Top companies', 'Top company', allocation.companies || []),
       ]
     },
     movers() {

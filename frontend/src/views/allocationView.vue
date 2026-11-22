@@ -27,7 +27,7 @@
             :thickness="18"
             :max-slices="7"
             :center-label="section.short"
-            :center-value="section.items[0].percentage.toFixed(0) + '%'"
+            :center-value="section.top.toFixed(0) + '%'"
           />
           <div v-else class="text-caption text-medium-emphasis py-6 text-center">No data.</div>
         </div>
@@ -102,10 +102,17 @@ export default {
   },
   computed: {
     sections() {
+      const section = (key, title, short, items) => ({
+        key,
+        title,
+        short,
+        items,
+        top: items.reduce((best, item) => Math.max(best, Number(item.percentage) || 0), 0),
+      })
       return [
-        { key: 'sectors', title: 'Sectors', short: 'Top sector', items: this.allocation.sectors || [], color: 'primary' },
-        { key: 'regions', title: 'Regions', short: 'Top region', items: this.allocation.regions || [], color: 'teal' },
-        { key: 'companies', title: 'Top companies', short: 'Top company', items: this.allocation.companies || [], color: 'amber' },
+        section('sectors', 'Sectors', 'Top sector', this.allocation.sectors || []),
+        section('regions', 'Regions', 'Top region', this.allocation.regions || []),
+        section('companies', 'Top companies', 'Top company', this.allocation.companies || []),
       ]
     },
     byHolding() {
