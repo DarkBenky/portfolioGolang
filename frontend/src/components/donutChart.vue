@@ -77,7 +77,7 @@ export default {
       const visible = sorted.slice(0, this.maxSlices)
       const rest = sorted.slice(this.maxSlices)
       if (rest.length) {
-        visible.push({ name: 'Other', value: rest.reduce((sum, item) => sum + item.value, 0) })
+        visible.push({ name: 'Remaining', value: rest.reduce((sum, item) => sum + item.value, 0) })
       }
       let offset = 0
       return visible.map((item, index) => {

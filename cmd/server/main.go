@@ -98,7 +98,8 @@ func main() {
 		go serveExtraPort(router, port)
 	}
 
-	log.Printf("serving on %s (chat model %s, cheap model %s)", cfg.HTTPAddr, cfg.ChatModel, cfg.CheapModel)
+	log.Printf("serving on %s (session model %s, summary model %s, cheap model %s)",
+		cfg.HTTPAddr, cfg.SessionModel, cfg.ChatModel, cfg.CheapModel)
 	if err := router.Start(cfg.HTTPAddr); err != nil {
 		log.Fatal(err)
 	}

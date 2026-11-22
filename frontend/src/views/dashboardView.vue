@@ -299,15 +299,22 @@ export default {
       const losers = (this.losers || []).map(asRow).filter((row) => row.ticker && row.change < 0)
       return { gainers, losers }
     },
+    sentimentScore() {
+      // The daily summary carries its own score; prefer it over the news counter,
+      // which is zero on days without fresh articles.
+      if (this.summary && typeof this.summary.sentiment === 'number') return this.summary.sentiment
+      return this.sentiment
+    },
     sentimentLabel() {
-      if (!this.sentimentCount) return 'No data'
-      if (this.sentiment > 0.2) return 'Bullish'
-      if (this.sentiment < -0.2) return 'Bearish'
+      if (!this.sentimentCount && !this.summary) return 'No data'
+      if (this.sentimentScore > 0.2) return 'Bullish'
+      if (this.sentimentScore < -0.2) return 'Bearish'
       return 'Neutral'
     },
     sentimentColor() {
-      if (this.sentiment > 0.2) return 'success'
-      if (this.sentiment < -0.2) return 'error'
+      if (!this.sentimentCount && !this.summary) return 'grey'
+      if (this.sentimentScore > 0.2) return 'success'
+      if (this.sentimentScore < -0.2) return 'error'
       return 'grey'
     },
     monthSpend() {
