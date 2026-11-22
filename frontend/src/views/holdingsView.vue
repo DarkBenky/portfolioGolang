@@ -11,12 +11,13 @@
           density="compact"
           variant="outlined"
           hide-details
+          single-line
           clearable
-          placeholder="Search ticker, name or ISIN"
+          placeholder="Search"
           prepend-inner-icon="mdi-magnify"
           class="holdings-search"
         />
-        <v-btn size="small" variant="outlined" prepend-icon="mdi-plus" @click="showAdd = !showAdd">
+        <v-btn size="small" variant="outlined" prepend-icon="mdi-plus" class="add-holding" @click="showAdd = !showAdd">
           {{ showAdd ? 'Close' : 'Add holding' }}
         </v-btn>
       </div>
@@ -52,6 +53,7 @@
           :focus="focusNonceFor(holding.ticker)"
           @open-ticker="$emit('open-ticker', { ticker: $event, target: 'trading' })"
           @day-change="onDayChange"
+          @value="onRowValue"
           @holding-updated="load"
           @holding-removed="load"
         />
@@ -85,6 +87,7 @@ export default {
       token: authToken(),
       holdings: [],
       dayChanges: {},
+      rowValues: {},
       query: '',
       sortKey: 'value',
       sortDir: -1,
@@ -109,12 +112,15 @@ export default {
             `${holding.ticker} ${holding.name} ${holding.isin}`.toLowerCase().includes(query))
         : this.holdings
       const value = (holding) => (holding.quantity ? holding.value / holding.quantity : 0)
+      // The row converts the live price with its own exchange rate, so its number
+      // can differ slightly from the server value. Sort by what is on screen.
+      const shown = (holding) => this.rowValues[holding.id_holding] ?? holding.value ?? 0
       const pick = {
         ticker: (holding) => holding.ticker || '',
         price: value,
         day: (holding) => this.dayChanges[holding.id_holding] || 0,
         quantity: (holding) => holding.quantity || 0,
-        value: (holding) => holding.value || 0,
+        value: shown,
         gain: (holding) => holding.gain_pct || 0,
       }[this.sortKey]
       return [...filtered].sort((a, b) => {
@@ -144,6 +150,10 @@ export default {
     },
     onDayChange(id, percent) {
       this.dayChanges = { ...this.dayChanges, [id]: percent }
+    },
+    onRowValue(id, value) {
+      if (this.rowValues[id] === value) return
+      this.rowValues = { ...this.rowValues, [id]: value }
     },
     onChanged() {
       this.showAdd = false
@@ -180,8 +190,29 @@ export default {
 }
 
 .holdings-search {
-  max-width: 280px;
-  min-width: 240px;
+  width: 200px;
+}
+
+.holdings-search :deep(.v-field) {
+  --v-input-control-height: 32px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.holdings-search :deep(.v-field__input) {
+  min-height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 13px;
+}
+
+.holdings-search :deep(.v-icon) {
+  font-size: 17px;
+  opacity: 0.6;
+}
+
+.add-holding {
+  text-transform: none;
 }
 
 .sortable {
@@ -204,7 +235,6 @@ export default {
 
 @media (max-width: 600px) {
   .holdings-search {
-    max-width: none;
     width: 100%;
   }
 }

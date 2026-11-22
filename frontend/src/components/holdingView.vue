@@ -910,12 +910,63 @@ export default {
     }
   },
 
-  emits: ['click', 'day-change', 'open-ticker'],
+  emits: ['click', 'day-change', 'value', 'open-ticker'],
 
   watch: {
     focus(value) {
       if (value > 0) this.opened = true
     },
+    currentValue(value) {
+      // The parent sorts by size, so it needs the exact number rendered here.
+      this.$emit('value', this.holding.id_holding, value)
+    },
+    homeCurrency() {
+      this.fetchConversionRate()
+    },
+    opened(newVal) {
+      if (newVal) {
+        this.fetchFullPriceHistory()
+        this.fetchNews()
+        this.fetchDailySummary()
+        this.fetchAssetDetailsForHoldings()
+        this.fetchAssetCharts()
+      }
+    },
+    chartInterval() {
+      if (this.opened) {
+        this.fetchFullPriceHistory()
+      }
+    },
+    showEditDialog(newVal) {
+      if (newVal) {
+        this.editForm = {
+          name: this.holding.name,
+          ticker: this.holding.ticker || '',
+          isin: this.holding.isin || '',
+          quantity: this.holding.quantity,
+          purchasePrice: this.holding.purchase_price,
+          ter: this.holding.ter || 0,
+          policy: this.holding.policy || 'N/A'
+        }
+        this.editError = ''
+        this.editSuccess = false
+      }
+    },
+    showAddQuantityDialog(newVal) {
+      if (newVal) {
+        this.addQuantityForm = {
+          quantity: 0,
+          price: this.currentPrice || 0
+        }
+        this.addError = ''
+        this.addSuccess = false
+      }
+    },
+    showRemoveDialog(newVal) {
+      if (newVal) {
+        this.removeError = ''
+      }
+    }
   },
 
   data() {
@@ -1084,56 +1135,6 @@ export default {
       }))
 
       return this.generatePieSlices(percentages, this.pieColors)
-    }
-  },
-
-  watch: {
-    homeCurrency() {
-      this.fetchConversionRate()
-    },
-    opened(newVal) {
-      if (newVal) {
-        this.fetchFullPriceHistory()
-        this.fetchNews()
-        this.fetchDailySummary()
-        this.fetchAssetDetailsForHoldings()
-        this.fetchAssetCharts()
-      }
-    },
-    chartInterval() {
-      if (this.opened) {
-        this.fetchFullPriceHistory()
-      }
-    },
-    showEditDialog(newVal) {
-      if (newVal) {
-        this.editForm = {
-          name: this.holding.name,
-          ticker: this.holding.ticker || '',
-          isin: this.holding.isin || '',
-          quantity: this.holding.quantity,
-          purchasePrice: this.holding.purchase_price,
-          ter: this.holding.ter || 0,
-          policy: this.holding.policy || 'N/A'
-        }
-        this.editError = ''
-        this.editSuccess = false
-      }
-    },
-    showAddQuantityDialog(newVal) {
-      if (newVal) {
-        this.addQuantityForm = {
-          quantity: 0,
-          price: this.currentPrice || 0
-        }
-        this.addError = ''
-        this.addSuccess = false
-      }
-    },
-    showRemoveDialog(newVal) {
-      if (newVal) {
-        this.removeError = ''
-      }
     }
   },
 

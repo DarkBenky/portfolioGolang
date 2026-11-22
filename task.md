@@ -46,6 +46,8 @@ Note - i added to the .env new api key for open router with 2 dollars of credits
 36. ![alt text](image-19.png) wthf is this gray box
 37. ![alt text](image-20.png) hoding tabb is mising sorrting in the table and search
 38. ![alt text](image-21.png) missing hover effects on staff
+39. ![alt text](image-22.png) missing sorting based on size of the holding
+40. ![alt text](image-23.png) search bar too large and not fitting the stile
 
 39. deploy this new updated version on vm http://91.98.145.193:5173/
 40. try to exploited it and find any other security issues and fix them
