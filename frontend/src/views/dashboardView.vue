@@ -157,6 +157,14 @@
                 {{ item.ticker }} · {{ ago(item.published_at) }}
               </div>
             </div>
+            <span
+              v-if="typeof item.sentiment === 'number'"
+              class="news-sentiment"
+              :class="`text-${sentimentTone(item.sentiment)}`"
+            >
+              <v-icon size="12">{{ sentimentIcon(item.sentiment) }}</v-icon>
+              {{ item.sentiment > 0 ? '+' : '' }}{{ item.sentiment.toFixed(2) }}
+            </span>
           </div>
           <div v-if="!news.length" class="text-caption text-medium-emphasis py-4 text-center">
             No articles for your holdings yet.
@@ -421,6 +429,16 @@ export default {
     percent(value) {
       return formatPercent(value)
     },
+    sentimentTone(value) {
+      if (value > 0.3) return 'success'
+      if (value < -0.3) return 'error'
+      return 'medium-emphasis'
+    },
+    sentimentIcon(value) {
+      if (value > 0.3) return 'mdi-thumb-up'
+      if (value < -0.3) return 'mdi-thumb-down'
+      return 'mdi-minus'
+    },
     bytes(value) {
       const size = Number(value) || 0
       if (size < 1024) return `${size} B`
@@ -593,6 +611,17 @@ export default {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.news-sentiment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 8px;
+  flex-shrink: 0;
 }
 
 .snapshot-row {

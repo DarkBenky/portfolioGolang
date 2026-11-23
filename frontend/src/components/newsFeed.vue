@@ -45,6 +45,7 @@
                 {{ getSentimentIcon(item.sentiment) }}
               </v-icon>
               {{ getSentimentLabel(item.sentiment) }}
+              <span class="ml-1 sentiment-score">{{ formatScore(item.sentiment) }}</span>
             </v-chip>
 
             <v-spacer></v-spacer>
@@ -187,6 +188,11 @@ export default {
       return 'Neutral'
     },
 
+    formatScore(sentiment) {
+      const value = Number(sentiment) || 0
+      return `${value > 0 ? '+' : ''}${value.toFixed(2)}`
+    },
+
     formatTimeAgo(timestamp) {
       if (!timestamp) return ''
       
@@ -212,6 +218,12 @@ export default {
 <style scoped>
 .news-feed {
   width: 100%;
+}
+
+.sentiment-score {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  font-size: 11px;
 }
 
 .news-item {
