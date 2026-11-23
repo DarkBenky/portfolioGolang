@@ -276,6 +276,12 @@ func (x *Indexer) collect() ([]sourceItem, error) {
 }
 
 func formatResults(results []store.SearchResult) string {
+	// A page read on purpose has a single result and deserves its body; a search
+	// keeps snippets short because it returns several results at once.
+	limit := 600
+	if len(results) == 1 {
+		limit = 2400
+	}
 	var sb strings.Builder
 	for _, result := range results {
 		sb.WriteString("- " + llm.Truncate(result.Title, 120))
@@ -283,9 +289,7 @@ func formatResults(results []store.SearchResult) string {
 			sb.WriteString(": " + llm.Truncate(result.Snippet, 300))
 		}
 		if result.Text != "" {
-			// Pages that are read on purpose (a shared link) are worth the body;
-			// search snippets stay short because there are several per query.
-			sb.WriteString("\n  " + llm.Truncate(result.Text, 2400))
+			sb.WriteString("\n  " + llm.Truncate(result.Text, limit))
 		}
 		sb.WriteString("\n")
 	}
