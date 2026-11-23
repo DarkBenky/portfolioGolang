@@ -40,6 +40,9 @@ func main() {
 		log.Fatal("database: ", err)
 	}
 	defer db.Close()
+	if err := db.FailOrphanedStreams(); err != nil {
+		log.Printf("chat: orphaned streams: %v", err)
+	}
 	if err := db.EnsurePinsTable(); err != nil {
 		log.Fatal("pins table: ", err)
 	}

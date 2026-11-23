@@ -96,6 +96,13 @@ func (d *DB) CreatePendingAssistantMessage(conversationID string) (string, error
 	return d.AddChatMessage(conversationID, "assistant", "", "")
 }
 
+// FailOrphanedStreams closes messages that a restart left mid-stream. Without it
+// the UI keeps polling a "Generating" bubble that will never finish.
+func (d *DB) FailOrphanedStreams() error {
+	_, err := d.Exec(`UPDATE chat_messages SET status = 'failed' WHERE status = 'streaming'`)
+	return err
+}
+
 func (d *DB) UpdateChatMessage(id string, content string, searchResults string, status string, trace string) error {
 	_, err := d.Exec(`UPDATE chat_messages SET content = ?, search_results = ?, status = ?, trace = ? WHERE id = ?`,
 		content, searchResults, status, trace, id)

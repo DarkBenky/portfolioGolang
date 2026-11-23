@@ -1,6 +1,11 @@
 <template>
   <div class="chat-root">
     <div class="chat-layout">
+      <div
+        v-if="isMobile && sidebarOpen"
+        class="chat-backdrop"
+        @click="sidebarOpen = false"
+      ></div>
       <aside class="chat-sidebar" :class="{ 'chat-sidebar-hidden': !sidebarOpen && isMobile }">
         <div class="d-flex align-center py-2 px-2">
           <span class="text-subtitle-2 font-weight-bold">Conversations</span>
@@ -205,19 +210,21 @@
         </div>
 
         <div class="chat-input">
-          <v-textarea
-            v-model="input"
-            :disabled="streaming"
-            variant="outlined"
-            density="compact"
-            hide-details
-            rows="1"
-            auto-grow
-            max-rows="4"
-            placeholder="Ask about your portfolio..."
-            @keydown.enter.exact.prevent="sendMessage"
-          ></v-textarea>
-          <v-btn color="primary" class="ml-2" :loading="streaming" :disabled="!input.trim() || streaming" @click="sendMessage">
+          <div class="chat-input-field">
+            <v-textarea
+              v-model="input"
+              :disabled="streaming"
+              variant="outlined"
+              density="compact"
+              hide-details
+              rows="1"
+              auto-grow
+              max-rows="4"
+              placeholder="Ask about your portfolio..."
+              @keydown.enter.exact.prevent="sendMessage"
+            ></v-textarea>
+          </div>
+          <v-btn color="primary" class="ml-2 chat-send" :loading="streaming" :disabled="!input.trim() || streaming" @click="sendMessage">
             <v-icon>mdi-send</v-icon>
           </v-btn>
         </div>
@@ -227,7 +234,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { API_BASE_URL } from '../config'
 import { formatMarkdown } from '../utils/markdown'
 
@@ -240,7 +247,10 @@ function getCookie(name) {
   return null
 }
 
-const isMobile = computed(() => window.innerWidth < 960)
+const isMobile = ref(window.innerWidth < 960)
+const onResize = () => {
+  isMobile.value = window.innerWidth < 960
+}
 const sidebarOpen = ref(!isMobile.value)
 const conversations = ref([])
 const activeConversationId = ref(null)
@@ -512,13 +522,20 @@ async function retryLast() {
 }
 
 onMounted(async () => {
+  window.addEventListener('resize', onResize)
   await Promise.all([loadConversations(), loadUsage()])
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
 })
 </script>
 
 <style scoped>
 .chat-root {
   height: calc(100vh - 108px);
+  /* 100vh includes the phone browser chrome, which pushes the input off screen. */
+  height: calc(100dvh - 108px);
   min-height: 420px;
 }
 
@@ -526,6 +543,7 @@ onMounted(async () => {
   display: flex;
   height: 100%;
   gap: 12px;
+  position: relative;
 }
 
 .chat-sidebar {
@@ -700,17 +718,38 @@ onMounted(async () => {
   align-items: flex-end;
   padding: 8px 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 8px;
+}
+
+.chat-input-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-send {
+  flex-shrink: 0;
+  min-width: 46px;
+}
+
+.chat-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: rgba(0, 0, 0, 0.55);
 }
 
 @media (max-width: 959px) {
   .chat-root {
     height: calc(100vh - 150px);
+    height: calc(100dvh - 150px);
   }
 
   .chat-sidebar {
     position: absolute;
+    top: 0;
+    left: 0;
     z-index: 20;
-    height: calc(100vh - 150px);
+    height: 100%;
     width: 78vw;
     max-width: 300px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);

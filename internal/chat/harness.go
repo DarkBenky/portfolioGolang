@@ -189,6 +189,33 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 	}
 
 	trace.Sources = len(sources)
+	if strings.TrimSpace(finalAnswer) == "" {
+		// tencent/hy4-flash sometimes spends the whole completion budget on
+		// reasoning and returns no text. Ask once more with thinking disabled so
+		// a failed turn still produces an answer.
+		emit(map[string]any{"status": "Writing the answer..."})
+		retryStart := time.Now()
+		retryMessages := append(append([]llm.Message{}, messages...), llm.Message{
+			Role: "user", Content: "Answer the question now in plain text. Do not call any tool and do not think out loud.",
+		})
+		if completion, err := s.llm.Answer(ctx, userID, retryMessages); err == nil {
+			answer := strings.TrimSpace(stripDSML(completion.Content))
+			trace.Steps = append(trace.Steps, TraceStep{
+				Round: len(trace.Steps) + 1, Content: answer,
+				PromptTokens: completion.PromptTokens, CompletionTokens: completion.CompletionTokens,
+				CachedTokens: completion.CachedTokens, CostUSD: completion.CostUSD,
+				DurationMS: time.Since(retryStart).Milliseconds(),
+			})
+			trace.PromptTokens += completion.PromptTokens
+			trace.CompletionTokens += completion.CompletionTokens
+			trace.CachedTokens += completion.CachedTokens
+			trace.CostUSD += completion.CostUSD
+			if answer != "" {
+				finalAnswer = answer
+				emit(map[string]any{"delta": answer})
+			}
+		}
+	}
 	trace.DurationMS = time.Since(started).Milliseconds()
 	if strings.TrimSpace(finalAnswer) == "" {
 		emit(map[string]any{"error": "I could not generate an answer. Please try again."})
@@ -487,7 +514,11 @@ const systemPrompt = `You are a careful finance assistant for a personal portfol
 Rules:
 - Answer from the supplied portfolio context and the tools. Never invent prices, holdings or expenses.
 - The context already lists every holding with prices and cost basis, so simple portfolio questions need no tool call.
-- Prefer local tools (get_portfolio, get_price_history, get_news, get_spending, search_documents) over web_search. Use at most two tool calls before answering.
+- Pick the tool that matches the question:
+  - get_portfolio, get_price_history, get_news, get_spending for recorded facts.
+  - search_documents for anything said in stored articles, summaries or reports.
+  - web_search for market moves, causes of a drop, company events and anything that happened after the stored articles. If the user asks why something moved and the stored corpus does not explain it, search the web instead of saying the data is missing.
+- Use at most three tool calls before answering.
 - Be concise: short paragraphs, no filler, no repetition of the context, no restating the question.
 - Plain text or light markdown. Never emit tool call markup or XML tags.
 - State uncertainty plainly and do not give absolute financial advice.`
@@ -529,7 +560,7 @@ func localTools() []llm.Tool {
 				"query": stringProp("Keywords to search"),
 			}, "query")}},
 		{Type: "function", Function: llm.ToolFunction{
-			Name: "web_search", Description: "Search the live web. Use only when local context is insufficient.",
+			Name: "web_search", Description: "Search the live web for news and market events that are not in the stored corpus, such as why a stock moved today, recent company announcements or macro headlines.",
 			Parameters: object(map[string]any{
 				"query": stringProp("Search query"),
 			}, "query")}},

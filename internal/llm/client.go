@@ -300,6 +300,24 @@ func (c *Client) headers(req *http.Request) {
 	req.Header.Set("X-Title", "portfolio")
 }
 
+// Answer runs one tool-free round with thinking disabled. The chat model is a
+// reasoning model and sometimes spends the whole completion budget on reasoning,
+// which returns an empty content. This path guarantees plain text.
+func (c *Client) Answer(ctx context.Context, userID string, messages []Message) (*Completion, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("llm: OPENROUTER_API_KEY not configured")
+	}
+	if err := c.checkBudget(userID); err != nil {
+		return nil, err
+	}
+	completion, err := c.do(ctx, KindChat, messages, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	c.record(userID, KindChat, completion)
+	return completion, nil
+}
+
 func (c *Client) record(userID string, kind Kind, completion *Completion) {
 	if c.db == nil || completion == nil {
 		return
