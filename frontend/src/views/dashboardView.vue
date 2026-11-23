@@ -430,13 +430,14 @@ export default {
       return formatPercent(value)
     },
     sentimentTone(value) {
-      if (value > 0.3) return 'success'
-      if (value < -0.3) return 'error'
+      // Matches the label tiers: mild sentiment starts at 0.1.
+      if (value > 0.1) return 'success'
+      if (value < -0.1) return 'error'
       return 'medium-emphasis'
     },
     sentimentIcon(value) {
-      if (value > 0.3) return 'mdi-thumb-up'
-      if (value < -0.3) return 'mdi-thumb-down'
+      if (value > 0.1) return 'mdi-thumb-up'
+      if (value < -0.1) return 'mdi-thumb-down'
       return 'mdi-minus'
     },
     bytes(value) {
