@@ -314,8 +314,17 @@ func (s *Service) readURL(userID string, target string, emit Emitter, sources *[
 	result := store.SearchResult{Title: title, URL: target, Snippet: llm.Truncate(text, 300), Text: text}
 	*sources = append(*sources, result)
 	emit(map[string]any{"search_results": []store.SearchResult{result}})
-	_ = s.db.SaveWebSearch(strings.ToLower(target), userID, []store.SearchResult{result})
+	s.storePage(userID, target, result)
 	return "Page " + target + ":\n" + llm.Truncate(text, 6000)
+}
+
+// storePage keeps a read page for later turns and refreshes the index. Without the
+// trigger the page would only become searchable at the next scheduled reindex.
+func (s *Service) storePage(userID string, key string, result store.SearchResult) {
+	_ = s.db.SaveWebSearch(strings.ToLower(key), userID, []store.SearchResult{result})
+	if s.rag != nil {
+		s.rag.Trigger()
+	}
 }
 
 // prefetchLinks reads the links contained in the question so the model never has
@@ -338,8 +347,7 @@ func (s *Service) prefetchLinks(userID string, question string, emit Emitter) st
 		emit(map[string]any{"search_results": []store.SearchResult{{
 			Title: title, URL: match, Snippet: llm.Truncate(text, 300), Text: text,
 		}}})
-		_ = s.db.SaveWebSearch(strings.ToLower(match), userID,
-			[]store.SearchResult{{Title: title, URL: match, Snippet: llm.Truncate(text, 300), Text: text}})
+		s.storePage(userID, match, store.SearchResult{Title: title, URL: match, Snippet: llm.Truncate(text, 300), Text: text})
 		fmt.Fprintf(&sb, "- %s (%s):\n%s\n", match, title, llm.Truncate(text, 4000))
 	}
 	if read == 0 {
