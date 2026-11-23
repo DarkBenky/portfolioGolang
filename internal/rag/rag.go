@@ -252,8 +252,11 @@ func (x *Indexer) collect() ([]sourceItem, error) {
 			if rows.Scan(&userID, &query, &payload, &createdAt) == nil && payload != "" {
 				var results []store.SearchResult
 				if json.Unmarshal([]byte(payload), &results) == nil && len(results) > 0 {
+					// A page the user shared keeps its body so the chunker can split it
+					// into several retrievable pieces instead of one snippet.
 					items = append(items, sourceItem{source: "web_search", userID: userID,
-						date: time.Unix(createdAt, 0).Format("2006-01-02"), content: fmt.Sprintf("Web search for %q:\n%s", query, formatResults(results))})
+						date:    time.Unix(createdAt, 0).Format("2006-01-02"),
+						content: fmt.Sprintf("Web page %q:\n%s", query, formatResults(results))})
 				}
 			}
 		}
@@ -280,7 +283,9 @@ func formatResults(results []store.SearchResult) string {
 			sb.WriteString(": " + llm.Truncate(result.Snippet, 300))
 		}
 		if result.Text != "" {
-			sb.WriteString("\n  " + llm.Truncate(result.Text, 600))
+			// Pages that are read on purpose (a shared link) are worth the body;
+			// search snippets stay short because there are several per query.
+			sb.WriteString("\n  " + llm.Truncate(result.Text, 2400))
 		}
 		sb.WriteString("\n")
 	}

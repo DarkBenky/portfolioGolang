@@ -1,12 +1,36 @@
 package market
 
 import (
+	"fmt"
+	"net/url"
 	"strings"
 
 	"golang.org/x/net/html"
 )
 
 const articleTextLimit = 8000
+
+// PageText reads a link the user pasted. Only http and https are accepted; the
+// shared transport already refuses private and loopback destinations.
+func (c *Client) PageText(target string) (string, string, error) {
+	target = strings.TrimSpace(target)
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Host == "" {
+		return "", "", fmt.Errorf("market: invalid link")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", "", fmt.Errorf("market: only http and https links can be read")
+	}
+	text := c.ArticleText(target)
+	if text == "" {
+		return "", target, fmt.Errorf("market: the page could not be read")
+	}
+	title := parsed.Path
+	if title == "" || title == "/" {
+		title = parsed.Host
+	}
+	return text, parsed.Host + title, nil
+}
 
 // ArticleText downloads a news page and keeps its readable paragraphs. Full article
 // text feeds summaries and search results, so boilerplate is dropped early.

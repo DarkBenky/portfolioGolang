@@ -108,6 +108,13 @@ func (s *Service) Run(ctx context.Context, userID string, conversationID string,
 	webSearches := 0
 	finalAnswer := ""
 
+	// A pasted link is read before the first model call. Answering "I cannot open
+	// links" is never useful, and the text is then in the prompt whether or not the
+	// model decides to call a tool.
+	if pages := s.prefetchLinks(userID, question, emit); len(pages) > 0 {
+		messages = append(messages, llm.Message{Role: "system", Content: pages})
+	}
+
 	for round := 0; round < maxToolRounds; round++ {
 		step := TraceStep{Round: round + 1}
 		stepStart := time.Now()
@@ -274,6 +281,12 @@ func (s *Service) callTool(userID string, call llm.ToolCall, webSearches *int, s
 			emit(map[string]any{"search_results": found})
 		}
 		return result
+	case "read_url":
+		return s.readURL(userID, text("url"), emit, sources)
+	case "get_allocation":
+		return s.allocation(userID)
+	case "get_fundamentals":
+		return s.fundamentals(text("ticker"))
 	default:
 		return "Unknown tool."
 	}
@@ -285,6 +298,54 @@ func intArg(args map[string]any, key string, fallback int) int {
 		return fallback
 	}
 	return int(value)
+}
+
+var urlPattern = regexp.MustCompile(`https?://[^\s<>"')\]]+`)
+
+// readURL downloads one page, keeps it for retrieval and returns its text to the
+// model. The page is stored like a web search so the index can use it later.
+func (s *Service) readURL(userID string, target string, emit Emitter, sources *[]store.SearchResult) string {
+	emit(map[string]any{"status": "Reading the link..."})
+	text, title, err := s.market.PageText(target)
+	if err != nil {
+		return "Could not read " + llm.Truncate(target, 120) + ": " + err.Error() +
+			". Answer from the stored context instead and say the page was unreachable."
+	}
+	result := store.SearchResult{Title: title, URL: target, Snippet: llm.Truncate(text, 300), Text: text}
+	*sources = append(*sources, result)
+	emit(map[string]any{"search_results": []store.SearchResult{result}})
+	_ = s.db.SaveWebSearch(strings.ToLower(target), userID, []store.SearchResult{result})
+	return "Page " + target + ":\n" + llm.Truncate(text, 6000)
+}
+
+// prefetchLinks reads the links contained in the question so the model never has
+// to claim it cannot open them. Returns an empty string when there is no link.
+func (s *Service) prefetchLinks(userID string, question string, emit Emitter) string {
+	matches := urlPattern.FindAllString(question, 2)
+	if len(matches) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("The user pasted these links. Their content is below; use it directly and do not say that you cannot open links.\n")
+	read := 0
+	for _, match := range matches {
+		text, title, err := s.market.PageText(strings.TrimRight(match, ".,;:"))
+		if err != nil {
+			fmt.Fprintf(&sb, "- %s: could not be read (%v).\n", match, err)
+			continue
+		}
+		read++
+		emit(map[string]any{"search_results": []store.SearchResult{{
+			Title: title, URL: match, Snippet: llm.Truncate(text, 300), Text: text,
+		}}})
+		_ = s.db.SaveWebSearch(strings.ToLower(match), userID,
+			[]store.SearchResult{{Title: title, URL: match, Snippet: llm.Truncate(text, 300), Text: text}})
+		fmt.Fprintf(&sb, "- %s (%s):\n%s\n", match, title, llm.Truncate(text, 4000))
+	}
+	if read == 0 {
+		return ""
+	}
+	return sb.String()
 }
 
 func (s *Service) webSearch(userID string, query string) (string, []store.SearchResult) {
@@ -477,6 +538,89 @@ func (s *Service) searchDocuments(userID string, query string) string {
 	return sb.String()
 }
 
+// allocation gives the weights the snapshot lacks, so the model can attribute a
+// move to a sector or a position instead of saying it has no breakdown.
+func (s *Service) allocation(userID string) string {
+	holdings, err := s.db.GetHoldingsByUser(userID)
+	if err != nil || len(holdings) == 0 {
+		return "No holdings recorded."
+	}
+	tickers := make([]string, 0, len(holdings))
+	for _, holding := range holdings {
+		tickers = append(tickers, holding.Ticker)
+	}
+	closes, _ := s.prices.LatestCloses(tickers)
+	values := make(map[string]float64, len(holdings))
+	total := 0.0
+	for _, holding := range holdings {
+		price := holding.PurchasePrice
+		if closePrice, ok := closes[holding.Ticker]; ok && closePrice > 0 {
+			price = closePrice
+		}
+		values[holding.IDHolding] = price * holding.Quantity
+		total += values[holding.IDHolding]
+	}
+	if total <= 0 {
+		return "No prices available for the allocation."
+	}
+	sectors := map[string]float64{}
+	regions := map[string]float64{}
+	var sb strings.Builder
+	sb.WriteString("Position weights, largest first:\n")
+	ordered := append([]store.Holding{}, holdings...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return values[ordered[i].IDHolding] > values[ordered[j].IDHolding]
+	})
+	for _, holding := range ordered {
+		weight := values[holding.IDHolding] / total * 100
+		fmt.Fprintf(&sb, "- %s %s: %.1f%% (%.2f)\n", holding.Ticker, holding.Name, weight, values[holding.IDHolding])
+		sectorRows, regionRows, breakdownErr := s.db.GetBreakdownForHolding(holding.IDHolding)
+		if breakdownErr != nil {
+			continue
+		}
+		for _, sector := range sectorRows {
+			sectors[sector.Name] += weight * sector.Percentage / 100
+		}
+		for _, region := range regionRows {
+			regions[region.Name] += weight * region.Percentage / 100
+		}
+	}
+	writeWeights := func(label string, weights map[string]float64) {
+		names := make([]string, 0, len(weights))
+		for name := range weights {
+			names = append(names, name)
+		}
+		sort.Slice(names, func(i, j int) bool { return weights[names[i]] > weights[names[j]] })
+		fmt.Fprintf(&sb, "\n%s:\n", label)
+		for _, name := range names {
+			fmt.Fprintf(&sb, "- %s: %.1f%%\n", name, weights[name])
+		}
+	}
+	if len(sectors) > 0 {
+		writeWeights("Sector exposure", sectors)
+	}
+	if len(regions) > 0 {
+		writeWeights("Region exposure", regions)
+	}
+	return sb.String()
+}
+
+// fundamentals exposes the stored asset details, which the snapshot does not carry.
+func (s *Service) fundamentals(ticker string) string {
+	ticker = s.market.ResolveTicker(ticker)
+	if ticker == "" {
+		return "A ticker is required."
+	}
+	detail, err := s.db.LatestAssetDetails(ticker)
+	if err != nil || detail == nil {
+		return "No stored fundamentals for " + ticker + "."
+	}
+	return fmt.Sprintf("%s fundamentals as of %s: market cap %s, country %s, sector %s, EPS %s, P/E %s, P/B %s, dividend yield %s, revenue %s, net income %s, profit margin %s.",
+		ticker, detail.Date, detail.MarketCap, detail.Country, detail.Sector, detail.Eps,
+		detail.PeRatio, detail.PbRatio, detail.DividendYield, detail.Revenue,
+		detail.NetIncome, detail.ProfitMargin)
+}
+
 // context builds a bounded snapshot. The persona prompt stays first so provider side
 // prompt caching can reuse the stable prefix.
 func (s *Service) context(userID string, question string) string {
@@ -516,8 +660,12 @@ Rules:
 - The context already lists every holding with prices and cost basis, so simple portfolio questions need no tool call.
 - Pick the tool that matches the question:
   - get_portfolio, get_price_history, get_news, get_spending for recorded facts.
+  - get_allocation for weights, sector or region exposure and "which holding is biggest". Do not answer that you lack a breakdown without calling it.
+  - get_fundamentals for valuation and company figures such as P/E, EPS or market cap.
   - search_documents for anything said in stored articles, summaries or reports.
+  - read_url for any link the user pastes and for a search result that looks relevant. The page text is already in the context, so read it there before calling.
   - web_search for market moves, causes of a drop, company events and anything that happened after the stored articles. If the user asks why something moved and the stored corpus does not explain it, search the web instead of saying the data is missing.
+- Never claim that you cannot open a link, and never answer a shared link from its title alone.
 - Use at most three tool calls before answering.
 - Be concise: short paragraphs, no filler, no repetition of the context, no restating the question.
 - Plain text or light markdown. Never emit tool call markup or XML tags.
@@ -559,6 +707,19 @@ func localTools() []llm.Tool {
 			Parameters: object(map[string]any{
 				"query": stringProp("Keywords to search"),
 			}, "query")}},
+		{Type: "function", Function: llm.ToolFunction{
+			Name: "get_allocation", Description: "Position weights plus aggregated sector and region exposure. Use it for 'how much am I in tech', 'which holding is biggest' and to attribute a move to a sector.",
+			Parameters: object(map[string]any{})}},
+		{Type: "function", Function: llm.ToolFunction{
+			Name: "get_fundamentals", Description: "Stored fundamentals for a ticker: market cap, country, sector, EPS, P/E, P/B, dividend yield, revenue, net income, profit margin.",
+			Parameters: object(map[string]any{
+				"ticker": stringProp("Ticker symbol or ISIN"),
+			}, "ticker")}},
+		{Type: "function", Function: llm.ToolFunction{
+			Name: "read_url", Description: "Download one web page and return its text. Use it for any link the user pastes, and for a result that looks relevant.",
+			Parameters: object(map[string]any{
+				"url": stringProp("Absolute http or https link"),
+			}, "url")}},
 		{Type: "function", Function: llm.ToolFunction{
 			Name: "web_search", Description: "Search the live web for news and market events that are not in the stored corpus, such as why a stock moved today, recent company announcements or macro headlines.",
 			Parameters: object(map[string]any{
