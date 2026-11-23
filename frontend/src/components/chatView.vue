@@ -42,11 +42,11 @@
           <v-btn v-if="isMobile" icon size="small" variant="text" @click="sidebarOpen = true">
             <v-icon size="20">mdi-menu</v-icon>
           </v-btn>
-          <span class="text-caption text-medium-emphasis text-truncate">
+          <span class="text-caption text-medium-emphasis text-truncate chat-title">
             {{ activeTitle || 'New conversation' }}
           </span>
           <v-spacer></v-spacer>
-          <v-chip v-if="chatModel" size="x-small" variant="tonal">{{ chatModel }}</v-chip>
+          <v-chip v-if="chatModel" size="x-small" variant="tonal" class="chat-model">{{ chatModel }}</v-chip>
         </div>
 
         <div ref="messagesArea" class="messages-area px-2 px-md-4 py-3">
@@ -598,6 +598,15 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.chat-title {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.chat-model {
+  flex-shrink: 0;
+}
+
 .messages-area {
   flex: 1;
   overflow-y: auto;
@@ -736,6 +745,12 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 19;
   background: rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 599px) {
+  .chat-model {
+    display: none;
+  }
 }
 
 @media (max-width: 959px) {
