@@ -361,7 +361,9 @@ func (s *Service) webSearch(userID string, query string) (string, []store.Search
 	if key == "" {
 		return "Empty search query.", nil
 	}
-	if cached, ok := s.db.CachedWebSearch(key, 7*86400); ok {
+	// Six hours keeps repeated questions cheap while a "latest news" ask does not
+	// replay results from the previous week.
+	if cached, ok := s.db.CachedWebSearch(key, 6*3600); ok {
 		return formatSources(cached), cached
 	}
 	results, status := s.market.Search(query, 5)
@@ -376,7 +378,7 @@ func (s *Service) webSearch(userID string, query string) (string, []store.Search
 	}
 	stores := make([]store.SearchResult, 0, len(results))
 	for _, result := range results {
-		stores = append(stores, store.SearchResult{Title: result.Title, URL: result.URL, Snippet: result.Snippet, Text: result.Text})
+		stores = append(stores, store.SearchResult{Title: result.Title, URL: result.URL, Snippet: result.Snippet, Text: result.Text, Date: result.Date})
 	}
 	_ = s.db.SaveWebSearch(key, userID, stores)
 	return formatSources(stores), stores
@@ -386,6 +388,9 @@ func formatSources(results []store.SearchResult) string {
 	var sb strings.Builder
 	for _, result := range results {
 		sb.WriteString("- " + llm.Truncate(result.Title, 120))
+		if result.Date != "" {
+			sb.WriteString(" (" + llm.Truncate(result.Date, 25) + ")")
+		}
 		if result.Snippet != "" {
 			sb.WriteString(": " + llm.Truncate(result.Snippet, 300))
 		}

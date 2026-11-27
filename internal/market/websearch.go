@@ -16,6 +16,7 @@ type SearchResult struct {
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 	Text    string `json:"text"`
+	Date    string `json:"date,omitempty"`
 }
 
 type searchCache struct {
@@ -81,12 +82,15 @@ func (c *Client) Search(query string, maxResults int) ([]SearchResult, string) {
 	}
 
 	status := strings.Join(statuses, ";")
-	webCache.mu.Lock()
-	if len(webCache.entries) > 256 {
-		webCache.entries = map[string]searchCacheEntry{}
+	// An empty result is not cached, so one provider outage does not block retries.
+	if len(results) > 0 {
+		webCache.mu.Lock()
+		if len(webCache.entries) > 256 {
+			webCache.entries = map[string]searchCacheEntry{}
+		}
+		webCache.entries[key] = searchCacheEntry{results: results, status: status, expires: time.Now().Add(time.Hour)}
+		webCache.mu.Unlock()
 	}
-	webCache.entries[key] = searchCacheEntry{results: results, status: status, expires: time.Now().Add(time.Hour)}
-	webCache.mu.Unlock()
 	return results, status
 }
 
@@ -95,7 +99,7 @@ func (c *Client) Search(query string, maxResults int) ([]SearchResult, string) {
 func (c *Client) SearchWithContent(query string, maxResults int) ([]SearchResult, string) {
 	results, status := c.Search(query, maxResults)
 	for i := range results {
-		if i >= 3 || results[i].URL == "" {
+		if i >= 3 || results[i].URL == "" || results[i].Text != "" {
 			continue
 		}
 		results[i].Text = c.ArticleText(results[i].URL)

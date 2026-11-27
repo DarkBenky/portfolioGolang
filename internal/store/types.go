@@ -153,6 +153,7 @@ type SearchResult struct {
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 	Text    string `json:"text"`
+	Date    string `json:"date,omitempty"`
 }
 
 type GainerLoser struct {
