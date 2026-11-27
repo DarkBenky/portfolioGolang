@@ -68,6 +68,18 @@
               <v-btn value="quarter" size="x-small">Quarter</v-btn>
               <v-btn value="year" size="x-small">Year</v-btn>
             </v-btn-toggle>
+            <v-spacer />
+            <span class="text-caption text-grey font-weight-medium mr-2">GROUP BY</span>
+            <v-btn-toggle v-model="groupBy" mandatory density="compact" divided color="primary" variant="outlined" size="x-small" class="mr-3">
+              <v-btn value="category" size="x-small">Category</v-btn>
+              <v-btn value="merchant" size="x-small">Merchant</v-btn>
+            </v-btn-toggle>
+            <span class="text-caption text-grey font-weight-medium mr-2">SORT</span>
+            <v-btn-toggle v-model="groupSortBy" mandatory density="compact" divided color="primary" variant="outlined" size="x-small">
+              <v-btn value="amount" size="x-small">Amount</v-btn>
+              <v-btn value="count" size="x-small">Count</v-btn>
+              <v-btn value="name" size="x-small">Name</v-btn>
+            </v-btn-toggle>
           </v-col>
         </v-row>
 
@@ -117,16 +129,16 @@
           <v-col cols="12" md="6" class="py-0">
             <v-card variant="outlined">
               <v-card-title class="text-caption text-grey font-weight-medium pa-2 d-flex align-center">
-                <v-icon size="14" class="mr-1">mdi-chart-timeline-variant</v-icon>CATEGORIES BY {{ periodLabel.toUpperCase() }}
+                <v-icon size="14" class="mr-1">mdi-chart-timeline-variant</v-icon>GROUPED BY {{ groupBy.toUpperCase() }}
               </v-card-title>
               <v-card-text class="pa-1">
                 <div style="height: 240px; overflow-y: auto;">
-                  <div v-for="(val, cat) in topCategories" :key="cat" class="cat-bar-row">
-                    <v-chip :color="getCategoryColor(cat)" size="x-small" variant="flat" class="cat-chip">{{ cat }}</v-chip>
-                    <v-progress-linear :model-value="cat === 'Income' ? 0 : (val / maxCategoryVal * 100)" :color="getCategoryColor(cat)" height="8" rounded class="cat-progress" />
-                    <span class="cat-amount">€{{ val.toFixed(0) }}</span>
+                  <div v-for="row in topGroups" :key="row.key" class="cat-bar-row" :style="groupBy === 'merchant' ? 'cursor: pointer' : ''" @click="onGroupClick(row)">
+                    <v-chip :color="row.color" size="x-small" variant="flat" class="cat-chip" :class="{ 'text-capitalize': groupBy === 'merchant' }">{{ row.label }}</v-chip>
+                    <v-progress-linear :model-value="groupBy === 'category' && row.label === 'Income' ? 0 : (row.value / maxGroupVal * 100)" :color="row.color" height="8" rounded class="cat-progress" />
+                    <span class="cat-amount">€{{ row.value.toFixed(0) }}</span>
                   </div>
-                  <div v-if="!Object.keys(topCategories).length" class="text-center text-caption text-grey py-8">No data</div>
+                  <div v-if="!topGroups.length" class="text-center text-caption text-grey py-8">No data</div>
                 </div>
               </v-card-text>
             </v-card>
@@ -200,7 +212,19 @@
                   <v-col cols="2" class="py-0" />
                 </v-row>
 
-                <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" density="compact" class="mt-1">
+                <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1">
+                  <template v-slot:group-header="{ item }">
+                    <tr class="bg-surface-variant">
+                      <td :colspan="unifiedHeaders.length" class="py-1 px-3">
+                        <div class="d-flex align-center ga-2">
+                          <span class="text-caption font-weight-bold text-capitalize">{{ item.value }}</span>
+                          <v-chip size="x-small" variant="tonal">{{ item.items.length }}</v-chip>
+                          <v-spacer />
+                          <span class="text-caption font-weight-bold">{{ groupSubtotal(item) }}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
                   <template v-slot:[`item.date`]="{ item }">
                     <span class="text-caption">{{ item.date }}</span>
                   </template>
@@ -408,6 +432,25 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="merchantDialog" max-width="520px">
+      <v-card v-if="selectedMerchant">
+        <v-card-title class="text-subtitle-2 pa-3 d-flex align-center">
+          <v-chip :color="getCategoryColor(dominantCategory(selectedMerchant))" size="x-small" class="mr-2 text-capitalize">{{ selectedMerchant.name }}</v-chip>
+          <span class="text-caption text-grey">€{{ selectedMerchant.total.toFixed(2) }} in {{ selectedMerchant.count }} transactions</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="merchantDialog = false" />
+        </v-card-title>
+        <v-card-text class="pa-3 pt-0">
+          <div v-for="location in selectedMerchantLocations" :key="location.description" class="detail-row-c">
+            <span class="detail-label">{{ location.description }}</span>
+            <span class="detail-value text-caption font-weight-bold">€{{ location.total.toFixed(2) }} ({{ location.count }})</span>
+          </div>
+          <v-select v-model="mergeTargetKey" :items="mergeCandidates" label="Merge into" variant="outlined" density="compact" class="mt-3" hide-details />
+          <v-btn color="primary" size="small" variant="tonal" class="mt-2" :disabled="!mergeTargetKey" @click="mergeSelectedMerchant" prepend-icon="mdi-call-merge">These are the same store</v-btn>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="editDialog" max-width="400px">
       <v-card>
         <v-card-title class="text-subtitle-2 pa-3">{{ editForm.source === 'bank' ? 'Edit Bank Transaction' : (editForm.id ? 'Edit Expense' : 'Add Expense') }}</v-card-title>
@@ -493,6 +536,8 @@ function getGroupKey(dateStr, grouping) {
 
 const activeTab = ref('all')
 const timeGrouping = ref('month')
+const groupBy = ref('category')
+const groupSortBy = ref('amount')
 
 const expenses = ref([])
 const loading = ref(false)
@@ -525,6 +570,9 @@ const reports = ref([])
 const latestReport = ref(null)
 const reportDialog = ref(false)
 const viewingReport = ref(null)
+const merchantDialog = ref(false)
+const selectedMerchant = ref(null)
+const mergeTargetKey = ref(null)
 
 const allCategories = ref(['Income', 'Groceries', 'Dining', 'Transport', 'Entertainment', 'Shopping', 'Utilities', 'Healthcare', 'Savings', 'Investments', 'Subscriptions', 'Insurance', 'Housing', 'Snacks', 'Services', 'Transfer', 'Other'])
 
@@ -563,12 +611,12 @@ const savingsBarOptions = { responsive: true, maintainAspectRatio: false, plugin
 const unifiedList = computed(() => {
   const list = []
   for (const e of (expenses.value || [])) {
-    list.push({ id: `m-${e.id}`, rawId: e.id, date: e.date, description: e.description, amount: e.amount, category: e.category, direction: 'out', source: 'manual', is_savings_roundup: false })
+    list.push({ id: `m-${e.id}`, rawId: e.id, date: e.date, description: e.description, amount: e.amount, category: e.category, direction: 'out', source: 'manual', is_savings_roundup: false, merchant: e.merchant || e.description, merchant_key: e.merchant_key || '' })
   }
   for (const t of (bankTransactions.value || [])) {
     if (t.is_savings_roundup) continue
     const dir = t.direction === 'CRDT' ? 'in' : 'out'
-    list.push({ id: `b-${t.id}`, rawId: t.id, date: t.booking_date, description: t.description, amount: t.amount, category: t.category, direction: dir, source: 'bank', is_savings_roundup: t.is_savings_roundup, ntry_ref: t.ntry_ref })
+    list.push({ id: `b-${t.id}`, rawId: t.id, date: t.booking_date, description: t.description, amount: t.amount, category: t.category, direction: dir, source: 'bank', is_savings_roundup: t.is_savings_roundup, ntry_ref: t.ntry_ref, merchant: t.merchant || t.description, merchant_key: t.merchant_key || '' })
   }
   list.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
   return list
@@ -643,21 +691,61 @@ const groupedCategoryChartData = computed(() => {
   return { labels, datasets: [{ data: Object.values(map), backgroundColor: labels.map(l => categoryColors[l] || '#C9CBCF'), borderWidth: 1 }] }
 })
 
-const topCategories = computed(() => {
+const merchantTotals = computed(() => {
   const map = {}
   const period = selectedPeriodKey.value
   for (const t of unifiedList.value) {
+    if (t.direction !== 'out') continue
     if (period && getGroupKey(t.date, timeGrouping.value) !== period) continue
-    if (t.direction === 'out') map[t.category] = (map[t.category] || 0) + t.amount
+    const name = t.merchant || t.description || 'Other'
+    const key = t.merchant_key || name
+    if (!map[key]) map[key] = { key, name, total: 0, count: 0, categories: {}, locations: {} }
+    const group = map[key]
+    group.total += t.amount
+    group.count += 1
+    group.categories[t.category] = (group.categories[t.category] || 0) + t.amount
+    const location = t.description || 'No description'
+    if (!group.locations[location]) group.locations[location] = { description: location, total: 0, count: 0 }
+    group.locations[location].total += t.amount
+    group.locations[location].count += 1
   }
-  const sorted = Object.entries(map).sort((a, b) => b[1] - a[1])
-  return Object.fromEntries(sorted)
+  return map
 })
 
-const maxCategoryVal = computed(() => {
-  const vals = Object.values(topCategories.value)
-  return vals.length ? Math.max(...vals) : 1
+const selectedMerchantLocations = computed(() => selectedMerchant.value ? Object.values(selectedMerchant.value.locations).sort((a, b) => b.total - a.total) : [])
+const mergeCandidates = computed(() => Object.values(merchantTotals.value)
+  .filter(group => group.key !== selectedMerchant.value?.key)
+  .map(group => ({ title: group.name, value: group.key })))
+
+function sortGroups(rows) {
+  if (groupSortBy.value === 'name') return rows.sort((a, b) => a.label.localeCompare(b.label))
+  if (groupSortBy.value === 'count') return rows.sort((a, b) => b.count - a.count)
+  return rows.sort((a, b) => b.value - a.value)
+}
+
+const topGroups = computed(() => {
+  const period = selectedPeriodKey.value
+  if (groupBy.value === 'merchant') {
+    return sortGroups(Object.values(merchantTotals.value).map(group => ({
+      key: group.key, label: group.name, value: group.total, count: group.count,
+      color: getCategoryColor(dominantCategory(group))
+    })))
+  }
+  const map = {}
+  for (const t of unifiedList.value) {
+    if (t.direction !== 'out') continue
+    if (period && getGroupKey(t.date, timeGrouping.value) !== period) continue
+    if (!map[t.category]) map[t.category] = { value: 0, count: 0 }
+    map[t.category].value += t.amount
+    map[t.category].count += 1
+  }
+  return sortGroups(Object.entries(map).map(([category, info]) => ({
+    key: category, label: category, value: info.value, count: info.count, color: getCategoryColor(category)
+  })))
 })
+
+const maxGroupVal = computed(() => Math.max(1, ...topGroups.value.map(row => row.value)))
+const tableGroupBy = computed(() => groupBy.value === 'merchant' ? [{ key: 'merchant' }] : [])
 
 const groupedChartData = computed(() => {
   const map = {}
@@ -748,6 +836,12 @@ const savingsMonthlyChartData = computed(() => {
   return { labels, datasets: [{ label: 'Monthly Savings', data: labels.map(l => parseFloat(byMonth[l].toFixed(2))), backgroundColor: 'rgba(171,71,188,0.7)', borderColor: '#AB47BC', borderWidth: 1 }] }
 })
 
+function dominantCategory(group) {
+  if (!group) return 'Other'
+  const sorted = Object.entries(group.categories).sort((a, b) => b[1] - a[1])
+  return sorted.length ? sorted[0][0] : 'Other'
+}
+
 function getCategoryColor(cat) { return categoryColors[cat] || '#B0BEC5' }
 
 function showSnackbar(text, color) {
@@ -831,6 +925,45 @@ async function generateReport(period) {
 function openReportDialog(report) {
   viewingReport.value = report
   reportDialog.value = true
+}
+
+function onGroupClick(row) {
+  if (groupBy.value !== 'merchant') return
+  const group = merchantTotals.value[row.key]
+  if (!group) return
+  selectedMerchant.value = group
+  mergeTargetKey.value = null
+  merchantDialog.value = true
+}
+
+function groupSubtotal(item) {
+  const total = (item.items || []).reduce((sum, row) => {
+    const raw = row.raw || {}
+    return sum + (raw.direction === 'in' ? raw.amount : -raw.amount)
+  }, 0)
+  return `${total >= 0 ? '+' : '-'}€${Math.abs(total).toFixed(2)}`
+}
+
+async function mergeSelectedMerchant() {
+  if (!selectedMerchant.value || !mergeTargetKey.value) return
+  const target = merchantTotals.value[mergeTargetKey.value]
+  if (!target) return
+  try {
+    const res = await authFetch('/api/expenses/merchants/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alias_key: selectedMerchant.value.key, display_name: target.name })
+    })
+    if (!res.ok) {
+      showSnackbar('Failed to merge merchants', 'error')
+      return
+    }
+    merchantDialog.value = false
+    await fetchBankTransactions()
+    showSnackbar('Merchants merged', 'success')
+  } catch (e) {
+    showSnackbar('Failed to merge merchants', 'error')
+  }
 }
 
 async function uploadXML() {

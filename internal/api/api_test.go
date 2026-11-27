@@ -149,6 +149,29 @@ func (h *harness) addHolding(t testing.TB, ticker string, quantity string, price
 	}
 }
 
+func uploadBankXML(t testing.TB, h *harness, statement string) {
+	t.Helper()
+	form := &bytes.Buffer{}
+	writer := multipart.NewWriter(form)
+	part, err := writer.CreateFormFile("file", "statement.xml")
+	if err != nil {
+		t.Fatalf("form file: %v", err)
+	}
+	if _, err := part.Write([]byte(statement)); err != nil {
+		t.Fatalf("write statement: %v", err)
+	}
+	writer.Close()
+	request, err := http.NewRequest(http.MethodPost, h.server.URL+"/api/bank/import", form)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	status, body := h.send(t, request)
+	if status != http.StatusOK {
+		t.Fatalf("import returned %d: %s", status, body)
+	}
+}
+
 func TestPublicHealth(t *testing.T) {
 	h := newHarness(t)
 	status, body := h.do(t, http.MethodGet, "/health", nil)
@@ -251,6 +274,82 @@ func TestExpensesAndPins(t *testing.T) {
 	status, body = h.do(t, http.MethodGet, "/api/pins", nil)
 	if strings.Contains(string(body), "NVDA") {
 		t.Errorf("pin was not removed: %s", body)
+	}
+}
+
+const merchantStatement = `<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+  <BkToCstmrStmt>
+    <Stmt>
+      <Ntry>
+        <NtryRef>MERCHANT-1</NtryRef>
+        <Amt Ccy="EUR">10.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-01-10</Dt></BookgDt>
+        <ValDt><Dt>2026-01-10</Dt></ValDt>
+        <NtryDtls><TxDtls>
+          <Refs><AcctSvcrRef>REF-1</AcctSvcrRef></Refs>
+          <RltdPties><Cdtr><Nm>TESCO EINSTEINOVA</Nm></Cdtr></RltdPties>
+          <RmtInf><Ustrd>PLATBA KARTOU</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>MERCHANT-2</NtryRef>
+        <Amt Ccy="EUR">15.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-01-11</Dt></BookgDt>
+        <ValDt><Dt>2026-01-11</Dt></ValDt>
+        <NtryDtls><TxDtls>
+          <Refs><AcctSvcrRef>REF-2</AcctSvcrRef></Refs>
+          <RltdPties><Cdtr><Nm>Tesco Hybe&#353;ova, Bratislava</Nm></Cdtr></RltdPties>
+        </TxDtls></NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>`
+
+func TestBankMerchantGrouping(t *testing.T) {
+	h := newHarness(t)
+	h.register(t, "merchant@example.com", "password123")
+	uploadBankXML(t, h, merchantStatement)
+
+	status, body := h.do(t, http.MethodGet, "/api/bank/transactions", nil)
+	if status != http.StatusOK {
+		t.Fatalf("transactions returned %d", status)
+	}
+	var transactions []bills.BankTransaction
+	if err := json.Unmarshal(body, &transactions); err != nil {
+		t.Fatalf("decode transactions: %v", err)
+	}
+	if len(transactions) != 2 {
+		t.Fatalf("expected 2 transactions, got %d", len(transactions))
+	}
+	for _, tx := range transactions {
+		if tx.Merchant != "tesco" || tx.MerchantKey != "tesco" {
+			t.Errorf("merchant = %q / %q", tx.Merchant, tx.MerchantKey)
+		}
+	}
+
+	status, body = h.do(t, http.MethodPost, "/api/expenses/merchants/merge", map[string]string{
+		"alias_key": "tesco", "display_name": "Tesco Stores",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("merge returned %d: %s", status, body)
+	}
+
+	status, body = h.do(t, http.MethodGet, "/api/bank/transactions", nil)
+	if status != http.StatusOK {
+		t.Fatalf("transactions returned %d", status)
+	}
+	if err := json.Unmarshal(body, &transactions); err != nil {
+		t.Fatalf("decode transactions: %v", err)
+	}
+	for _, tx := range transactions {
+		if tx.Merchant != "Tesco Stores" || tx.MerchantKey != "tesco-stores" {
+			t.Errorf("merged merchant = %q / %q", tx.Merchant, tx.MerchantKey)
+		}
 	}
 }
 

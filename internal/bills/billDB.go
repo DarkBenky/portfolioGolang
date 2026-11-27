@@ -113,6 +113,28 @@ func createTables() error {
 		return fmt.Errorf("error creating merchant_categories index: %v", err)
 	}
 
+	createMerchantAliasTable := `
+	CREATE TABLE IF NOT EXISTS merchant_aliases (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		alias_key TEXT NOT NULL,
+		merchant_key TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		user_id TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'auto',
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(alias_key, user_id)
+	);`
+
+	_, err = db.Exec(createMerchantAliasTable)
+	if err != nil {
+		return fmt.Errorf("error creating merchant_aliases table: %v", err)
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_merchant_aliases_key ON merchant_aliases(alias_key)`)
+	if err != nil {
+		return fmt.Errorf("error creating merchant_aliases index: %v", err)
+	}
+
 	createSavingsIBANTable := `
 	CREATE TABLE IF NOT EXISTS user_savings_ibans (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +283,8 @@ type BankTransaction struct {
 	ValueDate        string  `json:"value_date"`
 	Description      string  `json:"description"`
 	Category         string  `json:"category"`
+	Merchant         string  `json:"merchant"`
+	MerchantKey      string  `json:"merchant_key"`
 	IsSavingsRoundup bool    `json:"is_savings_roundup"`
 	UserID           string  `json:"user_id"`
 }
@@ -387,8 +411,15 @@ func loadSeedEntries() {
 	})
 }
 
+var merchantDiacritics = strings.NewReplacer(
+	"\u0161", "s", "\u010d", "c", "\u0159", "r", "\u017e", "z", "\u011b", "e",
+	"\u0165", "t", "\u010f", "d", "\u0148", "n", "\u016f", "u", "\u00fd", "y",
+	"\u00e1", "a", "\u00ed", "i", "\u00e9", "e", "\u00fa", "u", "\u00f4", "o",
+	"\u00e4", "a", "\u00f6", "o", "\u00fc", "u",
+)
+
 func normalizeMerchantText(value string) string {
-	lower := strings.ToLower(value)
+	lower := merchantDiacritics.Replace(strings.ToLower(value))
 	var sb strings.Builder
 	for _, r := range lower {
 		switch {
@@ -630,6 +661,8 @@ func GetBankTransactions(userID string) ([]BankTransaction, error) {
 	}
 	defer rows.Close()
 
+	aliases, _ := LoadMerchantAliases(userID)
+
 	var txs []BankTransaction
 	for rows.Next() {
 		var tx BankTransaction
@@ -642,6 +675,7 @@ func GetBankTransactions(userID string) ([]BankTransaction, error) {
 			return nil, err
 		}
 		tx.IsSavingsRoundup = savingsInt == 1
+		tx.Merchant, tx.MerchantKey = ResolveMerchant(tx.Description, aliases)
 		txs = append(txs, tx)
 	}
 	return txs, nil

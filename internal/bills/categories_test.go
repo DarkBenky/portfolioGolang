@@ -55,6 +55,7 @@ func TestNormalizeMerchantText(t *testing.T) {
 		"PLATBA KARTOU | BOLT FOOD": "platba kartou bolt food",
 		"Dr.Max, Praha 1":           "dr max praha 1",
 		"h&m":                       "h m",
+		"Hybe\u0161ova":             "hybesova",
 	}
 	for input, expected := range cases {
 		if got := normalizeMerchantText(input); got != expected {

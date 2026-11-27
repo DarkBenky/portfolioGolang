@@ -116,6 +116,47 @@ func (s *Server) deleteMerchantRule(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "Rule deleted"})
 }
 
+func (s *Server) getMerchantSuggestions(c echo.Context) error {
+	suggestions, err := bills.SuggestMerchantMerges(s.userID(c))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load suggestions"})
+	}
+	return c.JSON(http.StatusOK, suggestions)
+}
+
+func (s *Server) mergeMerchants(c echo.Context) error {
+	var body struct {
+		AliasKey    string `json:"alias_key"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+	aliasKey := bills.MerchantSlug(body.AliasKey)
+	displayName := strings.TrimSpace(body.DisplayName)
+	merchantKey := bills.MerchantSlug(displayName)
+	if aliasKey == "" || merchantKey == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "alias_key and display_name are required"})
+	}
+	if err := bills.SaveMerchantAlias(aliasKey, merchantKey, displayName, s.userID(c), "user"); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save merge"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Merchant merged", "merchant": displayName, "merchant_key": merchantKey,
+	})
+}
+
+func (s *Server) deleteMerchantMerge(c echo.Context) error {
+	key := bills.MerchantSlug(c.QueryParam("key"))
+	if key == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "key is required"})
+	}
+	if err := bills.DeleteMerchantAlias(key, s.userID(c)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to remove merge"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Merge removed"})
+}
+
 func (s *Server) getExpenseReports(c echo.Context) error {
 	reports, err := bills.GetExpenseReports(s.userID(c))
 	if err != nil {
