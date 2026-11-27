@@ -41,8 +41,9 @@ type rssFeed struct {
 	} `xml:"channel"`
 }
 
-// Search queries available providers in cost order: a configured SearXNG first,
-// then Bing's RSS feed, then Yahoo news and Wikipedia as topical fallbacks.
+// Search queries available providers in order: the DeepSeek Search API when
+// DEEPSEEK_API_KEY is set, then a configured SearXNG, then Bing's RSS feed,
+// then Yahoo news and Wikipedia as topical fallbacks.
 func (c *Client) Search(query string, maxResults int) ([]SearchResult, string) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -62,6 +63,7 @@ func (c *Client) Search(query string, maxResults int) ([]SearchResult, string) {
 		name string
 		run  func(string, int) []SearchResult
 	}{
+		{"deepseek", c.searchDeepSeek},
 		{"searxng", c.searchSearXNG},
 		{"bing", c.searchBing},
 		{"yahoo", c.searchYahoo},

@@ -56,6 +56,7 @@ PRICE_MEMORY_LIMIT=512MB     # DuckDB steady state memory
 
 ```
 SEARXNG_URL=                 # optional, tried before the built in backends
+DEEPSEEK_API_KEY=            # optional, DeepSeek Search API tried before every other provider
 ```
 
 ## Frontend development

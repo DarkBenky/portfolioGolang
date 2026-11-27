@@ -369,7 +369,8 @@ func (s *Service) webSearch(userID string, query string) (string, []store.Search
 		return "Web search returned no results (" + status + "). Do not search again; answer from context.", nil
 	}
 	for i := range results {
-		if i < 3 {
+		// A provider that already returned text keeps it.
+		if i < 3 && results[i].Text == "" {
 			results[i].Text = s.market.ArticleText(results[i].URL)
 		}
 	}
