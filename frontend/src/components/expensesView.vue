@@ -212,9 +212,9 @@
                   <v-col cols="2" class="py-0" />
                 </v-row>
 
-                <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1">
+                <v-data-table :headers="unifiedHeaders" :items="tableItems" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1">
                   <template v-slot:group-header="{ item }">
-                    <tr class="bg-surface-variant">
+                    <tr class="group-row">
                       <td :colspan="unifiedHeaders.length" class="py-1 px-3">
                         <div class="d-flex align-center ga-2">
                           <span class="text-caption font-weight-bold text-capitalize">{{ item.value }}</span>
@@ -747,6 +747,18 @@ const topGroups = computed(() => {
 const maxGroupVal = computed(() => Math.max(1, ...topGroups.value.map(row => row.value)))
 const tableGroupBy = computed(() => groupBy.value === 'merchant' ? [{ key: 'merchant' }] : [])
 
+function merchantGroupKey(row) {
+  return row.merchant_key || row.merchant || row.description || 'Other'
+}
+
+const tableItems = computed(() => {
+  if (groupBy.value !== 'merchant') return filteredUnified.value
+  const ranked = Object.values(merchantTotals.value).sort((a, b) => b.total - a.total).map(group => group.key)
+  const rank = new Map(ranked.map((key, index) => [key, index]))
+  return [...filteredUnified.value].sort((a, b) =>
+    (rank.get(merchantGroupKey(a)) ?? ranked.length) - (rank.get(merchantGroupKey(b)) ?? ranked.length))
+})
+
 const groupedChartData = computed(() => {
   const map = {}
   for (const t of unifiedList.value) {
@@ -1182,5 +1194,9 @@ onMounted(async () => {
   text-align: right;
   flex-shrink: 0;
   font-weight: 500;
+}
+
+.group-row {
+  background: rgba(var(--v-theme-on-surface), 0.08);
 }
 </style>

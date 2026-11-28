@@ -25,6 +25,13 @@ func MerchantName(description string) string {
 		description = description[:idx]
 	}
 	tokens := strings.Fields(stripMerchantBoilerplate(normalizeMerchantText(description)))
+	kept := tokens[:0]
+	for _, token := range tokens {
+		if !isISIN(token) {
+			kept = append(kept, token)
+		}
+	}
+	tokens = kept
 	for len(tokens) > 1 && isMerchantTail(tokens[len(tokens)-1]) {
 		tokens = tokens[:len(tokens)-1]
 	}
@@ -76,6 +83,24 @@ func stripMerchantBoilerplate(value string) string {
 			return value
 		}
 	}
+}
+
+func isISIN(token string) bool {
+	if len(token) != 12 || token[11] < '0' || token[11] > '9' {
+		return false
+	}
+	for i := 0; i < 12; i++ {
+		c := token[i]
+		isDigit := c >= '0' && c <= '9'
+		isLetter := c >= 'a' && c <= 'z'
+		if i < 2 && !isLetter {
+			return false
+		}
+		if i >= 2 && !isDigit && !isLetter {
+			return false
+		}
+	}
+	return true
 }
 
 func isMerchantTail(token string) bool {

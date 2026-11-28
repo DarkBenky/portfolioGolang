@@ -6,12 +6,13 @@ func TestMerchantName(t *testing.T) {
 	setupTestDB(t)
 
 	cases := map[string]string{
-		"PLATBA KARTOU | TESCO EINSTEINOVA": "tesco",
-		"TESCO HYBESOVA":                    "tesco",
-		"Tesco Hybe\u0161ova, Bratislava":   "tesco",
-		"LIDL BRATISLAVA 4":                 "lidl",
-		"DR.MAX LEKARNA PRAHA 1":            "dr max",
-		"":                                  "",
+		"PLATBA KARTOU | TESCO EINSTEINOVA":            "tesco",
+		"TESCO HYBESOVA":                               "tesco",
+		"Tesco Hybe\u0161ova, Bratislava":              "tesco",
+		"LIDL BRATISLAVA 4":                            "lidl",
+		"DR.MAX LEKARNA PRAHA 1":                       "dr max",
+		"IE00B4L5Y983 ISHARES CORE MSCI WORLD ACC ETF": "ishares",
+		"": "",
 	}
 	for input, expected := range cases {
 		if got := MerchantName(input); got != expected {
