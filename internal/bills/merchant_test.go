@@ -12,7 +12,10 @@ func TestMerchantName(t *testing.T) {
 		"LIDL BRATISLAVA 4":                            "lidl",
 		"DR.MAX LEKARNA PRAHA 1":                       "dr max",
 		"IE00B4L5Y983 ISHARES CORE MSCI WORLD ACC ETF": "ishares",
-		"": "",
+		"Platba kartou | www.idsbk.sk-www.idsbk.sk":    "idsbk.sk",
+		"Platba kartou | cinemacity.sk/ Bratislava SK": "cinemacity",
+		"Bolt.eu": "bolt eu",
+		"":        "",
 	}
 	for input, expected := range cases {
 		if got := MerchantName(input); got != expected {

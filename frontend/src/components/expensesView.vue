@@ -217,11 +217,11 @@
                         <v-btn v-bind="props" size="x-small" variant="text" density="comfortable" />
                         <span class="text-caption font-weight-bold text-capitalize ml-1">{{ item.value }}</span>
                         <span class="text-caption text-grey ml-2">({{ count }})</span>
-                        <span class="text-caption font-weight-bold ml-2 d-sm-none">{{ groupSubtotal(item) }}</span>
+                        <span class="text-caption font-weight-bold ml-2 d-sm-none" :class="groupSubtotal(item).startsWith('-') ? 'text-error' : 'text-success'">{{ groupSubtotal(item) }}</span>
                         <v-spacer class="d-none d-sm-flex" />
                       </div>
                     </td>
-                    <td class="v-data-table__td py-0 text-right text-caption font-weight-bold d-none d-sm-table-cell">{{ groupSubtotal(item) }}</td>
+                    <td class="v-data-table__td py-0 text-right text-caption font-weight-bold d-none d-sm-table-cell" :class="groupSubtotal(item).startsWith('-') ? 'text-error' : 'text-success'">{{ groupSubtotal(item) }}</td>
                     <td colspan="2" class="v-data-table__td py-0" />
                   </template>
                   <template v-slot:[`item.date`]="{ item }">

@@ -41,6 +41,9 @@ func MerchantName(description string) string {
 	if brand, ok := seedMerchantPrefix(strings.Join(tokens, " ")); ok {
 		return brand
 	}
+	if domain := merchantDomain(description); domain != "" {
+		return domain
+	}
 	return tokens[0]
 }
 
@@ -101,6 +104,48 @@ func isISIN(token string) bool {
 		}
 	}
 	return true
+}
+
+func merchantDomain(segment string) string {
+	for _, token := range strings.Fields(strings.ToLower(segment)) {
+		for _, part := range strings.FieldsFunc(token, isDomainSeparator) {
+			if domain := normalizeDomain(part); domain != "" {
+				return domain
+			}
+		}
+	}
+	return ""
+}
+
+func isDomainSeparator(r rune) bool {
+	return r == '-' || r == '/' || r == '(' || r == ')' || r == '*' || r == '~'
+}
+
+func normalizeDomain(token string) string {
+	labels := strings.Split(strings.Trim(token, ".,;:'\""), ".")
+	if len(labels) < 2 {
+		return ""
+	}
+	tld := labels[len(labels)-1]
+	if len(tld) < 2 || len(tld) > 4 {
+		return ""
+	}
+	for _, r := range tld {
+		if r < 'a' || r > 'z' {
+			return ""
+		}
+	}
+	for _, label := range labels[:len(labels)-1] {
+		if label == "" || len(label) > 63 {
+			return ""
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+				return ""
+			}
+		}
+	}
+	return strings.TrimPrefix(strings.Join(labels, "."), "www.")
 }
 
 func isMerchantTail(token string) bool {
