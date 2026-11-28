@@ -17,7 +17,7 @@
       <v-tabs-window-item value="all">
 
         <v-row dense>
-          <v-col cols="3" class="py-0">
+          <v-col cols="6" sm="3" class="py-0">
             <v-card variant="outlined" class="text-center pa-2">
               <div class="d-flex align-center justify-center mb-1">
                 <v-icon size="16" color="error" class="mr-1">mdi-arrow-down-bold</v-icon>
@@ -26,7 +26,7 @@
               <div class="text-h6 font-weight-bold text-error">-€{{ unifiedTotalOut.toFixed(0) }}</div>
             </v-card>
           </v-col>
-          <v-col cols="3" class="py-0">
+          <v-col cols="6" sm="3" class="py-0">
             <v-card variant="outlined" class="text-center pa-2">
               <div class="d-flex align-center justify-center mb-1">
                 <v-icon size="16" color="success" class="mr-1">mdi-arrow-up-bold</v-icon>
@@ -35,7 +35,7 @@
               <div class="text-h6 font-weight-bold text-success">+€{{ unifiedTotalIn.toFixed(0) }}</div>
             </v-card>
           </v-col>
-          <v-col cols="3" class="py-0">
+          <v-col cols="6" sm="3" class="py-0">
             <v-card variant="outlined" class="text-center pa-2">
               <div class="d-flex align-center justify-center mb-1">
                 <v-icon size="16" :color="unifiedNet >= 0 ? 'primary' : 'warning'" class="mr-1">mdi-swap-vertical-bold</v-icon>
@@ -46,7 +46,7 @@
               </div>
             </v-card>
           </v-col>
-          <v-col cols="3" class="py-0">
+          <v-col cols="6" sm="3" class="py-0">
             <v-card variant="outlined" class="text-center pa-2">
               <div class="d-flex align-center justify-center mb-1">
                 <v-icon size="16" color="purple" class="mr-1">mdi-piggy-bank</v-icon>
@@ -58,7 +58,7 @@
         </v-row>
 
         <v-row dense class="mt-2">
-          <v-col cols="12" class="py-0 d-flex align-center">
+          <v-col cols="12" class="py-0 d-flex align-center flex-wrap ga-2">
             <v-icon size="16" color="grey" class="mr-1">mdi-calendar-range</v-icon>
             <span class="text-caption text-grey font-weight-medium mr-2">PERIOD</span>
             <v-btn-toggle v-model="timeGrouping" mandatory density="compact" divided color="primary" variant="outlined" size="x-small">
@@ -68,9 +68,8 @@
               <v-btn value="quarter" size="x-small">Quarter</v-btn>
               <v-btn value="year" size="x-small">Year</v-btn>
             </v-btn-toggle>
-            <v-spacer />
-            <span class="text-caption text-grey font-weight-medium mr-2">GROUP BY</span>
-            <v-btn-toggle v-model="groupBy" mandatory density="compact" divided color="primary" variant="outlined" size="x-small" class="mr-3">
+            <span class="text-caption text-grey font-weight-medium ml-sm-auto mr-2">GROUP BY</span>
+            <v-btn-toggle v-model="groupBy" mandatory density="compact" divided color="primary" variant="outlined" size="x-small" class="mr-sm-3">
               <v-btn value="category" size="x-small">Category</v-btn>
               <v-btn value="merchant" size="x-small">Merchant</v-btn>
             </v-btn-toggle>
@@ -194,22 +193,21 @@
               </v-card-title>
               <v-card-text class="pa-1">
                 <v-row dense>
-                  <v-col cols="2" class="py-0">
+                  <v-col cols="12" sm="6" md="2" class="py-0">
                     <v-text-field v-model="unifiedSearch" label="Search" variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable hide-details />
                   </v-col>
-                  <v-col cols="2" class="py-0">
+                  <v-col cols="6" sm="3" md="2" class="py-0">
                     <v-select v-model="unifiedCategoryFilter" :items="['All', ...allCategories]" label="Category" variant="outlined" density="compact" hide-details />
                   </v-col>
-                  <v-col cols="2" class="py-0">
+                  <v-col cols="6" sm="3" md="2" class="py-0">
                     <v-select v-model="unifiedDirectionFilter" :items="['All', 'In', 'Out']" label="Type" variant="outlined" density="compact" hide-details />
                   </v-col>
-                  <v-col cols="2" class="py-0">
+                  <v-col cols="6" sm="3" md="2" class="py-0">
                     <v-select v-model="unifiedSourceFilter" :items="['All', 'bank', 'manual']" label="Source" variant="outlined" density="compact" hide-details />
                   </v-col>
-                  <v-col cols="2" class="py-0">
+                  <v-col cols="6" sm="3" md="2" class="py-0">
                     <v-select v-model="selectedPeriodKey" :items="periodKeys" :label="periodLabel" variant="outlined" density="compact" hide-details clearable />
                   </v-col>
-                  <v-col cols="2" class="py-0" />
                 </v-row>
 
                 <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1 tx-table">
@@ -219,9 +217,11 @@
                         <v-btn v-bind="props" size="x-small" variant="text" density="comfortable" />
                         <span class="text-caption font-weight-bold text-capitalize ml-1">{{ item.value }}</span>
                         <span class="text-caption text-grey ml-2">({{ count }})</span>
+                        <span class="text-caption font-weight-bold ml-2 d-sm-none">{{ groupSubtotal(item) }}</span>
+                        <v-spacer class="d-none d-sm-flex" />
                       </div>
                     </td>
-                    <td class="v-data-table__td py-0 text-right text-caption font-weight-bold">{{ groupSubtotal(item) }}</td>
+                    <td class="v-data-table__td py-0 text-right text-caption font-weight-bold d-none d-sm-table-cell">{{ groupSubtotal(item) }}</td>
                     <td colspan="2" class="v-data-table__td py-0" />
                   </template>
                   <template v-slot:[`item.date`]="{ item }">
@@ -1186,5 +1186,12 @@ onMounted(async () => {
 
 .tx-table :deep(.v-table__wrapper > table) {
   table-layout: fixed;
+}
+
+@media (max-width: 599px) {
+  .tx-table :deep(.v-table__wrapper > table) {
+    table-layout: auto;
+    min-width: 560px;
+  }
 }
 </style>
