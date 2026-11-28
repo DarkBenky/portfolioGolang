@@ -14,8 +14,11 @@ func TestMerchantName(t *testing.T) {
 		"IE00B4L5Y983 ISHARES CORE MSCI WORLD ACC ETF": "ishares",
 		"Platba kartou | www.idsbk.sk-www.idsbk.sk":    "idsbk.sk",
 		"Platba kartou | cinemacity.sk/ Bratislava SK": "cinemacity",
-		"Bolt.eu": "bolt eu",
-		"":        "",
+		"Bolt.eu":                              "bolt eu",
+		"Vyber kartou | TATRABANKA-Bratislava": "vyber kartou",
+		"Vyber kartou | RATM OM Rinok Raca I. BA -Bratislava": "vyber kartou",
+		"Vyber z bankomatu mobilom":                           "vyber z bankomatu",
+		"":                                                    "",
 	}
 	for input, expected := range cases {
 		if got := MerchantName(input); got != expected {

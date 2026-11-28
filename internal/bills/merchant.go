@@ -15,9 +15,27 @@ var merchantLocationWords = map[string]bool{
 	"brno": true, "kosice": true,
 }
 
+var cashWithdrawalPrefixes = []string{"vyber kartou", "vyber z bankomatu"}
+
+// Cash withdrawals carry the ATM location after the pipe, so keying on the
+// counterparty splits one movement into a group per ATM. The phrase itself is
+// the merchant for these.
+func cashWithdrawalName(description string) string {
+	normalized := normalizeMerchantText(description)
+	for _, prefix := range cashWithdrawalPrefixes {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
+			return prefix
+		}
+	}
+	return ""
+}
+
 // MerchantName keeps the counterparty after the last pipe, the cleanest brand
 // signal in a camt.053 description.
 func MerchantName(description string) string {
+	if name := cashWithdrawalName(description); name != "" {
+		return name
+	}
 	if idx := strings.LastIndex(description, "|"); idx >= 0 {
 		description = description[idx+1:]
 	}
