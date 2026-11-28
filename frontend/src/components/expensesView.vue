@@ -212,18 +212,17 @@
                   <v-col cols="2" class="py-0" />
                 </v-row>
 
-                <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1">
-                  <template v-slot:group-header="{ item }">
-                    <tr class="group-row">
-                      <td :colspan="unifiedHeaders.length" class="py-1 px-3">
-                        <div class="d-flex align-center ga-2">
-                          <span class="text-caption font-weight-bold text-capitalize">{{ item.value }}</span>
-                          <v-chip size="x-small" variant="tonal">{{ item.items.length }}</v-chip>
-                          <v-spacer />
-                          <span class="text-caption font-weight-bold">{{ groupSubtotal(item) }}</span>
-                        </div>
-                      </td>
-                    </tr>
+                <v-data-table :headers="unifiedHeaders" :items="filteredUnified" :loading="loading || bankLoading" :items-per-page="15" :items-per-page-options="pageOptions" :group-by="tableGroupBy" density="compact" class="mt-1 tx-table">
+                  <template v-slot:data-table-group="{ item, count, props }">
+                    <td :colspan="unifiedHeaders.length - 3" class="v-data-table__td py-0">
+                      <div class="d-flex align-center px-2">
+                        <v-btn v-bind="props" size="x-small" variant="text" density="comfortable" />
+                        <span class="text-caption font-weight-bold text-capitalize ml-1">{{ item.value }}</span>
+                        <span class="text-caption text-grey ml-2">({{ count }})</span>
+                      </div>
+                    </td>
+                    <td class="v-data-table__td py-0 text-right text-caption font-weight-bold">{{ groupSubtotal(item) }}</td>
+                    <td colspan="2" class="v-data-table__td py-0" />
                   </template>
                   <template v-slot:[`item.date`]="{ item }">
                     <span class="text-caption">{{ item.date }}</span>
@@ -585,14 +584,15 @@ const categoryColors = {
   Housing: '#795548', Snacks: '#FF9800', Services: '#9E9E9E', Transfer: '#78909C'
 }
 
-const unifiedHeaders = [
+const unifiedHeaders = computed(() => [
+  ...(groupBy.value === 'merchant' ? [{ key: 'data-table-group', title: '', width: 0, sortable: false }] : []),
   { title: 'Date', key: 'date', align: 'start', width: '90px' },
   { title: 'Description', key: 'description', align: 'start' },
   { title: 'Category', key: 'category', align: 'center', width: '100px' },
   { title: 'Amount', key: 'amount', align: 'end', width: '100px' },
   { title: 'Src', key: 'source', align: 'center', width: '60px' },
   { title: '', key: 'actions', align: 'center', width: '60px', sortable: false }
-]
+])
 
 const savingsHeaders = [
   { title: 'Date', key: 'booking_date', align: 'start', width: '100px' },
@@ -1184,7 +1184,7 @@ onMounted(async () => {
   font-weight: 500;
 }
 
-.group-row {
-  background: rgba(var(--v-theme-on-surface), 0.08);
+.tx-table :deep(.v-table__wrapper > table) {
+  table-layout: fixed;
 }
 </style>
